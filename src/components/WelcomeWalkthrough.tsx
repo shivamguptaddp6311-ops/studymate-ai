@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   BookOpen, HelpCircle, Sparkles, Bell, Flame, 
   BarChart3, CheckCircle2, ArrowRight, ShieldCheck,
-  Volume2, Camera, ShieldAlert, Check, Mic, Image as ImageIcon
+  Volume2, Camera, ShieldAlert, Check, Image as ImageIcon
 } from "lucide-react";
 import { UserProfile } from "../types";
 
@@ -281,7 +281,7 @@ export default function WelcomeWalkthrough({ profile, onDismiss }: WelcomeWalkth
                   Enable Essential Study Tools
                 </h1>
                 <p className="text-xs text-slate-500 dark:text-slate-400 font-medium leading-relaxed">
-                  StudyMate requires browser access to play study alarms, enable the AI textbook camera scanner, voice explanations, and deliver motivational morning notifications.
+                  StudyMate requires browser access to play study alarms, enable the AI textbook camera scanner, and deliver motivational morning notifications.
                 </p>
               </div>
 
@@ -363,37 +363,6 @@ export default function WelcomeWalkthrough({ profile, onDismiss }: WelcomeWalkth
                   {permissions.camera === "denied" && (
                     <div className="p-2.5 bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 rounded-xl text-[10px] leading-relaxed font-semibold">
                       📸 Camera access has been blocked. To scan textbook questions, click the <strong>lock / padlock icon</strong> in your browser's address bar, enable camera permission, and click <span className="underline cursor-pointer font-black hover:text-red-500" onClick={requestCamera}>Retry</span>.
-                    </div>
-                  )}
-                </div>
-
-                {/* 3. MICROPHONE */}
-                <div className="p-3.5 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3 overflow-hidden">
-                      <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 dark:text-indigo-400 rounded-xl">
-                        <Mic className="w-5 h-5" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-black text-slate-800 dark:text-slate-200">Voice & Explanation Audio</h4>
-                        <p className="text-[10px] text-slate-400 font-medium">Enables interactive speech-to-text & dictation</p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={requestMicrophone}
-                      className={`px-3 py-2 rounded-xl text-[10px] font-black tracking-wider uppercase shadow-sm transition-all cursor-pointer ${
-                        permissions.microphone === "granted"
-                          ? "bg-emerald-500 text-white"
-                          : "bg-indigo-600 hover:bg-indigo-500 text-white"
-                      }`}
-                    >
-                      {permissions.microphone === "granted" ? "Granted ✓" : "Enable"}
-                    </button>
-                  </div>
-                  {permissions.microphone === "denied" && (
-                    <div className="p-2.5 bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/30 text-red-600 dark:text-red-400 rounded-xl text-[10px] leading-relaxed font-semibold">
-                      🎙️ Microphone access has been blocked. To enable voice controls and interactive audio, click the <strong>lock icon</strong> in the browser bar, enable "Microphone", and click <span className="underline cursor-pointer font-black hover:text-red-500" onClick={requestMicrophone}>Retry</span>.
                     </div>
                   )}
                 </div>

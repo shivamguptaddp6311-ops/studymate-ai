@@ -2,8 +2,8 @@ import React, { useState, useRef, useEffect } from "react";
 import { 
   Sparkles, Send, Image as ImageIcon, Trash2, X, Paperclip, 
   Check, Brain, GraduationCap, Lightbulb, MessageSquare, AlertCircle, RefreshCw,
-  Camera, Volume2, VolumeX, Pause, Play, Square, Crop, ArrowRight,
-  Rewind, FastForward, Sliders, Settings, CheckCircle, Languages, Activity, ChevronUp, ChevronDown, Repeat
+  Camera, Crop, ArrowRight,
+  Sliders, Settings, CheckCircle, Languages, Activity, ChevronUp, ChevronDown
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "motion/react";
@@ -22,28 +22,6 @@ interface ChatMessage {
   image?: string; // Base64 string for reference
   timestamp: Date;
 }
-
-export interface VoiceProfile {
-  id: string;
-  name: string;
-  gender: "female" | "male";
-  avatar: string;
-  title: string;
-  pitch: number; // custom base pitch
-  rate: number; // custom base rate
-  description: string;
-}
-
-export const VOICE_PROFILES: VoiceProfile[] = [
-  { id: "warm_teacher", name: "Mrs. Grace", gender: "female", avatar: "👩‍🏫", title: "Warm Teacher", pitch: 1.0, rate: 0.90, description: "Gentle, caring, and perfectly paced for deep understanding." },
-  { id: "friendly_mentor", name: "Tara", gender: "female", avatar: "👩‍🎓", title: "Friendly Student Mentor", pitch: 1.15, rate: 1.05, description: "Peer student mentor with a relaxed, relatable, supportive vibe." },
-  { id: "calm_professional", name: "Dr. Alice", gender: "female", avatar: "👩‍💼", title: "Calm Professional", pitch: 1.0, rate: 1.0, description: "Steady, polished academic precision with high clarity." },
-  { id: "energetic_tutor", name: "Coach Mia", gender: "female", avatar: "⚡", title: "Energetic Tutor", pitch: 1.25, rate: 1.15, description: "Bright, enthusiastic, and highly motivational style." },
-  { id: "pro_teacher", name: "Prof. Robert", gender: "male", avatar: "👨‍🏫", title: "Professional Teacher", pitch: 0.9, rate: 0.92, description: "Authoritative, highly structured, and deeply reassuring guidance." },
-  { id: "friendly_male_mentor", name: "Sam", gender: "male", avatar: "👨‍💼", title: "Friendly Mentor", pitch: 0.95, rate: 1.05, description: "Conversational, empathetic, and incredibly patient partner in study." },
-  { id: "calm_narrator", name: "Marcus", gender: "male", avatar: "🎙️", title: "Calm Narrator", pitch: 0.8, rate: 0.88, description: "Warm, soothing, deeper-pitched narrational tone." },
-  { id: "motivational_coach", name: "Coach Jack", gender: "male", avatar: "🏋️", title: "Motivational Coach", pitch: 1.05, rate: 1.15, description: "High-octane, encouraging, and action-driven coaching." }
-];
 
 export default function StudyMateAI({ profile, onAwardXP, onAddNotification }: StudyMateAIProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
@@ -90,56 +68,6 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   // Scanned Solved Question State
   const [scannedSolution, setScannedSolution] = useState<any | null>(null);
 
-  // Text to Speech states
-  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
-  const [isSpeakingPaused, setIsSpeakingPaused] = useState(false);
-  const [selectedVoiceProfile, setSelectedVoiceProfile] = useState<VoiceProfile>(VOICE_PROFILES[0]);
-  const [speechRate, setSpeechRate] = useState(1.0); // range 0.5 - 2.0
-  const [speechPitch, setSpeechPitch] = useState(1.0); // range 0.5 - 1.5
-  const [speechVolume, setSpeechVolume] = useState(1.0); // range 0.0 - 1.0
-  const [speechLanguage, setSpeechLanguage] = useState<"auto" | "en" | "hi" | "hinglish">("auto");
-  const [explanationDepth, setExplanationDepth] = useState<"short" | "standard" | "detailed">("standard");
-  const [currentSegmentIndex, setCurrentSegmentIndex] = useState(0);
-  const [textSegments, setTextSegments] = useState<string[]>([]);
-  const [autoPlayEnabled, setAutoPlayEnabled] = useState(false);
-  const [isGeneratingScript, setIsGeneratingScript] = useState(false);
-  const [speechVoiceType, setSpeechVoiceType] = useState<"female" | "male">("female");
-
-  // Sync selectedVoiceProfile with speechVoiceType
-  useEffect(() => {
-    if (selectedVoiceProfile.gender !== speechVoiceType) {
-      const firstOfGender = VOICE_PROFILES.find(p => p.gender === speechVoiceType);
-      if (firstOfGender) {
-        setSelectedVoiceProfile(firstOfGender);
-      }
-    }
-  }, [speechVoiceType]);
-
-  // Sync speechVoiceType back if selectedVoiceProfile changes
-  useEffect(() => {
-    if (selectedVoiceProfile.gender !== speechVoiceType) {
-      setSpeechVoiceType(selectedVoiceProfile.gender);
-    }
-  }, [selectedVoiceProfile]);
-
-  const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const [isAudioLoading, setIsAudioLoading] = useState(false);
-  const [audioError, setAudioError] = useState<string | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  // Initialize Audio element lazily
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      audioRef.current = new Audio();
-    }
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.src = "";
-      }
-    };
-  }, []);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -163,6 +91,18 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   // Camera scanning controls
   // ----------------------------------------------------
   const startCamera = async () => {
+    let perms = { camera: "default" };
+    try {
+      const stored = localStorage.getItem("studymate_permissions_store");
+      if (stored) perms = JSON.parse(stored);
+    } catch (e) {}
+
+    if (perms.camera === "denied") {
+      setErrorMessage("Camera access is blocked in your browser settings. Please click the lock icon in your URL bar, grant Camera access, and try again, or upload an image directly.");
+      fileInputRef.current?.click();
+      return;
+    }
+
     setCameraActive(true);
     setErrorMessage(null);
     try {
@@ -173,8 +113,15 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
         videoRef.current.srcObject = stream;
         videoRef.current.play();
       }
+      if (perms.camera !== "granted") {
+        perms.camera = "granted";
+        localStorage.setItem("studymate_permissions_store", JSON.stringify(perms));
+      }
     } catch (err: any) {
-      console.warn("Camera streaming not supported or blocked, opening device file gallery upload instead.", err);
+      console.warn("Camera streaming not supported or blocked, updating store and opening device file gallery upload.", err);
+      perms.camera = "denied";
+      localStorage.setItem("studymate_permissions_store", JSON.stringify(perms));
+      setErrorMessage("Camera access failed or was blocked. Opening file upload as fallback.");
       setCameraActive(false);
       fileInputRef.current?.click();
     }
@@ -351,335 +298,6 @@ ${data.conceptualExplanation || ""}`;
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // ----------------------------------------------------
-  // Voice Explanation System (Speech Synthesis)
-  // ----------------------------------------------------
-  const [voiceScriptCache, setVoiceScriptCache] = useState<Record<string, string>>({});
-
-  const cleanMarkdownForSpeech = (markdown: string): string => {
-    return markdown
-      .replace(/#+\s+/g, "") 
-      .replace(/\*\*|__/g, "") 
-      .replace(/\*|_/g, "") 
-      .replace(/```[\s\S]*?```/g, "Code content.") 
-      .replace(/`([^`]+)`/g, "$1") 
-      .replace(/\[([^\]]+)\]\([^\)]+\)/g, "$1") 
-      .replace(/-\s+/g, "") 
-      .replace(/\s+/g, " ") 
-      .trim();
-  };
-
-  // Helper to split text into list of sentences
-  const segmentText = (text: string): string[] => {
-    const cleanText = cleanMarkdownForSpeech(text);
-    // Split on punctuation followed by space or end of string, avoiding initials
-    const sentenceRegex = /[^.!?]+[.!?]+(?:\s|$)/g;
-    const matches = cleanText.match(sentenceRegex);
-    if (!matches || matches.length === 0) {
-      return [cleanText].filter(Boolean);
-    }
-    return matches.map(s => s.trim()).filter(Boolean);
-  };
-
-  const getPollyVoiceName = (profile: VoiceProfile, isHindi: boolean, text: string): string => {
-    const isHinglish = speechLanguage === "hinglish" || (speechLanguage === "auto" && !isHindi && /[a-zA-Z]/.test(text) && (text.toLowerCase().includes("hai") || text.toLowerCase().includes("aap") || text.toLowerCase().includes("ko") || text.toLowerCase().includes("bhi") || text.toLowerCase().includes("aur") || text.toLowerCase().includes("shukriya") || text.toLowerCase().includes("dhanyavad") || text.toLowerCase().includes("hum")));
-    if (isHindi || isHinglish) {
-      return profile.gender === "female" ? "Aditi" : "Ravi";
-    }
-    switch (profile.id) {
-      case "warm_teacher":
-        return profile.gender === "female" ? "Emma" : "Brian";
-      case "friendly_mentor":
-        return profile.gender === "female" ? "Kendra" : "Joey";
-      case "calm_professional":
-        return profile.gender === "female" ? "Amy" : "Russell";
-      case "energetic_tutor":
-        return profile.gender === "female" ? "Salli" : "Matthew";
-      case "pro_teacher":
-        return profile.gender === "female" ? "Emma" : "Brian";
-      case "friendly_male_mentor":
-        return profile.gender === "female" ? "Kendra" : "Joey";
-      case "calm_narrator":
-        return profile.gender === "female" ? "Amy" : "Russell";
-      case "motivational_coach":
-        return profile.gender === "female" ? "Salli" : "Joey";
-      default:
-        return profile.gender === "female" ? "Emma" : "Brian";
-    }
-  };
-
-  const fallbackToSpeechSynthesis = (
-    textToSpeak: string,
-    index: number,
-    segmentsList: string[],
-    msgId: string,
-    profileVoice = selectedVoiceProfile
-  ) => {
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-    currentUtteranceRef.current = utterance;
-
-    const voices = window.speechSynthesis.getVoices();
-    let selectedVoice = null;
-    const isHindiText = /[\u0900-\u097F]/.test(textToSpeak);
-    const targetLang = speechLanguage === "hi" || (speechLanguage === "auto" && isHindiText) ? "hi-IN" : "en-US";
-
-    selectedVoice = voices.find(v => {
-      const nameLower = v.name.toLowerCase();
-      const isGenderMatch = profileVoice.gender === "female"
-        ? (nameLower.includes("female") || nameLower.includes("zira") || nameLower.includes("hazel") || nameLower.includes("google us english female") || nameLower.includes("samantha") || nameLower.includes("heera") || nameLower.includes("kalpana"))
-        : (nameLower.includes("male") || nameLower.includes("david") || nameLower.includes("mark") || nameLower.includes("google us english male") || nameLower.includes("microsoft david") || nameLower.includes("ravi"));
-      return v.lang.startsWith(targetLang.substring(0, 2)) && isGenderMatch;
-    });
-
-    if (!selectedVoice) {
-      selectedVoice = voices.find(v => {
-        const nameLower = v.name.toLowerCase();
-        return profileVoice.gender === "female"
-          ? (nameLower.includes("female") || nameLower.includes("zira") || nameLower.includes("hazel") || nameLower.includes("samantha") || nameLower.includes("kalpana"))
-          : (nameLower.includes("male") || nameLower.includes("david") || nameLower.includes("mark") || nameLower.includes("ravi"));
-      });
-    }
-
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-    } else if (voices.length > 0) {
-      utterance.voice = voices[0];
-    }
-
-    utterance.pitch = speechPitch * profileVoice.pitch;
-    utterance.rate = speechRate * profileVoice.rate;
-    utterance.volume = speechVolume;
-
-    utterance.onstart = () => {
-      setSpeakingMsgId(msgId);
-      setIsSpeakingPaused(false);
-    };
-
-    utterance.onend = () => {
-      setTimeout(() => {
-        if (speakingMsgId === msgId) {
-          speakSegment(index + 1, segmentsList, msgId, profileVoice);
-        }
-      }, 450);
-    };
-
-    utterance.onerror = (err) => {
-      console.warn("Local speech synthesis fallback failed, moving to next sentence:", err);
-      setTimeout(() => {
-        if (speakingMsgId === msgId) {
-          speakSegment(index + 1, segmentsList, msgId, profileVoice);
-        }
-      }, 1000);
-    };
-
-    window.speechSynthesis.speak(utterance);
-  };
-
-  const speakSegment = (index: number, segmentsList: string[], msgId: string, profileVoice = selectedVoiceProfile) => {
-    // Cancel/stop previous playbacks completely to prevent duplicates
-    window.speechSynthesis.cancel();
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.onended = null;
-      audioRef.current.onerror = null;
-      audioRef.current.oncanplaythrough = null;
-    }
-
-    if (index < 0 || index >= segmentsList.length) {
-      setSpeakingMsgId(null);
-      setIsSpeakingPaused(false);
-      setCurrentSegmentIndex(0);
-      return;
-    }
-
-    setCurrentSegmentIndex(index);
-    const textToSpeak = segmentsList[index];
-
-    // Detect language & voice configuration
-    const isHindi = /[\u0900-\u097F]/.test(textToSpeak);
-    const targetLang = speechLanguage === "hi" || (speechLanguage === "auto" && isHindi) ? "hi" : "en";
-    const voiceName = getPollyVoiceName(profileVoice, targetLang === "hi", textToSpeak);
-
-    setIsAudioLoading(true);
-    setAudioError(null);
-
-    const ttsUrl = `/api/tts?voice=${encodeURIComponent(voiceName)}&lang=${targetLang}&text=${encodeURIComponent(textToSpeak)}`;
-    const audio = audioRef.current;
-    if (!audio) {
-      fallbackToSpeechSynthesis(textToSpeak, index, segmentsList, msgId, profileVoice);
-      return;
-    }
-
-    audio.src = ttsUrl;
-    audio.playbackRate = speechRate * (profileVoice.rate || 1.0);
-    audio.volume = speechVolume;
-
-    audio.oncanplaythrough = () => {
-      setIsAudioLoading(false);
-      audio.play()
-        .then(() => {
-          setSpeakingMsgId(msgId);
-          setIsSpeakingPaused(false);
-        })
-        .catch(err => {
-          console.warn("Blocked audio autoplay or interrupted, falling back to synthesis:", err);
-          fallbackToSpeechSynthesis(textToSpeak, index, segmentsList, msgId, profileVoice);
-        });
-    };
-
-    audio.onended = () => {
-      setTimeout(() => {
-        if (speakingMsgId === msgId) {
-          speakSegment(index + 1, segmentsList, msgId, profileVoice);
-        }
-      }, 450);
-    };
-
-    audio.onerror = (e) => {
-      console.warn("High-quality server-side TTS audio error, falling back to local speech synthesis:", e);
-      setIsAudioLoading(false);
-      fallbackToSpeechSynthesis(textToSpeak, index, segmentsList, msgId, profileVoice);
-    };
-
-    // Load the audio resource
-    audio.load();
-  };
-
-  const startVoiceExplanation = async (text: string, msgId: string, requestedDepth = explanationDepth, forceVoice = selectedVoiceProfile) => {
-    // Stop any existing playback first
-    stopVoiceExplanation();
-    
-    // Check cache first for this specific text & depth
-    const cacheKey = `${msgId}-${requestedDepth}`;
-    let finalScriptText = text;
-
-    if (voiceScriptCache[cacheKey]) {
-      finalScriptText = voiceScriptCache[cacheKey];
-    } else {
-      setIsGeneratingScript(true);
-      try {
-        const res = await fetch("/api/gemini/voice-script", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            originalText: text,
-            depth: requestedDepth,
-            language: speechLanguage,
-            provider: localStorage.getItem("studymate_ai_provider") || "auto"
-          })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.script) {
-            finalScriptText = data.script;
-            setVoiceScriptCache(prev => ({ ...prev, [cacheKey]: data.script }));
-          }
-        }
-      } catch (err) {
-        console.warn("Failed to generate voice script from Gemini, falling back to original message text:", err);
-      } finally {
-        setIsGeneratingScript(false);
-      }
-    }
-
-    const segments = segmentText(finalScriptText);
-    setTextSegments(segments);
-    setSpeakingMsgId(msgId);
-    setExplanationDepth(requestedDepth);
-    speakSegment(0, segments, msgId, forceVoice);
-  };
-
-  const stopVoiceExplanation = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = "";
-      audioRef.current.onended = null;
-      audioRef.current.onerror = null;
-      audioRef.current.oncanplaythrough = null;
-    }
-    window.speechSynthesis.cancel();
-    setSpeakingMsgId(null);
-    setIsSpeakingPaused(false);
-    setCurrentSegmentIndex(0);
-    setTextSegments([]);
-    setIsAudioLoading(false);
-    setAudioError(null);
-  };
-
-  const togglePauseVoiceExplanation = () => {
-    if (speakingMsgId) {
-      const audio = audioRef.current;
-      if (isSpeakingPaused) {
-        if (audio && audio.src && audio.paused) {
-          audio.play().then(() => {
-            setIsSpeakingPaused(false);
-          }).catch(err => {
-            console.warn("Failed to resume HTML5 audio, restart segment:", err);
-            speakSegment(currentSegmentIndex, textSegments, speakingMsgId);
-          });
-        } else {
-          window.speechSynthesis.resume();
-          setIsSpeakingPaused(false);
-        }
-      } else {
-        if (audio && audio.src && !audio.paused) {
-          audio.pause();
-          setIsSpeakingPaused(true);
-        } else {
-          window.speechSynthesis.pause();
-          setIsSpeakingPaused(true);
-        }
-      }
-    }
-  };
-
-  const rewindSentence = () => {
-    if (speakingMsgId && textSegments.length > 0) {
-      const prevIdx = Math.max(0, currentSegmentIndex - 1);
-      speakSegment(prevIdx, textSegments, speakingMsgId);
-    }
-  };
-
-  const forwardSentence = () => {
-    if (speakingMsgId && textSegments.length > 0) {
-      const nextIdx = Math.min(textSegments.length - 1, currentSegmentIndex + 1);
-      speakSegment(nextIdx, textSegments, speakingMsgId);
-    }
-  };
-
-  const repeatSentence = () => {
-    if (speakingMsgId && textSegments.length > 0) {
-      speakSegment(currentSegmentIndex, textSegments, speakingMsgId);
-    }
-  };
-
-  // Preview a voice profile
-  const previewVoiceProfile = (profileToPreview: VoiceProfile) => {
-    window.speechSynthesis.cancel();
-    const previewText = `Hello! I am ${profileToPreview.name}, your StudyMate ${profileToPreview.title}. Let's learn together!`;
-    const utterance = new SpeechSynthesisUtterance(previewText);
-    
-    const voices = window.speechSynthesis.getVoices();
-    const selectedVoice = voices.find(v => {
-      const nameLower = v.name.toLowerCase();
-      const isGenderMatch = profileToPreview.gender === "female"
-        ? (nameLower.includes("female") || nameLower.includes("zira") || nameLower.includes("hazel") || nameLower.includes("samantha") || nameLower.includes("kalpana"))
-        : (nameLower.includes("male") || nameLower.includes("david") || nameLower.includes("mark") || nameLower.includes("ravi"));
-      return v.lang.startsWith("en") && isGenderMatch;
-    });
-
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-    }
-    
-    utterance.pitch = speechPitch * profileToPreview.pitch;
-    utterance.rate = speechRate * profileToPreview.rate;
-    utterance.volume = speechVolume;
-
-    window.speechSynthesis.speak(utterance);
   };
 
   // Save history to localStorage
@@ -949,125 +567,7 @@ ${data.conceptualExplanation || ""}`;
                 <ReactMarkdown>{msg.text}</ReactMarkdown>
               </div>
 
-              {/* Voice Explanation Panel for AI Answers */}
-              {msg.role === "model" && (
-                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700/60 flex flex-col gap-2.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2.5">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-[10px] text-slate-400 font-extrabold flex items-center space-x-1">
-                        <Volume2 className={`w-3.5 h-3.5 text-indigo-500 ${speakingMsgId === msg.id && !isSpeakingPaused ? "animate-bounce" : ""}`} />
-                        <span>Voice Explanation</span>
-                      </span>
-                      <span className="text-[10px] text-slate-300 dark:text-slate-600">•</span>
-                      {/* Voice gender select */}
-                      <div className="flex bg-slate-50 dark:bg-slate-900 border border-slate-200/40 dark:border-slate-750 p-0.5 rounded-lg">
-                        <button
-                          type="button"
-                          onClick={() => setSpeechVoiceType("female")}
-                          className={`px-1.5 py-0.5 text-[9px] font-bold rounded-md transition cursor-pointer ${speechVoiceType === "female" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-400"}`}
-                          title="Female Tutor Voice"
-                        >
-                          👩 Female
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setSpeechVoiceType("male")}
-                          className={`px-1.5 py-0.5 text-[9px] font-bold rounded-md transition cursor-pointer ${speechVoiceType === "male" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-400"}`}
-                          title="Male Tutor Voice"
-                        >
-                          👨 Male
-                        </button>
-                      </div>
-                    </div>
 
-                    <div className="flex items-center space-x-1.5">
-                      {speakingMsgId === msg.id ? (
-                        <>
-                          {/* Rewind */}
-                          <button
-                            type="button"
-                            onClick={rewindSentence}
-                            disabled={currentSegmentIndex === 0}
-                            className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent"
-                            title="Previous Sentence"
-                          >
-                            <Rewind className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Play/Pause */}
-                          <button
-                            type="button"
-                            onClick={togglePauseVoiceExplanation}
-                            className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 border border-amber-100 dark:border-amber-900/30 text-[10px] font-black rounded-lg transition flex items-center space-x-1 cursor-pointer"
-                          >
-                            {isSpeakingPaused ? <Play className="w-2.5 h-2.5 fill-current" /> : <Pause className="w-2.5 h-2.5 fill-current" />}
-                            <span>{isSpeakingPaused ? "Resume" : "Pause"}</span>
-                          </button>
-
-                          {/* Skip Forward */}
-                          <button
-                            type="button"
-                            onClick={forwardSentence}
-                            disabled={currentSegmentIndex >= textSegments.length - 1}
-                            className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent"
-                            title="Next Sentence"
-                          >
-                            <FastForward className="w-3.5 h-3.5" />
-                          </button>
-
-                          {/* Stop */}
-                          <button
-                            type="button"
-                            onClick={stopVoiceExplanation}
-                            className="px-2.5 py-1 bg-rose-50 dark:bg-rose-950/20 text-rose-500 hover:bg-rose-100 border border-rose-100 dark:border-rose-900/30 text-[10px] font-black rounded-lg transition flex items-center space-x-1 cursor-pointer"
-                          >
-                            <Square className="w-2.5 h-2.5 fill-current" />
-                            <span>Stop</span>
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => startVoiceExplanation(msg.text, msg.id)}
-                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black rounded-lg transition flex items-center space-x-1 cursor-pointer shadow-sm shadow-indigo-500/10"
-                        >
-                          <Play className="w-2.5 h-2.5 fill-current" />
-                          <span>Start Voice Explanation</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Live playback tracking or loading status */}
-                  {speakingMsgId === msg.id && (
-                    <div className="bg-slate-50/80 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 p-2 rounded-xl flex flex-col gap-1.5 transition-all">
-                      <div className="flex items-center justify-between text-[9px] font-bold text-slate-400">
-                        <span className="flex items-center space-x-1">
-                          {isAudioLoading ? (
-                            <span className="flex h-2 w-2 relative">
-                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
-                              <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
-                            </span>
-                          ) : (
-                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                          )}
-                          <span>{isAudioLoading ? "Generating high-quality voice stream..." : isSpeakingPaused ? "Paused" : "Playing tutor audio"}</span>
-                        </span>
-                        <span className="font-mono bg-slate-200/50 dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400">
-                          Sentence {currentSegmentIndex + 1} of {textSegments.length}
-                        </span>
-                      </div>
-
-                      {/* Current spoken text highlight preview */}
-                      {textSegments[currentSegmentIndex] && (
-                        <p className="text-[10px] text-slate-500 dark:text-slate-400 italic bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 p-1.5 rounded-lg line-clamp-2">
-                          "{textSegments[currentSegmentIndex]}"
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </div>
         ))}

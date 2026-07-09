@@ -16,7 +16,6 @@ export default function SettingsView({ darkMode, onToggleDarkMode, profile }: Se
   const [allowNotifications, setAllowNotifications] = useState(true);
   const [alarmVolume, setAlarmVolume] = useState(80);
   const [isBackupLinked, setIsBackupLinked] = useState(false);
-  const [voiceAssistance, setVoiceAssistance] = useState(false);
 
   const [savingBackup, setSavingBackup] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState<string>(() => {
