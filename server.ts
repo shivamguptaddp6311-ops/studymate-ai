@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
+import crypto from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import { executeAIRequest, getConfiguredProviders, AIProvider, AIMessage } from "./server/aiService";
@@ -130,6 +131,91 @@ app.get("/api/ai/providers", (req, res) => {
     res.json(providers);
   } catch (err: any) {
     res.status(500).json({ error: err.message || "Failed to fetch providers." });
+  }
+});
+
+// High-quality TTS engine endpoint with server caching & fallbacks
+app.get("/api/tts", async (req, res) => {
+  try {
+    const text = (req.query.text as string || "").trim();
+    const voice = (req.query.voice as string || "Emma").trim();
+    const lang = (req.query.lang as string || "en").trim();
+
+    if (!text) {
+      res.status(400).json({ error: "Missing text parameter" });
+      return;
+    }
+
+    // Prepare cache directory
+    const cacheDir = path.join(process.cwd(), "assets", "tts_cache");
+    if (!fs.existsSync(cacheDir)) {
+      fs.mkdirSync(cacheDir, { recursive: true });
+    }
+
+    // Create unique cache filename
+    const hash = crypto.createHash("md5").update(`${text}-${voice}-${lang}`).digest("hex");
+    const cacheFilePath = path.join(cacheDir, `${hash}.mp3`);
+
+    // Check if audio is cached
+    if (fs.existsSync(cacheFilePath)) {
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      fs.createReadStream(cacheFilePath).pipe(res);
+      return;
+    }
+
+    let audioBuffer: Buffer | null = null;
+    let success = false;
+
+    // 1. Try StreamElements TTS (AWS Polly Neural) first
+    try {
+      const streamElementsUrl = `https://api.streamelements.com/api/v2/speech?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}`;
+      const response = await fetch(streamElementsUrl);
+      if (response.ok) {
+        const arrayBuffer = await response.arrayBuffer();
+        audioBuffer = Buffer.from(arrayBuffer);
+        success = true;
+      } else {
+        console.warn(`[TTS] StreamElements failed with status ${response.status}`);
+      }
+    } catch (err: any) {
+      console.warn("[TTS] StreamElements fetch error:", err.message || err);
+    }
+
+    // 2. Try Google Translate TTS as fallback
+    if (!success) {
+      try {
+        const googleTtsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${encodeURIComponent(lang)}&client=tw-ob&q=${encodeURIComponent(text)}`;
+        const response = await fetch(googleTtsUrl, {
+          headers: {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          }
+        });
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer();
+          audioBuffer = Buffer.from(arrayBuffer);
+          success = true;
+        } else {
+          console.warn(`[TTS] Google Translate failed with status ${response.status}`);
+        }
+      } catch (err: any) {
+        console.warn("[TTS] Google Translate TTS error:", err.message || err);
+      }
+    }
+
+    if (success && audioBuffer) {
+      // Save to cache
+      fs.writeFileSync(cacheFilePath, audioBuffer);
+      // Serve to client
+      res.setHeader("Content-Type", "audio/mpeg");
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      res.send(audioBuffer);
+    } else {
+      res.status(502).json({ error: "Failed to generate TTS audio from all engines" });
+    }
+  } catch (error: any) {
+    console.error("[TTS] General error:", error);
+    res.status(500).json({ error: error.message || "Internal server error during TTS generation" });
   }
 });
 

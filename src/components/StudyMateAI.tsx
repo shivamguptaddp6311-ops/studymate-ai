@@ -123,6 +123,22 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   }, [selectedVoiceProfile]);
 
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const [isAudioLoading, setIsAudioLoading] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Initialize Audio element lazily
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      audioRef.current = new Audio();
+    }
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = "";
+      }
+    };
+  }, []);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -367,25 +383,46 @@ ${data.conceptualExplanation || ""}`;
     return matches.map(s => s.trim()).filter(Boolean);
   };
 
-  const speakSegment = (index: number, segmentsList: string[], msgId: string, profileVoice = selectedVoiceProfile) => {
-    window.speechSynthesis.cancel();
-    
-    if (index < 0 || index >= segmentsList.length) {
-      setSpeakingMsgId(null);
-      setIsSpeakingPaused(false);
-      setCurrentSegmentIndex(0);
-      return;
+  const getPollyVoiceName = (profile: VoiceProfile, isHindi: boolean, text: string): string => {
+    const isHinglish = speechLanguage === "hinglish" || (speechLanguage === "auto" && !isHindi && /[a-zA-Z]/.test(text) && (text.toLowerCase().includes("hai") || text.toLowerCase().includes("aap") || text.toLowerCase().includes("ko") || text.toLowerCase().includes("bhi") || text.toLowerCase().includes("aur") || text.toLowerCase().includes("shukriya") || text.toLowerCase().includes("dhanyavad") || text.toLowerCase().includes("hum")));
+    if (isHindi || isHinglish) {
+      return profile.gender === "female" ? "Aditi" : "Ravi";
     }
+    switch (profile.id) {
+      case "warm_teacher":
+        return profile.gender === "female" ? "Emma" : "Brian";
+      case "friendly_mentor":
+        return profile.gender === "female" ? "Kendra" : "Joey";
+      case "calm_professional":
+        return profile.gender === "female" ? "Amy" : "Russell";
+      case "energetic_tutor":
+        return profile.gender === "female" ? "Salli" : "Matthew";
+      case "pro_teacher":
+        return profile.gender === "female" ? "Emma" : "Brian";
+      case "friendly_male_mentor":
+        return profile.gender === "female" ? "Kendra" : "Joey";
+      case "calm_narrator":
+        return profile.gender === "female" ? "Amy" : "Russell";
+      case "motivational_coach":
+        return profile.gender === "female" ? "Salli" : "Joey";
+      default:
+        return profile.gender === "female" ? "Emma" : "Brian";
+    }
+  };
 
-    setCurrentSegmentIndex(index);
-    const textToSpeak = segmentsList[index];
+  const fallbackToSpeechSynthesis = (
+    textToSpeak: string,
+    index: number,
+    segmentsList: string[],
+    msgId: string,
+    profileVoice = selectedVoiceProfile
+  ) => {
+    window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
     currentUtteranceRef.current = utterance;
 
     const voices = window.speechSynthesis.getVoices();
     let selectedVoice = null;
-
-    // Detect target lang based on speechLanguage setting or guess
     const isHindiText = /[\u0900-\u097F]/.test(textToSpeak);
     const targetLang = speechLanguage === "hi" || (speechLanguage === "auto" && isHindiText) ? "hi-IN" : "en-US";
 
@@ -412,7 +449,6 @@ ${data.conceptualExplanation || ""}`;
       utterance.voice = voices[0];
     }
 
-    // Apply voice modifiers
     utterance.pitch = speechPitch * profileVoice.pitch;
     utterance.rate = speechRate * profileVoice.rate;
     utterance.volume = speechVolume;
@@ -423,18 +459,15 @@ ${data.conceptualExplanation || ""}`;
     };
 
     utterance.onend = () => {
-      // Natural 450ms pause between sentences
-      const timer = setTimeout(() => {
-        if (!window.speechSynthesis.paused && speakingMsgId === msgId) {
+      setTimeout(() => {
+        if (speakingMsgId === msgId) {
           speakSegment(index + 1, segmentsList, msgId, profileVoice);
         }
       }, 450);
-      return () => clearTimeout(timer);
     };
 
-    utterance.onerror = (e) => {
-      console.warn("Speech Synthesis error:", e);
-      // Fallback: silently auto progress to next sentence after a tiny delay
+    utterance.onerror = (err) => {
+      console.warn("Local speech synthesis fallback failed, moving to next sentence:", err);
       setTimeout(() => {
         if (speakingMsgId === msgId) {
           speakSegment(index + 1, segmentsList, msgId, profileVoice);
@@ -445,8 +478,79 @@ ${data.conceptualExplanation || ""}`;
     window.speechSynthesis.speak(utterance);
   };
 
-  const startVoiceExplanation = async (text: string, msgId: string, requestedDepth = explanationDepth, forceVoice = selectedVoiceProfile) => {
+  const speakSegment = (index: number, segmentsList: string[], msgId: string, profileVoice = selectedVoiceProfile) => {
+    // Cancel/stop previous playbacks completely to prevent duplicates
     window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current.oncanplaythrough = null;
+    }
+
+    if (index < 0 || index >= segmentsList.length) {
+      setSpeakingMsgId(null);
+      setIsSpeakingPaused(false);
+      setCurrentSegmentIndex(0);
+      return;
+    }
+
+    setCurrentSegmentIndex(index);
+    const textToSpeak = segmentsList[index];
+
+    // Detect language & voice configuration
+    const isHindi = /[\u0900-\u097F]/.test(textToSpeak);
+    const targetLang = speechLanguage === "hi" || (speechLanguage === "auto" && isHindi) ? "hi" : "en";
+    const voiceName = getPollyVoiceName(profileVoice, targetLang === "hi", textToSpeak);
+
+    setIsAudioLoading(true);
+    setAudioError(null);
+
+    const ttsUrl = `/api/tts?voice=${encodeURIComponent(voiceName)}&lang=${targetLang}&text=${encodeURIComponent(textToSpeak)}`;
+    const audio = audioRef.current;
+    if (!audio) {
+      fallbackToSpeechSynthesis(textToSpeak, index, segmentsList, msgId, profileVoice);
+      return;
+    }
+
+    audio.src = ttsUrl;
+    audio.playbackRate = speechRate * (profileVoice.rate || 1.0);
+    audio.volume = speechVolume;
+
+    audio.oncanplaythrough = () => {
+      setIsAudioLoading(false);
+      audio.play()
+        .then(() => {
+          setSpeakingMsgId(msgId);
+          setIsSpeakingPaused(false);
+        })
+        .catch(err => {
+          console.warn("Blocked audio autoplay or interrupted, falling back to synthesis:", err);
+          fallbackToSpeechSynthesis(textToSpeak, index, segmentsList, msgId, profileVoice);
+        });
+    };
+
+    audio.onended = () => {
+      setTimeout(() => {
+        if (speakingMsgId === msgId) {
+          speakSegment(index + 1, segmentsList, msgId, profileVoice);
+        }
+      }, 450);
+    };
+
+    audio.onerror = (e) => {
+      console.warn("High-quality server-side TTS audio error, falling back to local speech synthesis:", e);
+      setIsAudioLoading(false);
+      fallbackToSpeechSynthesis(textToSpeak, index, segmentsList, msgId, profileVoice);
+    };
+
+    // Load the audio resource
+    audio.load();
+  };
+
+  const startVoiceExplanation = async (text: string, msgId: string, requestedDepth = explanationDepth, forceVoice = selectedVoiceProfile) => {
+    // Stop any existing playback first
+    stopVoiceExplanation();
     
     // Check cache first for this specific text & depth
     const cacheKey = `${msgId}-${requestedDepth}`;
@@ -471,7 +575,6 @@ ${data.conceptualExplanation || ""}`;
           const data = await res.json();
           if (data.script) {
             finalScriptText = data.script;
-            // Cache it!
             setVoiceScriptCache(prev => ({ ...prev, [cacheKey]: data.script }));
           }
         }
@@ -490,21 +593,45 @@ ${data.conceptualExplanation || ""}`;
   };
 
   const stopVoiceExplanation = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+      audioRef.current.onended = null;
+      audioRef.current.onerror = null;
+      audioRef.current.oncanplaythrough = null;
+    }
     window.speechSynthesis.cancel();
     setSpeakingMsgId(null);
     setIsSpeakingPaused(false);
     setCurrentSegmentIndex(0);
     setTextSegments([]);
+    setIsAudioLoading(false);
+    setAudioError(null);
   };
 
   const togglePauseVoiceExplanation = () => {
     if (speakingMsgId) {
+      const audio = audioRef.current;
       if (isSpeakingPaused) {
-        window.speechSynthesis.resume();
-        setIsSpeakingPaused(false);
+        if (audio && audio.src && audio.paused) {
+          audio.play().then(() => {
+            setIsSpeakingPaused(false);
+          }).catch(err => {
+            console.warn("Failed to resume HTML5 audio, restart segment:", err);
+            speakSegment(currentSegmentIndex, textSegments, speakingMsgId);
+          });
+        } else {
+          window.speechSynthesis.resume();
+          setIsSpeakingPaused(false);
+        }
       } else {
-        window.speechSynthesis.pause();
-        setIsSpeakingPaused(true);
+        if (audio && audio.src && !audio.paused) {
+          audio.pause();
+          setIsSpeakingPaused(true);
+        } else {
+          window.speechSynthesis.pause();
+          setIsSpeakingPaused(true);
+        }
       }
     }
   };
@@ -824,65 +951,121 @@ ${data.conceptualExplanation || ""}`;
 
               {/* Voice Explanation Panel for AI Answers */}
               {msg.role === "model" && (
-                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700/60 flex flex-wrap items-center justify-between gap-2.5">
-                  <div className="flex items-center space-x-2">
-                    <span className="text-[10px] text-slate-400 font-extrabold flex items-center space-x-1">
-                      <Volume2 className="w-3.5 h-3.5 text-indigo-500" />
-                      <span>Voice Explanation</span>
-                    </span>
-                    <span className="text-[10px] text-slate-300 dark:text-slate-600">•</span>
-                    {/* Voice gender select */}
-                    <div className="flex bg-slate-50 dark:bg-slate-900 border border-slate-200/40 dark:border-slate-750 p-0.5 rounded-lg">
-                      <button
-                        type="button"
-                        onClick={() => setSpeechVoiceType("female")}
-                        className={`px-1.5 py-0.5 text-[9px] font-bold rounded-md transition cursor-pointer ${speechVoiceType === "female" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-400"}`}
-                        title="Female Tutor Voice"
-                      >
-                        👩 Female
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSpeechVoiceType("male")}
-                        className={`px-1.5 py-0.5 text-[9px] font-bold rounded-md transition cursor-pointer ${speechVoiceType === "male" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-400"}`}
-                        title="Male Tutor Voice"
-                      >
-                        👨 Male
-                      </button>
+                <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-700/60 flex flex-col gap-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2.5">
+                    <div className="flex items-center space-x-2">
+                      <span className="text-[10px] text-slate-400 font-extrabold flex items-center space-x-1">
+                        <Volume2 className={`w-3.5 h-3.5 text-indigo-500 ${speakingMsgId === msg.id && !isSpeakingPaused ? "animate-bounce" : ""}`} />
+                        <span>Voice Explanation</span>
+                      </span>
+                      <span className="text-[10px] text-slate-300 dark:text-slate-600">•</span>
+                      {/* Voice gender select */}
+                      <div className="flex bg-slate-50 dark:bg-slate-900 border border-slate-200/40 dark:border-slate-750 p-0.5 rounded-lg">
+                        <button
+                          type="button"
+                          onClick={() => setSpeechVoiceType("female")}
+                          className={`px-1.5 py-0.5 text-[9px] font-bold rounded-md transition cursor-pointer ${speechVoiceType === "female" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-400"}`}
+                          title="Female Tutor Voice"
+                        >
+                          👩 Female
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSpeechVoiceType("male")}
+                          className={`px-1.5 py-0.5 text-[9px] font-bold rounded-md transition cursor-pointer ${speechVoiceType === "male" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-400"}`}
+                          title="Male Tutor Voice"
+                        >
+                          👨 Male
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-1.5">
+                      {speakingMsgId === msg.id ? (
+                        <>
+                          {/* Rewind */}
+                          <button
+                            type="button"
+                            onClick={rewindSentence}
+                            disabled={currentSegmentIndex === 0}
+                            className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent"
+                            title="Previous Sentence"
+                          >
+                            <Rewind className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Play/Pause */}
+                          <button
+                            type="button"
+                            onClick={togglePauseVoiceExplanation}
+                            className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 border border-amber-100 dark:border-amber-900/30 text-[10px] font-black rounded-lg transition flex items-center space-x-1 cursor-pointer"
+                          >
+                            {isSpeakingPaused ? <Play className="w-2.5 h-2.5 fill-current" /> : <Pause className="w-2.5 h-2.5 fill-current" />}
+                            <span>{isSpeakingPaused ? "Resume" : "Pause"}</span>
+                          </button>
+
+                          {/* Skip Forward */}
+                          <button
+                            type="button"
+                            onClick={forwardSentence}
+                            disabled={currentSegmentIndex >= textSegments.length - 1}
+                            className="p-1 text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-md transition disabled:opacity-30 disabled:hover:bg-transparent"
+                            title="Next Sentence"
+                          >
+                            <FastForward className="w-3.5 h-3.5" />
+                          </button>
+
+                          {/* Stop */}
+                          <button
+                            type="button"
+                            onClick={stopVoiceExplanation}
+                            className="px-2.5 py-1 bg-rose-50 dark:bg-rose-950/20 text-rose-500 hover:bg-rose-100 border border-rose-100 dark:border-rose-900/30 text-[10px] font-black rounded-lg transition flex items-center space-x-1 cursor-pointer"
+                          >
+                            <Square className="w-2.5 h-2.5 fill-current" />
+                            <span>Stop</span>
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => startVoiceExplanation(msg.text, msg.id)}
+                          className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black rounded-lg transition flex items-center space-x-1 cursor-pointer shadow-sm shadow-indigo-500/10"
+                        >
+                          <Play className="w-2.5 h-2.5 fill-current" />
+                          <span>Start Voice Explanation</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 
-                  <div className="flex items-center space-x-1.5">
-                    {speakingMsgId === msg.id ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={togglePauseVoiceExplanation}
-                          className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 border border-amber-100 dark:border-amber-900/30 text-[10px] font-black rounded-lg transition flex items-center space-x-1 cursor-pointer"
-                        >
-                          {isSpeakingPaused ? <Play className="w-2.5 h-2.5 fill-current" /> : <Pause className="w-2.5 h-2.5 fill-current" />}
-                          <span>{isSpeakingPaused ? "Resume" : "Pause"}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={stopVoiceExplanation}
-                          className="px-2.5 py-1 bg-rose-50 dark:bg-rose-950/20 text-rose-500 hover:bg-rose-100 border border-rose-100 dark:border-rose-900/30 text-[10px] font-black rounded-lg transition flex items-center space-x-1 cursor-pointer"
-                        >
-                          <Square className="w-2.5 h-2.5 fill-current" />
-                          <span>Stop</span>
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => startVoiceExplanation(msg.text, msg.id)}
-                        className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black rounded-lg transition flex items-center space-x-1 cursor-pointer shadow-sm shadow-indigo-500/10"
-                      >
-                        <Play className="w-2.5 h-2.5 fill-current" />
-                        <span>Start Voice Explanation</span>
-                      </button>
-                    )}
-                  </div>
+                  {/* Live playback tracking or loading status */}
+                  {speakingMsgId === msg.id && (
+                    <div className="bg-slate-50/80 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 p-2 rounded-xl flex flex-col gap-1.5 transition-all">
+                      <div className="flex items-center justify-between text-[9px] font-bold text-slate-400">
+                        <span className="flex items-center space-x-1">
+                          {isAudioLoading ? (
+                            <span className="flex h-2 w-2 relative">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+                            </span>
+                          ) : (
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                          )}
+                          <span>{isAudioLoading ? "Generating high-quality voice stream..." : isSpeakingPaused ? "Paused" : "Playing tutor audio"}</span>
+                        </span>
+                        <span className="font-mono bg-slate-200/50 dark:bg-slate-800 px-1.5 py-0.5 rounded text-indigo-600 dark:text-indigo-400">
+                          Sentence {currentSegmentIndex + 1} of {textSegments.length}
+                        </span>
+                      </div>
+
+                      {/* Current spoken text highlight preview */}
+                      {textSegments[currentSegmentIndex] && (
+                        <p className="text-[10px] text-slate-500 dark:text-slate-400 italic bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 p-1.5 rounded-lg line-clamp-2">
+                          "{textSegments[currentSegmentIndex]}"
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

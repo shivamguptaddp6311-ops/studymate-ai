@@ -4,7 +4,8 @@ import { MOTIVATIONAL_QUOTES } from "../data";
 import { motion, AnimatePresence } from "motion/react";
 import { 
   Sparkles, Calendar, Bell, Trophy, Plus, Clock, Play, CheckCircle2, 
-  X, Check, Flame, ChevronRight, BookOpen, AlertTriangle, User, Award, Timer
+  X, Check, Flame, ChevronRight, BookOpen, AlertTriangle, User, Award, Timer,
+  Mic, Camera, Image as ImageIcon
 } from "lucide-react";
 
 interface DashboardProps {
@@ -43,11 +44,118 @@ export default function Dashboard({
   
   // Permissions gateway states
   const [showPermissionsModal, setShowPermissionsModal] = useState(false);
-  const [permsState, setPermsState] = useState({
-    notifications: true,
-    speaker: true,
-    gallery: true
+  const [permissions, setPermissions] = useState<{
+    notifications: "default" | "granted" | "denied";
+    camera: "default" | "granted" | "denied";
+    microphone: "default" | "granted" | "denied";
+    gallery: "default" | "granted" | "denied";
+  }>(() => {
+    try {
+      const stored = localStorage.getItem("studymate_permissions_store");
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch (e) {}
+    return {
+      notifications: "default",
+      camera: "default",
+      microphone: "default",
+      gallery: "default"
+    };
   });
+
+  const updatePermission = (key: keyof typeof permissions, status: "default" | "granted" | "denied") => {
+    setPermissions(prev => {
+      const updated = { ...prev, [key]: status };
+      localStorage.setItem("studymate_permissions_store", JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const requestNotification = async () => {
+    try {
+      if (typeof window !== "undefined" && "Notification" in window) {
+        const permission = await Notification.requestPermission();
+        updatePermission("notifications", permission);
+        return permission;
+      } else {
+        updatePermission("notifications", "granted");
+        return "granted";
+      }
+    } catch (e) {
+      updatePermission("notifications", "denied");
+      return "denied";
+    }
+  };
+
+  const requestCamera = async () => {
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream.getTracks().forEach((track) => track.stop());
+        updatePermission("camera", "granted");
+        return "granted";
+      } else {
+        updatePermission("camera", "granted");
+        return "granted";
+      }
+    } catch (e) {
+      console.warn("Camera media access blocked:", e);
+      updatePermission("camera", "denied");
+      return "denied";
+    }
+  };
+
+  const requestMicrophone = async () => {
+    try {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+        updatePermission("microphone", "granted");
+        return "granted";
+      } else {
+        updatePermission("microphone", "granted");
+        return "granted";
+      }
+    } catch (e) {
+      console.warn("Microphone access blocked:", e);
+      updatePermission("microphone", "denied");
+      return "denied";
+    }
+  };
+
+  const requestGallery = async () => {
+    try {
+      updatePermission("gallery", "granted");
+      return "granted";
+    } catch (e) {
+      updatePermission("gallery", "denied");
+      return "denied";
+    }
+  };
+
+  const requestAllPermissions = async () => {
+    const notif = await requestNotification();
+    const cam = await requestCamera();
+    const mic = await requestMicrophone();
+    const gal = await requestGallery();
+
+    if (notif === "granted" || cam === "granted" || mic === "granted" || gal === "granted") {
+      try {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.25);
+        gain.gain.setValueAtTime(0.08, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.25);
+      } catch (e) {}
+    }
+  };
 
   const permissionKey = `studymate_permissions_asked_${profile.fullName.replace(/[^a-zA-Z0-9]/g, "_")}`;
 
@@ -62,8 +170,8 @@ export default function Dashboard({
     }, 1000);
 
     // Permission popup trigger once
-    const hasAsked = localStorage.getItem(permissionKey);
-    if (hasAsked !== "true") {
+    const hasAsked = localStorage.getItem(permissionKey) === "true" || localStorage.getItem("studymate_permissions_requested") === "true";
+    if (!hasAsked) {
       const timer = setTimeout(() => {
         setShowPermissionsModal(true);
       }, 1200);
@@ -605,65 +713,122 @@ export default function Dashboard({
                   </p>
                 </div>
 
-                <div className="space-y-3 bg-slate-50 dark:bg-slate-950/50 p-4 rounded-2xl border border-slate-100 dark:border-slate-800/80">
-                  {/* Notification */}
-                  <label className="flex items-start space-x-3.5 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={permsState.notifications}
-                      onChange={(e) => setPermsState({ ...permsState, notifications: e.target.checked })}
-                      className="mt-0.5 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
-                    />
-                    <div>
-                      <span className="block text-xs font-bold text-slate-700 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                        🔔 Notification Access
-                      </span>
-                      <span className="block text-[10px] text-slate-400 font-medium leading-relaxed">
-                        Enable daily study alarms, morning motivational reminders, and active revision nudges.
-                      </span>
-                    </div>
-                  </label>
+                <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/30 border border-indigo-100/40 dark:border-indigo-900/40 rounded-2xl text-center space-y-2 shadow-sm">
+                  <button
+                    type="button"
+                    onClick={requestAllPermissions}
+                    className="w-full py-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-[11px] font-black rounded-xl shadow-sm cursor-pointer transition flex items-center justify-center space-x-1"
+                  >
+                    <span>Grant All Required Permissions Together</span>
+                  </button>
+                </div>
 
-                  {/* Speaker */}
-                  <label className="flex items-start space-x-3.5 cursor-pointer group pt-2.5 border-t border-slate-100 dark:border-slate-800/60">
-                    <input
-                      type="checkbox"
-                      checked={permsState.speaker}
-                      onChange={(e) => setPermsState({ ...permsState, speaker: e.target.checked })}
-                      className="mt-0.5 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
-                    />
-                    <div>
-                      <span className="block text-xs font-bold text-slate-700 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                        🔊 Speaker & Audio Output
-                      </span>
-                      <span className="block text-[10px] text-slate-400 font-medium leading-relaxed">
-                        Enable male/female voice explanations for textbook chats and custom game sound effects.
-                      </span>
+                <div className="space-y-3 max-h-[280px] overflow-y-auto pr-1 text-left">
+                  {/* Notifications */}
+                  <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Bell className="w-4 h-4 text-indigo-500" />
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">Notifications</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={requestNotification}
+                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black tracking-wider uppercase shadow-sm transition cursor-pointer ${
+                          permissions.notifications === "granted"
+                            ? "bg-emerald-500 text-white"
+                            : "bg-indigo-600 hover:bg-indigo-500 text-white"
+                        }`}
+                      >
+                        {permissions.notifications === "granted" ? "Granted ✓" : "Enable"}
+                      </button>
                     </div>
-                  </label>
+                    {permissions.notifications === "denied" && (
+                      <p className="text-[9px] bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 p-2 rounded-lg font-semibold">
+                        🔔 Notification permission has been blocked. Click the lock icon in the URL bar, enable notifications, and click <span className="underline cursor-pointer font-black hover:text-red-500" onClick={requestNotification}>Retry</span>.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Camera */}
+                  <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Camera className="w-4 h-4 text-indigo-500" />
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">AI Scanner Camera</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={requestCamera}
+                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black tracking-wider uppercase shadow-sm transition cursor-pointer ${
+                          permissions.camera === "granted"
+                            ? "bg-emerald-500 text-white"
+                            : "bg-indigo-600 hover:bg-indigo-500 text-white"
+                        }`}
+                      >
+                        {permissions.camera === "granted" ? "Granted ✓" : "Enable"}
+                      </button>
+                    </div>
+                    {permissions.camera === "denied" && (
+                      <p className="text-[9px] bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 p-2 rounded-lg font-semibold">
+                        📸 Camera access is blocked. Click the lock icon in the URL bar, enable camera, and click <span className="underline cursor-pointer font-black hover:text-red-500" onClick={requestCamera}>Retry</span>.
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Microphone */}
+                  <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Mic className="w-4 h-4 text-indigo-500" />
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">Microphone</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={requestMicrophone}
+                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black tracking-wider uppercase shadow-sm transition cursor-pointer ${
+                          permissions.microphone === "granted"
+                            ? "bg-emerald-500 text-white"
+                            : "bg-indigo-600 hover:bg-indigo-500 text-white"
+                        }`}
+                      >
+                        {permissions.microphone === "granted" ? "Granted ✓" : "Enable"}
+                      </button>
+                    </div>
+                    {permissions.microphone === "denied" && (
+                      <p className="text-[9px] bg-red-50 dark:bg-red-950/30 text-red-600 dark:text-red-400 p-2 rounded-lg font-semibold">
+                        🎙️ Microphone access is blocked. Click the lock icon in the URL bar, enable microphone, and click <span className="underline cursor-pointer font-black hover:text-red-500" onClick={requestMicrophone}>Retry</span>.
+                      </p>
+                    )}
+                  </div>
 
                   {/* Gallery */}
-                  <label className="flex items-start space-x-3.5 cursor-pointer group pt-2.5 border-t border-slate-100 dark:border-slate-800/60">
-                    <input
-                      type="checkbox"
-                      checked={permsState.gallery}
-                      onChange={(e) => setPermsState({ ...permsState, gallery: e.target.checked })}
-                      className="mt-0.5 rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
-                    />
-                    <div>
-                      <span className="block text-xs font-bold text-slate-700 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                        📸 Gallery & Live Camera Access
-                      </span>
-                      <span className="block text-[10px] text-slate-400 font-medium leading-relaxed">
-                        Enables live homework question scanning, custom hand-cropping selection, and image analysis.
-                      </span>
+                  <div className="p-3 bg-slate-50 dark:bg-slate-950 border border-slate-100 dark:border-slate-800 rounded-2xl">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <ImageIcon className="w-4 h-4 text-indigo-500" />
+                        <span className="text-xs font-bold text-slate-700 dark:text-slate-200">Gallery / File Access</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={requestGallery}
+                        className={`px-2.5 py-1 rounded-lg text-[9px] font-black tracking-wider uppercase shadow-sm transition cursor-pointer ${
+                          permissions.gallery === "granted"
+                            ? "bg-emerald-500 text-white"
+                            : "bg-indigo-600 hover:bg-indigo-500 text-white"
+                        }`}
+                      >
+                        {permissions.gallery === "granted" ? "Granted ✓" : "Enable"}
+                      </button>
                     </div>
-                  </label>
+                  </div>
                 </div>
 
                 <button
+                  type="button"
                   onClick={() => {
                     localStorage.setItem(permissionKey, "true");
+                    localStorage.setItem("studymate_permissions_requested", "true");
                     setShowPermissionsModal(false);
                     try {
                       const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();

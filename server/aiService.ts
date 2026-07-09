@@ -1,7 +1,12 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import crypto from "crypto";
 
 dotenv.config();
+
+// Simple in-memory response cache to optimize quota usage and speed up repetitive tasks
+const responseCache = new Map<string, { text: string; providerUsed: AIProvider; timestamp: number }>();
+const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL
 
 // Initialize Gemini client lazily to avoid startup crashes if key is missing
 let aiInstance: GoogleGenAI | null = null;
@@ -82,6 +87,26 @@ export async function executeAIRequest(options: {
 }): Promise<AIResponse> {
   const { messages, systemInstruction, image, preferredProvider = "auto", responseSchema } = options;
 
+  // Create unique cache key for lookup
+  const cacheKeyInput = JSON.stringify({
+    messages: messages.map(m => ({ role: m.role, content: m.content })),
+    systemInstruction,
+    image: image ? image.substring(0, 100) : "",
+    imageLen: image ? image.length : 0,
+    preferredProvider,
+    responseSchema: responseSchema ? JSON.stringify(responseSchema) : ""
+  });
+  const cacheKey = crypto.createHash("md5").update(cacheKeyInput).digest("hex");
+
+  const cached = responseCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
+    console.log(`[AIService] Cache HIT for key: ${cacheKey}`);
+    return {
+      text: cached.text,
+      providerUsed: cached.providerUsed
+    };
+  }
+
   // Determine list of providers to try
   const config = getConfiguredProviders();
   const fallbackOrder: AIProvider[] = ["gemini", "openai", "groq", "openrouter", "anthropic"];
@@ -122,25 +147,40 @@ export async function executeAIRequest(options: {
       console.log(`[AIService] Attempting request using provider: ${provider}`);
       let resultText = "";
 
+      // Append active provider context to systemInstruction so the model knows which engine is executing the request
+      let activeSystemInstruction = systemInstruction || "";
+      const providerContext = `\n\n[Active AI Engine Context: You are currently running on the "${provider}" provider backend. If the user asks which AI provider, model, engine, or backend you are currently using, you MUST truthfully tell them that you are currently using ${provider}.]`;
+      if (activeSystemInstruction) {
+        activeSystemInstruction += providerContext;
+      } else {
+        activeSystemInstruction = providerContext;
+      }
+
       if (provider === "gemini") {
-        resultText = await callGemini(messages, systemInstruction, image, responseSchema);
+        resultText = await callGemini(messages, activeSystemInstruction, image, responseSchema);
       } else if (provider === "openai") {
-        resultText = await callOpenAI(messages, systemInstruction, image, responseSchema);
+        resultText = await callOpenAI(messages, activeSystemInstruction, image, responseSchema);
       } else if (provider === "groq") {
-        resultText = await callGroq(messages, systemInstruction, image, responseSchema);
+        resultText = await callGroq(messages, activeSystemInstruction, image, responseSchema);
       } else if (provider === "openrouter") {
-        resultText = await callOpenRouter(messages, systemInstruction, image, responseSchema);
+        resultText = await callOpenRouter(messages, activeSystemInstruction, image, responseSchema);
       } else if (provider === "anthropic") {
-        resultText = await callAnthropic(messages, systemInstruction, image, responseSchema);
+        resultText = await callAnthropic(messages, activeSystemInstruction, image, responseSchema);
       }
 
       console.log(`[AIService] Successfully received response from provider: ${provider}`);
+      // Save in cache
+      responseCache.set(cacheKey, {
+        text: resultText,
+        providerUsed: provider,
+        timestamp: Date.now()
+      });
       return {
         text: resultText,
         providerUsed: provider
       };
     } catch (err: any) {
-      console.error(`[AIService] Provider ${provider} failed:`, err.message || err);
+      console.warn(`[AIService] Provider ${provider} failed:`, err.message || err);
       lastError = err;
       // Continue to next provider in fallback loop
     }
@@ -206,17 +246,38 @@ async function callGemini(
     config.responseSchema = responseSchema;
   }
 
-  const response = await gemini.models.generateContent({
-    model: "gemini-3.5-flash",
-    contents,
-    config
-  });
+  try {
+    const response = await gemini.models.generateContent({
+      model: "gemini-3.5-flash",
+      contents,
+      config
+    });
 
-  if (!response.text) {
-    throw new Error("Empty text response from Gemini");
+    if (!response.text) {
+      throw new Error("Empty text response from Gemini");
+    }
+
+    return response.text;
+  } catch (err: any) {
+    const errMsg = err?.message || String(err);
+    if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota")) {
+      console.warn("[AIService] gemini-3.5-flash hit 429/quota limit. Retrying with gemini-3.1-flash-lite...");
+      try {
+        const fallbackResponse = await gemini.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents,
+          config
+        });
+        if (fallbackResponse.text) {
+          console.log("[AIService] Successfully resolved request using gemini-3.1-flash-lite fallback.");
+          return fallbackResponse.text;
+        }
+      } catch (fallbackErr) {
+        console.error("[AIService] gemini-3.1-flash-lite fallback also failed:", fallbackErr);
+      }
+    }
+    throw err;
   }
-
-  return response.text;
 }
 
 async function callOpenAI(

@@ -28,8 +28,8 @@ export default function SettingsView({ darkMode, onToggleDarkMode, profile }: Se
     fetch("/api/ai/providers")
       .then((res) => res.json())
       .then((data) => {
-        if (data && data.providers) {
-          setProviderStatuses(data.providers);
+        if (data) {
+          setProviderStatuses(data);
         }
       })
       .catch((err) => console.error("Error fetching providers:", err));
