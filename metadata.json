@@ -1,5 +1,5 @@
 {
-  "name": "StudyMate",
+  "name": "StudyMate AI",
   "description": "An all-in-one productivity app for students featuring task management, alarms, study planner, habit tracker, calendar, Pomodoro timer, analytics, an advanced AI Study Assistant, and an AI-moderated Global Study Community Chat room.",
   "requestFramePermissions": [
     "camera"

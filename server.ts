@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
+import { executeAIRequest, getConfiguredProviders, AIProvider, AIMessage } from "./server/aiService";
 
 dotenv.config();
 
@@ -118,59 +119,24 @@ const lastMessageTimes: { [email: string]: number } = {};
 // Setup JSON body parsing with large limit for image uploads
 app.use(express.json({ limit: "25mb" }));
 
-// Lazy initializer for Gemini SDK as per security guidelines
-let aiInstance: GoogleGenAI | null = null;
-function getAI(): GoogleGenAI {
-  if (!aiInstance) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not configured. Please add it in Settings > Secrets.");
-    }
-    aiInstance = new GoogleGenAI({
-      apiKey: apiKey,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-      },
-    });
-  }
-  return aiInstance;
-}
-
 // ----------------------------------------------------
 // API ROUTES FIRST
 // ----------------------------------------------------
 
+// Get configured/available AI providers
+app.get("/api/ai/providers", (req, res) => {
+  try {
+    const providers = getConfiguredProviders();
+    res.json(providers);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to fetch providers." });
+  }
+});
+
 // 1. AI Solver Route - Multi-modal OCR & Step-by-Step Question Solver
 app.post("/api/gemini/solve", async (req, res) => {
   try {
-    const { prompt, image, subject, grade, favSubjects, weakSubjects, explainBriefly } = req.body;
-    const ai = getAI();
-
-    const parts: any[] = [];
-
-    // If an image is uploaded (base64 string)
-    if (image) {
-      // Robust split parsing for base64 Data URL to handle varying MIME types and formatting securely
-      let mimeType = "image/png";
-      let base64Data = image.trim();
-
-      if (base64Data.startsWith("data:")) {
-        const urlParts = base64Data.split(";base64,");
-        if (urlParts.length === 2) {
-          mimeType = urlParts[0].replace("data:", "").trim();
-          base64Data = urlParts[1].trim();
-        }
-      }
-
-      parts.push({
-        inlineData: {
-          mimeType: mimeType,
-          data: base64Data,
-        },
-      });
-    }
+    const { prompt, image, subject, grade, favSubjects, weakSubjects, explainBriefly, provider = "auto" } = req.body;
 
     // Prepare core prompt instructions
     const systemInstruction = `You are StudyMate AI, an advanced expert academic tutor and general-knowledge companion, as powerful and unrestricted as Gemini or ChatGPT.
@@ -223,43 +189,43 @@ JSON schema to match:
       }
     }
     
-    parts.push({ text: userPrompt });
+    const messages = [{ role: "user" as const, content: userPrompt }];
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: { parts },
-      config: {
-        systemInstruction: systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            ocrText: { type: Type.STRING },
-            subject: { type: Type.STRING },
-            topic: { type: Type.STRING },
-            steps: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            finalAnswer: { type: Type.STRING },
-            conceptualExplanation: { type: Type.STRING },
-            tips: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            practiceQuestions: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            }
-          },
-          required: ["ocrText", "subject", "topic", "steps", "finalAnswer", "conceptualExplanation", "tips", "practiceQuestions"]
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        ocrText: { type: Type.STRING },
+        subject: { type: Type.STRING },
+        topic: { type: Type.STRING },
+        steps: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        },
+        finalAnswer: { type: Type.STRING },
+        conceptualExplanation: { type: Type.STRING },
+        tips: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        },
+        practiceQuestions: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
         }
-      }
+      },
+      required: ["ocrText", "subject", "topic", "steps", "finalAnswer", "conceptualExplanation", "tips", "practiceQuestions"]
+    };
+
+    const response = await executeAIRequest({
+      messages,
+      systemInstruction,
+      image,
+      preferredProvider: provider as AIProvider,
+      responseSchema
     });
 
     const responseText = response.text;
     if (!responseText) {
-      throw new Error("No response received from Gemini model.");
+      throw new Error("No response received from AI model.");
     }
 
     // Try parsing JSON with fallback cleanup for any markdown code blocks
@@ -277,7 +243,7 @@ JSON schema to match:
 
     res.json(parsedResult);
   } catch (error: any) {
-    console.error("Gemini solver error:", error);
+    console.error("AI solver error:", error);
     res.status(500).json({ error: error.message || "Failed to solve the question. Please try again." });
   }
 });
@@ -285,49 +251,25 @@ JSON schema to match:
 // 2. Interactive Tutor Chat - Follow-up and conversation
 app.post("/api/gemini/chat", async (req, res) => {
   try {
-    const { message, history, image } = req.body;
-    const ai = getAI();
+    const { message, history, image, provider = "auto" } = req.body;
 
-    // Reconstruct conversation history to gemini structure without duplicate consecutive roles
+    // Reconstruct conversation history to clean AIMessage format
     // history format: Array<{ role: 'user' | 'model', message: string }>
-    const contents: any[] = [];
+    const messages: AIMessage[] = [];
     if (history && Array.isArray(history)) {
       history.forEach((h: any) => {
         if (h.message && h.message.trim()) {
-          contents.push({
+          messages.push({
             role: h.role === "user" ? "user" : "model",
-            parts: [{ text: h.message }]
+            content: h.message
           });
         }
       });
     }
 
-    const currentParts: any[] = [{ text: message || "Hello StudyMate AI" }];
-
-    // If an image is provided
-    if (image) {
-      let mimeType = "image/png";
-      let base64Data = image.trim();
-
-      if (base64Data.startsWith("data:")) {
-        const urlParts = base64Data.split(";base64,");
-        if (urlParts.length === 2) {
-          mimeType = urlParts[0].replace("data:", "").trim();
-          base64Data = urlParts[1].trim();
-        }
-      }
-
-      currentParts.push({
-        inlineData: {
-          mimeType: mimeType,
-          data: base64Data,
-        }
-      });
-    }
-
-    contents.push({
+    messages.push({
       role: "user",
-      parts: currentParts
+      content: message || "Hello StudyMate AI"
     });
 
     const systemInstruction = `You are StudyMate AI, the trusted AI assistant for learning, work, creativity, coding, writing, research, productivity, and everyday conversations on the StudyMate platform.
@@ -386,17 +328,16 @@ Response Style:
   4. Ask whether the user wants more details.
 - Avoid unnecessary repetition and be structured, brief, and honest.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents,
-      config: {
-        systemInstruction,
-      }
+    const response = await executeAIRequest({
+      messages,
+      systemInstruction,
+      image,
+      preferredProvider: provider as AIProvider
     });
 
     res.json({ reply: response.text });
   } catch (error: any) {
-    console.error("Gemini chat error:", error);
+    console.error("AI chat error:", error);
     res.status(500).json({ error: error.message || "Failed to chat with AI Assistant." });
   }
 });
@@ -404,8 +345,7 @@ Response Style:
 // 2.2. Voice Explanation Script Generator
 app.post("/api/gemini/voice-script", async (req, res) => {
   try {
-    const { originalText, depth, language } = req.body;
-    const ai = getAI();
+    const { originalText, depth, language, provider = "auto" } = req.body;
     
     const systemInstruction = `You are an expert academic voice script writer. Your job is to transform any educational explanation, chat message, or academic answer into a premium, natural-sounding voice explanation script for Text-to-Speech (TTS).
     
@@ -433,20 +373,19 @@ app.post("/api/gemini/voice-script", async (req, res) => {
       "script": "The complete written text optimized for speech, with natural pauses and clear spoken terms."
     }`;
     
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: `Transform this text into a ${depth || "standard"} voice script:\n\n${originalText}`,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            script: { type: Type.STRING }
-          },
-          required: ["script"]
-        }
-      }
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        script: { type: Type.STRING }
+      },
+      required: ["script"]
+    };
+
+    const response = await executeAIRequest({
+      messages: [{ role: "user", content: `Transform this text into a ${depth || "standard"} voice script:\n\n${originalText}` }],
+      systemInstruction,
+      preferredProvider: provider as AIProvider,
+      responseSchema
     });
     
     const scriptText = response.text;
@@ -457,7 +396,7 @@ app.post("/api/gemini/voice-script", async (req, res) => {
     const parsed = JSON.parse(scriptText);
     res.json(parsed);
   } catch (error: any) {
-    console.error("Voice script generation error:", error);
+    console.error("AI voice script generation error:", error);
     // Return original text clean as fallback
     res.json({ script: req.body.originalText });
   }
@@ -466,8 +405,7 @@ app.post("/api/gemini/voice-script", async (req, res) => {
 // 2.5. Dynamic CBSE Chapter Material Generator (Textbook details on-demand)
 app.post("/api/gemini/generate-chapter-materials", async (req, res) => {
   try {
-    const { grade, subject, chapterNumber, chapterTitle } = req.body;
-    const ai = getAI();
+    const { grade, subject, chapterNumber, chapterTitle, provider = "auto" } = req.body;
 
     const prompt = `You are StudyMate AI, the ultimate expert academic tutor for the CBSE/NCERT curriculum.
 Generate highly detailed, comprehensive study materials for:
@@ -495,51 +433,50 @@ Respond strictly in JSON format matching this schema:
   "practiceQuestions": ["challenge question 1...", "challenge question 2..."]
 }`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            longNotes: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        longNotes: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        },
+        shortNotes: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        },
+        formulas: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        },
+        pyqs: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              question: { type: Type.STRING },
+              answer: { type: Type.STRING },
+              year: { type: Type.STRING }
             },
-            shortNotes: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            formulas: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            },
-            pyqs: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  question: { type: Type.STRING },
-                  answer: { type: Type.STRING },
-                  year: { type: Type.STRING }
-                },
-                required: ["question", "answer", "year"]
-              }
-            },
-            practiceQuestions: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
-            }
-          },
-          required: ["longNotes", "shortNotes", "formulas", "pyqs", "practiceQuestions"]
+            required: ["question", "answer", "year"]
+          }
+        },
+        practiceQuestions: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
         }
-      }
+      },
+      required: ["longNotes", "shortNotes", "formulas", "pyqs", "practiceQuestions"]
+    };
+
+    const response = await executeAIRequest({
+      messages: [{ role: "user", content: prompt }],
+      preferredProvider: provider as AIProvider,
+      responseSchema
     });
 
     res.json(JSON.parse(response.text || "{}"));
   } catch (error: any) {
-    console.error("Gemini material generator error:", error);
+    console.error("AI material generator error:", error);
     res.status(500).json({ error: error.message || "Failed to generate study materials." });
   }
 });
@@ -547,8 +484,7 @@ Respond strictly in JSON format matching this schema:
 // 3. AI Study Planner Generator
 app.post("/api/gemini/suggest-schedule", async (req, res) => {
   try {
-    const { name, grade, targetExam, dailyGoalHours, preferredTime, favSubjects, weakSubjects } = req.body;
-    const ai = getAI();
+    const { name, grade, targetExam, dailyGoalHours, preferredTime, favSubjects, weakSubjects, provider = "auto" } = req.body;
 
     const prompt = `Generate a highly personalized study planner and timetable for a student named ${name}.
 Details:
@@ -572,62 +508,61 @@ The response should be JSON structured strictly like this:
   ]
 }`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            studyTips: {
-              type: Type.ARRAY,
-              items: { type: Type.STRING }
+    const responseSchema = {
+      type: Type.OBJECT,
+      properties: {
+        studyTips: {
+          type: Type.ARRAY,
+          items: { type: Type.STRING }
+        },
+        weeklyTheme: { type: Type.STRING },
+        suggestedTimeAllocation: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              subject: { type: Type.STRING },
+              hoursPerWeek: { type: Type.INTEGER },
+              reason: { type: Type.STRING }
             },
-            weeklyTheme: { type: Type.STRING },
-            suggestedTimeAllocation: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  subject: { type: Type.STRING },
-                  hoursPerWeek: { type: Type.INTEGER },
-                  reason: { type: Type.STRING }
-                },
-                required: ["subject", "hoursPerWeek", "reason"]
+            required: ["subject", "hoursPerWeek", "reason"]
+          }
+        },
+        timetable: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              day: { type: Type.STRING },
+              sessions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    time: { type: Type.STRING },
+                    subject: { type: Type.STRING },
+                    topic: { type: Type.STRING }
+                  },
+                  required: ["time", "subject", "topic"]
+                }
               }
             },
-            timetable: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  day: { type: Type.STRING },
-                  sessions: {
-                    type: Type.ARRAY,
-                    items: {
-                      type: Type.OBJECT,
-                      properties: {
-                        time: { type: Type.STRING },
-                        subject: { type: Type.STRING },
-                        topic: { type: Type.STRING }
-                      },
-                      required: ["time", "subject", "topic"]
-                    }
-                  }
-                },
-                required: ["day", "sessions"]
-              }
-            }
-          },
-          required: ["studyTips", "weeklyTheme", "suggestedTimeAllocation", "timetable"]
+            required: ["day", "sessions"]
+          }
         }
-      }
+      },
+      required: ["studyTips", "weeklyTheme", "suggestedTimeAllocation", "timetable"]
+    };
+
+    const response = await executeAIRequest({
+      messages: [{ role: "user", content: prompt }],
+      preferredProvider: provider as AIProvider,
+      responseSchema
     });
 
     res.json(JSON.parse(response.text || "{}"));
   } catch (error: any) {
-    console.error("Gemini schedule error:", error);
+    console.error("AI schedule error:", error);
     res.status(500).json({ error: error.message || "Failed to generate study plan." });
   }
 });
@@ -810,13 +745,12 @@ app.post("/api/chat/message", async (req, res) => {
       return res.status(400).json({ error: "Spam Guard: Please limit message to a maximum of 8 emojis." });
     }
 
-    // Verification 8: AI-Powered Moderation Check via Gemini API
+    // Verification 8: AI-Powered Moderation Check via Gemini API (Unified Multi AI Service)
     let isViolation = false;
     let violationReason = "";
     let violationExplain = "";
 
     try {
-      const ai = getAI();
       const systemPrompt = `You are a real-time automated Study Group Chat Moderator.
 Analyze the user's text and determine if it violates community guidelines.
 
@@ -834,22 +768,21 @@ Return strictly a JSON object matching this schema:
   "explanation": "A user-facing concise warning reason in English (e.g., 'Abusive language is not allowed' or 'URLs and photos are strictly banned in this community'), or null"
 }`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
-        contents: `Analyze this chat text: "${cleanText}"`,
-        config: {
-          systemInstruction: systemPrompt,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              isViolation: { type: Type.BOOLEAN },
-              reason: { type: Type.STRING },
-              explanation: { type: Type.STRING }
-            },
-            required: ["isViolation", "reason", "explanation"]
-          }
-        }
+      const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+          isViolation: { type: Type.BOOLEAN },
+          reason: { type: Type.STRING },
+          explanation: { type: Type.STRING }
+        },
+        required: ["isViolation", "reason", "explanation"]
+      };
+
+      const response = await executeAIRequest({
+        messages: [{ role: "user", content: `Analyze this chat text: "${cleanText}"` }],
+        systemInstruction: systemPrompt,
+        preferredProvider: "auto",
+        responseSchema
       });
 
       const resJson = JSON.parse(response.text || "{}");
@@ -857,7 +790,7 @@ Return strictly a JSON object matching this schema:
       violationReason = resJson.reason || "profanity";
       violationExplain = resJson.explanation || "Your message violates community guidelines.";
     } catch (apiErr) {
-      console.warn("Gemini moderation failed, engaging regex fallback engine:", apiErr);
+      console.warn("AI moderation failed, engaging regex fallback engine:", apiErr);
       const lowerText = cleanText.toLowerCase();
       const localBadWords = [
         "abuse", "hate", "racism", "harass", "threat", "bully", "scam", "spam",

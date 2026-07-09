@@ -103,7 +103,24 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   const [textSegments, setTextSegments] = useState<string[]>([]);
   const [autoPlayEnabled, setAutoPlayEnabled] = useState(false);
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
-  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const [speechVoiceType, setSpeechVoiceType] = useState<"female" | "male">("female");
+
+  // Sync selectedVoiceProfile with speechVoiceType
+  useEffect(() => {
+    if (selectedVoiceProfile.gender !== speechVoiceType) {
+      const firstOfGender = VOICE_PROFILES.find(p => p.gender === speechVoiceType);
+      if (firstOfGender) {
+        setSelectedVoiceProfile(firstOfGender);
+      }
+    }
+  }, [speechVoiceType]);
+
+  // Sync speechVoiceType back if selectedVoiceProfile changes
+  useEffect(() => {
+    if (selectedVoiceProfile.gender !== speechVoiceType) {
+      setSpeechVoiceType(selectedVoiceProfile.gender);
+    }
+  }, [selectedVoiceProfile]);
 
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
 
@@ -277,7 +294,8 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
           grade: profile.classGrade,
           favSubjects: profile.favoriteSubjects,
           weakSubjects: profile.weakSubjects,
-          explainBriefly: true
+          explainBriefly: true,
+          provider: localStorage.getItem("studymate_ai_provider") || "auto"
         })
       });
 
@@ -445,7 +463,8 @@ ${data.conceptualExplanation || ""}`;
           body: JSON.stringify({
             originalText: text,
             depth: requestedDepth,
-            language: speechLanguage
+            language: speechLanguage,
+            provider: localStorage.getItem("studymate_ai_provider") || "auto"
           })
         });
         if (res.ok) {
@@ -610,7 +629,8 @@ ${data.conceptualExplanation || ""}`;
         body: JSON.stringify({
           message: finalPrompt,
           history: recentHistory,
-          image: userMessage.image || undefined
+          image: userMessage.image || undefined,
+          provider: localStorage.getItem("studymate_ai_provider") || "auto"
         })
       });
 

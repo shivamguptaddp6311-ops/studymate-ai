@@ -15,7 +15,7 @@ interface EducationalGamesProps {
 }
 
 // Global Types for Game System
-type GameCategory = "all" | "math" | "memory" | "eye" | "logic" | "speed" | "focus";
+type GameCategory = "all" | "math" | "memory" | "eye" | "logic" | "speed";
 type DifficultyLevel = "easy" | "medium" | "hard" | "expert";
 
 interface Achievement {
@@ -368,28 +368,6 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       bgLight: "bg-rose-50/60 dark:bg-rose-950/10",
       borderCol: "border-rose-100 dark:border-rose-900/40",
       skillsTrained: ["Rapid Operations", "Operator Decoding", "Multi-Thread Calculations"]
-    },
-    {
-      id: "focus_dots",
-      title: "Focus Attention Tracker",
-      category: "focus",
-      desc: "Tap target colors while ignoring floating spatial distractions. Deep focus challenge to improve attention span.",
-      icon: <span className="text-2xl">🎯</span>,
-      color: "from-cyan-500 to-blue-600",
-      bgLight: "bg-cyan-50/60 dark:bg-cyan-950/20",
-      borderCol: "border-cyan-100 dark:border-cyan-900/40",
-      skillsTrained: ["Selective Attention", "Distraction Immunity", "Focus Endurance"]
-    },
-    {
-      id: "shape_focus",
-      title: "Active Shape Concentrator",
-      category: "focus",
-      desc: "Concentrate on matching specific target shapes in a fast-paced environment while tuning out noisy background alerts.",
-      icon: <span className="text-2xl">💠</span>,
-      color: "from-teal-400 to-cyan-500",
-      bgLight: "bg-teal-50/60 dark:bg-teal-950/20",
-      borderCol: "border-teal-100 dark:border-teal-900/40",
-      skillsTrained: ["Sustained Attention", "Selective Focus", "Noise Cancellation"]
     }
   ];
 
@@ -809,8 +787,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                 { id: "memory", label: "🧠 Memory Games", icon: null },
                 { id: "eye", label: "👁️ Eye Training", icon: null },
                 { id: "logic", label: "🧩 Logic & Puzzles", icon: null },
-                { id: "speed", label: "⚡ Brain Speed", icon: null },
-                { id: "focus", label: "🎯 Focus Training", icon: null }
+                { id: "speed", label: "⚡ Brain Speed", icon: null }
               ].map((cat) => (
                 <button
                   key={cat.id}
@@ -1561,26 +1538,6 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                   onFinished={(score, max, acc) => handleGameFinished("speed_ops", score, max, acc)}
                   opponentScore={isMultiplayerMatch ? opponentScore : undefined}
                   synthSound={synthSound}
-                />
-              )}
-
-              {/* FOCUS: Attention Tracker or Shape Concentrator */}
-              {activeGameId === "focus_dots" && (
-                <FocusDotsGame 
-                  difficulty={difficulty}
-                  onFinished={(score, max, acc) => handleGameFinished("focus_dots", score, max, acc)}
-                  opponentScore={isMultiplayerMatch ? opponentScore : undefined}
-                  synthSound={synthSound}
-                />
-              )}
-
-              {activeGameId === "shape_focus" && (
-                <FocusDotsGame 
-                  difficulty={difficulty}
-                  onFinished={(score, max, acc) => handleGameFinished("shape_focus", score, max, acc)}
-                  opponentScore={isMultiplayerMatch ? opponentScore : undefined}
-                  synthSound={synthSound}
-                  useShapes={true}
                 />
               )}
             </div>
@@ -2692,19 +2649,75 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
   const [accuracyList, setAccuracyList] = useState<number[]>([]);
   
   // Ball State: Ball 0 is the correct one (Target red ball)
-  const [balls, setBalls] = useState([
-    { id: 0, x: 25, y: 50, dx: 1.5, dy: 1.2, isTarget: true },
-    { id: 1, x: 50, y: 25, dx: -1.2, dy: 1.5, isTarget: false },
-    { id: 2, x: 75, y: 75, dx: 1.4, dy: -1.3, isTarget: false }
+  const [balls, setBalls] = useState<any[]>([
+    { id: 0, cx: 25, cy: 50, x: 25, y: 50, dx: 1.5, dy: 1.2, isTarget: true },
+    { id: 1, cx: 50, cy: 25, x: 50, y: 25, dx: -1.2, dy: 1.5, isTarget: false },
+    { id: 2, cx: 75, cy: 75, x: 75, y: 75, dx: 1.4, dy: -1.3, isTarget: false }
   ]);
 
   const [mixTimeLeft, setMixTimeLeft] = useState(10);
   const [mixingElapsedMs, setMixingElapsedMs] = useState(0);
   const [selectedBallId, setSelectedBallId] = useState<number | null>(null);
 
+  // Available patterns list
+  const PATTERNS_LIST = ["linear", "circular", "wave", "figure8", "vortex"];
+  const [roundPatterns, setRoundPatterns] = useState<string[]>(["linear", "wave", "circular"]);
+
+  const currentPattern = roundPatterns[round - 1] || "linear";
+
+  const getPatternLabel = (p: string) => {
+    switch (p) {
+      case "circular": return "Circular Orbit";
+      case "wave": return "Sine Wave";
+      case "figure8": return "Infinity Loop";
+      case "vortex": return "Spiraling Vortex";
+      default: return "Bouncy Linear";
+    }
+  };
+
+  const getBallPosition = (ball: any, pattern: string, elapsedMs: number) => {
+    const t = elapsedMs / 1000; // in seconds
+    let x = ball.cx;
+    let y = ball.cy;
+
+    if (pattern === "circular") {
+      const radius = 7;
+      const speed = 4; // rad/sec
+      const offsetAngle = ball.id * (2 * Math.PI / 8); 
+      x = ball.cx + radius * Math.cos(t * speed + offsetAngle);
+      y = ball.cy + radius * Math.sin(t * speed + offsetAngle);
+    } else if (pattern === "wave") {
+      const amplitude = 9;
+      const frequency = 4.5;
+      const length = Math.sqrt(ball.dx * ball.dx + ball.dy * ball.dy) || 1;
+      const perpX = -ball.dy / length;
+      const perpY = ball.dx / length;
+      const wave = amplitude * Math.sin(t * frequency + ball.id);
+      x = ball.cx + perpX * wave;
+      y = ball.cy + perpY * wave;
+    } else if (pattern === "figure8") {
+      const amplitude = 8;
+      const speed = 3.5;
+      const offset = ball.id * 1.2;
+      x = ball.cx + amplitude * Math.sin((t * speed) + offset);
+      y = ball.cy + (amplitude / 1.7) * Math.sin(2 * ((t * speed) + offset));
+    } else if (pattern === "vortex") {
+      const angleSpeed = 3.0;
+      const baseRadius = 10;
+      const radialOscillation = 3 * Math.sin(t * 3.5);
+      const angle = t * angleSpeed + ball.id * 1.1;
+      x = ball.cx + (baseRadius + radialOscillation) * Math.cos(angle);
+      y = ball.cy + (baseRadius + radialOscillation) * Math.sin(angle);
+    }
+
+    x = Math.max(6, Math.min(94, x));
+    y = Math.max(10, Math.min(90, y));
+
+    return { x, y };
+  };
+
   // Initialize and Reset Balls for a new round
   const initRound = (r: number = round) => {
-    // 1st round: base speed, 2nd round: 1.5x, 3rd round: 2.1x speed
     const speedMultiplier = r === 1 ? 1.0 : r === 2 ? 1.5 : 2.1;
     let speed = 1.2 * speedMultiplier;
     if (difficulty === "easy") speed = 1.0 * speedMultiplier;
@@ -2712,26 +2725,49 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
     else if (difficulty === "hard") speed = 2.2 * speedMultiplier;
     else if (difficulty === "expert") speed = 3.0 * speedMultiplier;
 
-    setBalls([
-      { id: 0, x: 20 + Math.random() * 15, y: 20 + Math.random() * 60, dx: speed * (Math.random() > 0.5 ? 1 : -1), dy: speed * (Math.random() > 0.5 ? 1 : -1), isTarget: true },
-      { id: 1, x: 40 + Math.random() * 15, y: 20 + Math.random() * 60, dx: speed * (Math.random() > 0.5 ? 1 : -1), dy: speed * (Math.random() > 0.5 ? 1 : -1), isTarget: false },
-      { id: 2, x: 65 + Math.random() * 15, y: 20 + Math.random() * 60, dx: speed * (Math.random() > 0.5 ? 1 : -1), dy: speed * (Math.random() > 0.5 ? 1 : -1), isTarget: false }
-    ]);
+    // Number of balls increases per round: Round 1: 4, Round 2: 6, Round 3: 8
+    const numBalls = r === 1 ? 4 : r === 2 ? 6 : 8;
+
+    const newBalls = [];
+    for (let i = 0; i < numBalls; i++) {
+      const x = 15 + (i * (70 / numBalls)) + Math.random() * 8;
+      const y = 20 + Math.random() * 55;
+      const dx = speed * (Math.random() > 0.5 ? 1 : -1) * (0.8 + Math.random() * 0.4);
+      const dy = speed * (Math.random() > 0.5 ? 1 : -1) * (0.8 + Math.random() * 0.4);
+      
+      newBalls.push({
+        id: i,
+        cx: x,
+        cy: y,
+        x: x,
+        y: y,
+        dx,
+        dy,
+        isTarget: i === 0
+      });
+    }
+
+    setBalls(newBalls);
     setSelectedBallId(null);
     setMixingElapsedMs(0);
 
-    // Round 1: 10s, Round 2: 15s, Round 3: 20s
     const duration = r === 1 ? 10 : r === 2 ? 15 : 20;
     setMixTimeLeft(duration);
   };
 
-  // Intro transition to Preview
   const startRound = () => {
+    // Shuffle patterns for this entire game session
+    const shuffled = [...PATTERNS_LIST].sort(() => Math.random() - 0.5);
+    setRoundPatterns(shuffled.slice(0, 3));
+
+    setRound(1);
+    setScore(0);
+    setAccuracyList([]);
+
     initRound(1);
     setPhase("preview");
     synthSound(520, "sine", 0.15);
     
-    // Preview for 2.5 seconds, then start mixing
     setTimeout(() => {
       setPhase("mixing");
       setMixingElapsedMs(0);
@@ -2747,36 +2783,42 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
       setMixingElapsedMs(prev => prev + 30);
       setBalls(prevBalls => {
         return prevBalls.map(ball => {
-          let nextX = ball.x + ball.dx;
-          let nextY = ball.y + ball.dy;
+          let nextCx = ball.cx + ball.dx;
+          let nextCy = ball.cy + ball.dy;
           let nextDx = ball.dx;
           let nextDy = ball.dy;
 
-          // Bounce boundaries
-          if (nextX <= 6 || nextX >= 94) {
+          if (nextCx <= 10 || nextCx >= 90) {
             nextDx = -ball.dx;
-            nextX = Math.max(6, Math.min(94, nextX));
+            nextCx = Math.max(10, Math.min(90, nextCx));
           }
-          if (nextY <= 10 || nextY >= 90) {
+          if (nextCy <= 15 || nextCy >= 85) {
             nextDy = -ball.dy;
-            nextY = Math.max(10, Math.min(90, nextY));
+            nextCy = Math.max(15, Math.min(85, nextCy));
           }
+
+          const { x, y } = getBallPosition(
+            { ...ball, cx: nextCx, cy: nextCy, dx: nextDx, dy: nextDy },
+            currentPattern,
+            mixingElapsedMs + 30
+          );
 
           return {
             ...ball,
-            x: nextX,
-            y: nextY,
+            cx: nextCx,
+            cy: nextCy,
             dx: nextDx,
-            dy: nextDy
+            dy: nextDy,
+            x,
+            y
           };
         });
       });
-    }, 30); // ~33fps
+    }, 30);
 
     return () => clearInterval(interval);
-  }, [phase]);
+  }, [phase, currentPattern, mixingElapsedMs]);
 
-  // Mix timer countdown
   useEffect(() => {
     if (phase !== "mixing") return;
 
@@ -2798,7 +2840,7 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
   const handleGuess = (id: number) => {
     if (phase !== "guess") return;
     setSelectedBallId(id);
-    const correct = id === 0; // Ball 0 is target
+    const correct = id === 0;
 
     setAccuracyList(prev => [...prev, correct ? 100 : 0]);
     if (correct) {
@@ -2810,10 +2852,8 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
 
     setPhase("round_result");
 
-    // Next round after 3 seconds
     setTimeout(() => {
       if (round >= 3) {
-        // Game completed! Calculate overall accuracy and end
         const overallAcc = Math.round(( (correct ? 1 : 0) + accuracyList.filter(x => x === 100).length ) / 3 * 100);
         onFinished(score + (correct ? 34 : 0), 100, overallAcc);
       } else {
@@ -2830,13 +2870,11 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
     }, 3500);
   };
 
-  // Smooth color interpolation for the red ball as it fades to white under 2 seconds (2000ms)
   const getTargetBallColor = () => {
-    if (phase === "preview") return "rgb(239, 68, 68)"; // Fully Red
-    if (phase === "guess") return "rgb(248, 250, 252)"; // Fully White/Grey
-    if (phase === "round_result") return "rgb(239, 68, 68)"; // Return to Red to show where it was!
+    if (phase === "preview") return "rgb(239, 68, 68)";
+    if (phase === "guess") return "rgb(248, 250, 252)";
+    if (phase === "round_result") return "rgb(239, 68, 68)";
     
-    // Under 2 seconds (2000ms), interpolate from red (239, 68, 68) to white (248, 250, 252)
     const ratio = Math.min(1, mixingElapsedMs / 2000);
     const r = Math.round(239 + (248 - 239) * ratio);
     const g = Math.round(68 + (250 - 68) * ratio);
@@ -2853,7 +2891,7 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
           </div>
           <div className="space-y-1.5">
             <h3 className="text-base font-black text-slate-800 dark:text-slate-100">Find the Ball in the Eye Training</h3>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto font-medium">Follow the red target ball closely! It will turn white in under 2 seconds as the balls mix. Keep your eyes locked for 10s (Round 1), 15s (Round 2), or 20s (Round 3) with increasing speed, then tap the correct ball!</p>
+            <p className="text-xs text-slate-400 max-w-sm mx-auto font-medium">Follow the red target ball closely! It will turn white in under 2 seconds. The balls will move in dynamic patterns that change every round (Linear, Circular, Wave, Infinity, or Vortex) with increasing speeds and ball counts (4, 6, 8 balls)! Keep your eyes locked, then tap the correct ball!</p>
           </div>
           <button
             type="button"
@@ -2868,7 +2906,7 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
       {phase !== "intro" && (
         <div className="space-y-4">
           <div className="flex justify-between items-center text-[10px] text-slate-400 font-extrabold uppercase bg-slate-50 dark:bg-slate-800/40 px-4 py-2 rounded-xl">
-            <span>Round {round} of 3</span>
+            <span>Round {round} of 3 ({getPatternLabel(currentPattern)})</span>
             <span>
               {phase === "preview" && <span className="text-rose-500 animate-pulse">PREVIEW: REMEMBER THE RED BALL!</span>}
               {phase === "mixing" && <span className="text-indigo-500 animate-pulse">MIXING... ⏳ {mixTimeLeft}s Left</span>}
@@ -2877,11 +2915,9 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
             </span>
           </div>
 
-          {/* Eye Training Interactive Stage */}
           <div className="relative w-full h-64 bg-slate-50 dark:bg-slate-950 border border-slate-150 dark:border-slate-800 rounded-3xl overflow-hidden shadow-inner select-none">
             {balls.map(ball => {
-              // Color calculation
-              let bgStyle = { backgroundColor: "rgb(248, 250, 252)" }; // White
+              let bgStyle = { backgroundColor: "rgb(248, 250, 252)" };
               let shadowStyle = "shadow-sm border border-slate-200 dark:border-slate-800";
               
               if (ball.isTarget) {
@@ -2935,107 +2971,6 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
           )}
         </div>
       )}
-    </div>
-  );
-}
-
-// ==========================================
-// GAME 6: FOCUS & ATTENTION DOT TRACKER
-// ==========================================
-interface FocusProps {
-  difficulty: DifficultyLevel;
-  onFinished: (score: number, max: number, accuracy: number) => void;
-  opponentScore?: number;
-  synthSound: (f: number, t?: OscillatorType, d?: number) => void;
-  useShapes?: boolean;
-}
-
-function FocusDotsGame({ difficulty, onFinished, opponentScore, synthSound, useShapes }: FocusProps) {
-  const [score, setScore] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(25);
-  const [clicks, setClicks] = useState(0);
-  const [targetDot, setTargetDot] = useState({ x: 50, y: 50 });
-
-  const updateDotPosition = () => {
-    setTargetDot({
-      x: Math.floor(Math.random() * 80) + 10,
-      y: Math.floor(Math.random() * 80) + 10
-    });
-  };
-
-  useEffect(() => {
-    updateDotPosition();
-    const interval = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          onFinished(score, clicks, clicks > 0 ? Math.round((score / (clicks * 10)) * 100) : 100);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [score, clicks]);
-
-  const handleContainerClick = () => {
-    setClicks(prev => prev + 1);
-    synthSound(150, "sawtooth", 0.1);
-  };
-
-  const handleDotClick = (e: React.MouseEvent) => {
-    e.stopPropagation(); // Stop bubbling to container click
-    setClicks(prev => prev + 1);
-    setScore(prev => prev + 10);
-    synthSound(600, "sine", 0.08);
-    updateDotPosition();
-  };
-
-  return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-6 rounded-3xl shadow-sm text-center space-y-6">
-      
-      <div className="flex justify-between items-center text-xs text-slate-500 font-semibold bg-slate-50 dark:bg-slate-800/40 px-4 py-2.5 rounded-2xl">
-        <span className="text-rose-500 font-black animate-pulse">⏳ {timeLeft}s Left</span>
-        <span>Score: {score}</span>
-      </div>
-
-      <div className="p-3.5 bg-cyan-50/50 dark:bg-cyan-950/20 border border-cyan-100 dark:border-cyan-900/30 rounded-2xl text-xs text-left text-slate-600 dark:text-slate-300 font-bold leading-normal">
-        {useShapes ? (
-          <span>Ignore the circular moving distractors and tap the <span className="text-amber-500 font-black">glowing golden diamond shape</span> as fast as you can!</span>
-        ) : (
-          <span>Ignore the moving distractors and tap the <span className="text-cyan-500 font-black">glowing primary focus dot</span> as fast as you can!</span>
-        )}
-      </div>
-
-      {/* Target exercise tracking arena box */}
-      <div 
-        onClick={handleContainerClick}
-        className="w-full h-64 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 relative overflow-hidden cursor-crosshair shadow-inner"
-      >
-        {/* Floating Decoy distracting dot */}
-        <div 
-          className="absolute w-8 h-8 rounded-full bg-rose-500/10 border-2 border-rose-500/30 animate-ping"
-          style={{ left: "20%", top: "70%" }}
-        />
-        <div 
-          className="absolute w-6 h-6 rounded-full bg-indigo-500/10 border border-indigo-500/20 animate-bounce"
-          style={{ left: "75%", top: "30%" }}
-        />
-
-        {/* Target dot or star */}
-        <button
-          type="button"
-          onClick={handleDotClick}
-          className={`absolute w-8 h-8 cursor-pointer hover:scale-115 transition-all ${
-            useShapes 
-              ? "bg-amber-500 rotate-45 rounded-sm border border-white shadow-[0_0_12px_rgba(245,158,11,0.8)] animate-pulse" 
-              : "bg-cyan-500 rounded-full border-2 border-white shadow-[0_0_12px_rgba(6,182,212,0.6)]"
-          }`}
-          style={{ left: `${targetDot.x}%`, top: `${targetDot.y}%` }}
-        />
-      </div>
-
     </div>
   );
 }

@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { UserProfile } from "../types";
 import { 
   Settings, Sun, Moon, Bell, Volume2, CloudLightning, ShieldAlert, 
-  HelpCircle, CheckCircle, Database, Lock, Eye, Play, Sparkles, RefreshCw
+  HelpCircle, CheckCircle, Database, Lock, Eye, Play, Sparkles, RefreshCw, Cpu
 } from "lucide-react";
 
 interface SettingsViewProps {
@@ -19,6 +19,26 @@ export default function SettingsView({ darkMode, onToggleDarkMode, profile }: Se
   const [voiceAssistance, setVoiceAssistance] = useState(false);
 
   const [savingBackup, setSavingBackup] = useState(false);
+  const [selectedProvider, setSelectedProvider] = useState<string>(() => {
+    return localStorage.getItem("studymate_ai_provider") || "auto";
+  });
+  const [providerStatuses, setProviderStatuses] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    fetch("/api/ai/providers")
+      .then((res) => res.json())
+      .then((data) => {
+        if (data && data.providers) {
+          setProviderStatuses(data.providers);
+        }
+      })
+      .catch((err) => console.error("Error fetching providers:", err));
+  }, []);
+
+  const handleProviderChange = (value: string) => {
+    setSelectedProvider(value);
+    localStorage.setItem("studymate_ai_provider", value);
+  };
 
   const handleBackupRequest = () => {
     setSavingBackup(true);
@@ -146,6 +166,133 @@ export default function SettingsView({ darkMode, onToggleDarkMode, profile }: Se
           </button>
         </div>
 
+      </div>
+
+      {/* AI Core & LLM Provider Engine */}
+      <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-6 rounded-3xl shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h3 className="font-extrabold text-slate-800 dark:text-slate-100 text-sm flex items-center">
+              <Cpu className="w-4.5 h-4.5 text-indigo-500 mr-1.5 animate-pulse" />
+              AI Core & LLM Provider Engine
+            </h3>
+            <p className="text-[10px] text-slate-400 max-w-xl">
+              Choose your preferred AI partner or leverage the intelligent automated system to route requests. If a provider experiences an outage, StudyMate AI automatically falls back to secondary options.
+            </p>
+          </div>
+          <div className="w-full md:w-64">
+            <label className="block text-[10px] font-bold text-slate-500 mb-1.5">Selected AI Provider</label>
+            <select
+              value={selectedProvider}
+              onChange={(e) => handleProviderChange(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-100 dark:border-slate-800 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+            >
+              <option value="auto">🌟 Auto-Fallback Mode (Recommended)</option>
+              <option value="gemini">♊ Google Gemini</option>
+              <option value="openai">🧠 OpenAI GPT-4o</option>
+              <option value="groq">⚡ Groq LLaMA 3</option>
+              <option value="openrouter">📡 OpenRouter Hub</option>
+              <option value="anthropic">🦉 Anthropic Claude 3.5</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="pt-4 border-t border-slate-50 dark:border-slate-800">
+          <span className="block text-[10px] font-bold text-slate-500 mb-3">Live Connection & Keys Status</span>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+            
+            {/* Auto Mode status */}
+            <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/25 border border-indigo-100/50 dark:border-indigo-900/50 rounded-2xl flex flex-col justify-between space-y-1.5">
+              <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-400">Auto Mode</span>
+              <span className="text-[9px] text-slate-400 leading-tight">Fallback Enabled</span>
+              <div className="flex items-center space-x-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[8px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Ready</span>
+              </div>
+            </div>
+
+            {/* Gemini status */}
+            <div className={`p-3 border rounded-2xl flex flex-col justify-between space-y-1.5 ${
+              providerStatuses.gemini 
+                ? "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800" 
+                : "bg-slate-50/50 dark:bg-slate-800/20 border-dashed border-slate-100 dark:border-slate-800"
+            }`}>
+              <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300">Gemini Key</span>
+              <span className="text-[9px] text-slate-400 leading-tight">Primary backend model</span>
+              <div className="flex items-center space-x-1">
+                <div className={`w-1.5 h-1.5 rounded-full ${providerStatuses.gemini ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span className={`text-[8px] font-bold uppercase ${providerStatuses.gemini ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>
+                  {providerStatuses.gemini ? "Configured" : "Not Found"}
+                </span>
+              </div>
+            </div>
+
+            {/* OpenAI status */}
+            <div className={`p-3 border rounded-2xl flex flex-col justify-between space-y-1.5 ${
+              providerStatuses.openai 
+                ? "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800" 
+                : "bg-slate-50/50 dark:bg-slate-800/20 border-dashed border-slate-100 dark:border-slate-800"
+            }`}>
+              <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300">OpenAI Key</span>
+              <span className="text-[9px] text-slate-400 leading-tight">GPT-4o engine</span>
+              <div className="flex items-center space-x-1">
+                <div className={`w-1.5 h-1.5 rounded-full ${providerStatuses.openai ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span className={`text-[8px] font-bold uppercase ${providerStatuses.openai ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>
+                  {providerStatuses.openai ? "Configured" : "Not Found"}
+                </span>
+              </div>
+            </div>
+
+            {/* Groq status */}
+            <div className={`p-3 border rounded-2xl flex flex-col justify-between space-y-1.5 ${
+              providerStatuses.groq 
+                ? "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800" 
+                : "bg-slate-50/50 dark:bg-slate-800/20 border-dashed border-slate-100 dark:border-slate-800"
+            }`}>
+              <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300">Groq Key</span>
+              <span className="text-[9px] text-slate-400 leading-tight">LLaMA ultra-fast engine</span>
+              <div className="flex items-center space-x-1">
+                <div className={`w-1.5 h-1.5 rounded-full ${providerStatuses.groq ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span className={`text-[8px] font-bold uppercase ${providerStatuses.groq ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>
+                  {providerStatuses.groq ? "Configured" : "Not Found"}
+                </span>
+              </div>
+            </div>
+
+            {/* OpenRouter status */}
+            <div className={`p-3 border rounded-2xl flex flex-col justify-between space-y-1.5 ${
+              providerStatuses.openrouter 
+                ? "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800" 
+                : "bg-slate-50/50 dark:bg-slate-800/20 border-dashed border-slate-100 dark:border-slate-800"
+            }`}>
+              <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300">OpenRouter Key</span>
+              <span className="text-[9px] text-slate-400 leading-tight">Universal endpoint</span>
+              <div className="flex items-center space-x-1">
+                <div className={`w-1.5 h-1.5 rounded-full ${providerStatuses.openrouter ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span className={`text-[8px] font-bold uppercase ${providerStatuses.openrouter ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>
+                  {providerStatuses.openrouter ? "Configured" : "Not Found"}
+                </span>
+              </div>
+            </div>
+
+            {/* Anthropic status */}
+            <div className={`p-3 border rounded-2xl flex flex-col justify-between space-y-1.5 ${
+              providerStatuses.anthropic 
+                ? "bg-slate-50 dark:bg-slate-800/50 border-slate-100 dark:border-slate-800" 
+                : "bg-slate-50/50 dark:bg-slate-800/20 border-dashed border-slate-100 dark:border-slate-800"
+            }`}>
+              <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300">Anthropic Key</span>
+              <span className="text-[9px] text-slate-400 leading-tight">Claude premium writing</span>
+              <div className="flex items-center space-x-1">
+                <div className={`w-1.5 h-1.5 rounded-full ${providerStatuses.anthropic ? "bg-emerald-500" : "bg-slate-400"}`} />
+                <span className={`text-[8px] font-bold uppercase ${providerStatuses.anthropic ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>
+                  {providerStatuses.anthropic ? "Configured" : "Not Found"}
+                </span>
+              </div>
+            </div>
+
+          </div>
+        </div>
       </div>
 
       {/* Safety info card */}

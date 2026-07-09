@@ -65,7 +65,8 @@ export default function Planner({
           dailyGoalHours: profile.dailyStudyGoal,
           preferredTime: profile.preferredStudyTime,
           favSubjects: profile.favoriteSubjects,
-          weakSubjects: profile.weakSubjects
+          weakSubjects: profile.weakSubjects,
+          provider: localStorage.getItem("studymate_ai_provider") || "auto"
         })
       });
 
