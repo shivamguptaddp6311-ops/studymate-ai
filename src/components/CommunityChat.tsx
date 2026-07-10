@@ -3,7 +3,8 @@ import {
   MessageSquare, Send, Users, ShieldAlert, Trash2, Slash, 
   UserMinus, UserPlus, Flag, AlertTriangle, Sparkles, CheckCircle, 
   Search, Smile, Reply, Clock, User, MapPin, Award, Info, X, 
-  Check, AlertCircle, Calendar, Shield, Volume2, VolumeX, Eye
+  Check, AlertCircle, Calendar, Shield, Volume2, VolumeX, Eye,
+  Maximize2, Minimize2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile } from "../types";
@@ -73,6 +74,8 @@ interface CommunityChatProps {
   profile: UserProfile;
   onAwardXP: (xp: number) => void;
   handleAddNotification: (title: string, message: string, type: "info" | "success" | "alert") => void;
+  isFullScreen?: boolean;
+  onToggleFullScreen?: () => void;
 }
 
 const COMMON_EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏", "💯", "🔥", "🎓", "📚", "👏", "🎉", "💡", "🚀"];
@@ -82,7 +85,13 @@ const isAdminEmail = (email: string | null | undefined): boolean => {
   return email.toLowerCase().trim() === "shivamguptaddp6312@gmail.com";
 };
 
-export default function CommunityChat({ profile, onAwardXP, handleAddNotification }: CommunityChatProps) {
+export default function CommunityChat({ 
+  profile, 
+  onAwardXP, 
+  handleAddNotification,
+  isFullScreen = false,
+  onToggleFullScreen
+}: CommunityChatProps) {
   // Authentication & Admin status helper
   const isUserAdmin = isAdminEmail(profile.emailAddress);
 
@@ -191,7 +200,12 @@ export default function CommunityChat({ profile, onAwardXP, handleAddNotificatio
       const url = searchQuery 
         ? `/api/chat/messages?search=${encodeURIComponent(searchQuery)}`
         : `/api/chat/messages`;
-      const res = await fetch(url);
+      const token = localStorage.getItem("studymate_token") || "";
+      const res = await fetch(url, {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
       const data = await res.json();
       if (Array.isArray(data)) {
         setMessages(data);
@@ -208,7 +222,12 @@ export default function CommunityChat({ profile, onAwardXP, handleAddNotificatio
     if (!isUserAdmin) return;
     setLoadingAdmin(true);
     try {
-      const res = await fetch(`/api/chat/admin/stats?email=${encodeURIComponent(profile.emailAddress)}`);
+      const token = localStorage.getItem("studymate_token") || "";
+      const res = await fetch(`/api/chat/admin/stats?email=${encodeURIComponent(profile.emailAddress)}`, {
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
       if (res.ok) {
         const data = await res.json();
         setAdminStats(data);
@@ -230,8 +249,10 @@ export default function CommunityChat({ profile, onAwardXP, handleAddNotificatio
     }
 
     // Connect Server-Sent Events stream
+    const token = localStorage.getItem("studymate_token") || "";
     const emailEnc = encodeURIComponent(profile.emailAddress);
-    const sse = new EventSource(`/api/chat/stream?email=${emailEnc}`);
+    const tokenEnc = encodeURIComponent(token);
+    const sse = new EventSource(`/api/chat/stream?email=${emailEnc}&token=${tokenEnc}`);
     sseRef.current = sse;
 
     sse.onmessage = (event) => {
@@ -398,9 +419,13 @@ export default function CommunityChat({ profile, onAwardXP, handleAddNotificatio
     const now = Date.now();
     if (now - lastTypingSent.current > 2500 && e.target.value.trim().length > 0) {
       lastTypingSent.current = now;
+      const token = localStorage.getItem("studymate_token") || "";
       fetch("/api/chat/typing", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           userEmail: profile.emailAddress,
           username: profile.nickname || profile.fullName,
@@ -432,9 +457,13 @@ export default function CommunityChat({ profile, onAwardXP, handleAddNotificatio
         repliedToUser: replyTarget ? replyTarget.username : undefined
       };
 
+      const token = localStorage.getItem("studymate_token") || "";
       const res = await fetch("/api/chat/message", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify(payload)
       });
 
@@ -497,9 +526,13 @@ export default function CommunityChat({ profile, onAwardXP, handleAddNotificatio
 
     setIsSubmittingReport(true);
     try {
+      const token = localStorage.getItem("studymate_token") || "";
       const res = await fetch("/api/chat/report", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           messageId: reportingMessage.id,
           reportedBy: profile.emailAddress,
@@ -563,9 +596,13 @@ export default function CommunityChat({ profile, onAwardXP, handleAddNotificatio
   const handleAdminAction = async (action: string, targetId?: string, targetEmail?: string) => {
     if (!isUserAdmin) return;
     try {
+      const token = localStorage.getItem("studymate_token") || "";
       const res = await fetch("/api/chat/admin/action", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           adminEmail: profile.emailAddress,
           action,
@@ -652,7 +689,10 @@ export default function CommunityChat({ profile, onAwardXP, handleAddNotificatio
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0 bg-slate-50 dark:bg-slate-950">
+    <div 
+      id="studymate_chat_panel" 
+      className="flex-1 flex flex-col min-h-0 bg-slate-50 dark:bg-slate-950 transition-all duration-300"
+    >
       
       {/* Top Header Controls bar */}
       <header className="bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800/80 px-4 md:px-6 py-3 flex items-center justify-between z-20 shrink-0 shadow-sm">
@@ -674,6 +714,16 @@ export default function CommunityChat({ profile, onAwardXP, handleAddNotificatio
 
         {/* Action controls (sound, admin dashboard toggle) */}
         <div className="flex items-center space-x-2">
+          {onToggleFullScreen && (
+            <button
+              onClick={onToggleFullScreen}
+              title={isFullScreen ? "Exit Full Screen" : "Enter Full Screen"}
+              className="p-2 bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:text-indigo-500 rounded-xl transition cursor-pointer"
+            >
+              {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+          )}
+
           <button
             onClick={() => setSoundEnabled(!soundEnabled)}
             title={soundEnabled ? "Disable interface chime" : "Enable interface chime"}

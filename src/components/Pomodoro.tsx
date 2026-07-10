@@ -1,16 +1,26 @@
 import React, { useState, useEffect, useRef } from "react";
 import { 
   Timer, Play, Pause, RotateCcw, Volume2, VolumeX, Eye, EyeOff, 
-  Sparkles, Coffee, Clock, Info, Award
+  Sparkles, Coffee, Clock, Info, Award, BookOpen, ChevronRight, PenTool
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { SYLLABUS_DB } from "../syllabusData";
 
 interface PomodoroProps {
   onAwardXP: (xp: number) => void;
   onIncrementPomodoro: () => void;
+  isFocusLockdown?: boolean;
+  onFocusLockdownChange?: (active: boolean) => void;
+  profileClassGrade?: string;
 }
 
-export default function Pomodoro({ onAwardXP, onIncrementPomodoro }: PomodoroProps) {
+export default function Pomodoro({ 
+  onAwardXP, 
+  onIncrementPomodoro,
+  isFocusLockdown = false,
+  onFocusLockdownChange,
+  profileClassGrade = "Class 10"
+}: PomodoroProps) {
   // Timer durations
   const [studyMinutes, setStudyMinutes] = useState(25);
   const [breakMinutes, setBreakMinutes] = useState(5);
@@ -20,8 +30,26 @@ export default function Pomodoro({ onAwardXP, onIncrementPomodoro }: PomodoroPro
   const [isBreak, setIsBreak] = useState(false);
   const [completedSessions, setCompletedSessions] = useState(0);
 
-  // Focus Mode toggle (minimalist distraction free mode)
-  const [focusMode, setFocusMode] = useState(false);
+  // Focus Mode state (linked to elevated props)
+  const focusMode = isFocusLockdown;
+  const setFocusMode = (active: boolean) => {
+    if (onFocusLockdownChange) {
+      onFocusLockdownChange(active);
+    }
+  };
+
+  // Syllabus revision notes and scratchpad state during Lockdown
+  const [selectedSubjectIndex, setSelectedSubjectIndex] = useState(0);
+  const [selectedChapterIndex, setSelectedChapterIndex] = useState(0);
+  const [scratchpad, setScratchpad] = useState("");
+
+  // Load CBSE class syllabus data from syllabus database
+  const classSyllabus = SYLLABUS_DB.find(c => c.grade === profileClassGrade) || SYLLABUS_DB[1];
+  const subjects = classSyllabus?.subjects || [];
+  const selectedSubject = subjects[selectedSubjectIndex] || subjects[0];
+  const chapters = selectedSubject?.chapters || [];
+  const selectedChapter = chapters[selectedChapterIndex] || chapters[0];
+
   const [ambientSound, setAmbientSound] = useState(false);
   const [showNoticeModal, setShowNoticeModal] = useState(false);
   const [showDoubleConfirm, setShowDoubleConfirm] = useState(false);
@@ -79,6 +107,19 @@ export default function Pomodoro({ onAwardXP, onIncrementPomodoro }: PomodoroPro
       setCompletedSessions((prev) => prev + 1);
       onIncrementPomodoro();
       onAwardXP(100); // Earn 100 study XP!
+      
+      // Automatically restore normal behavior when the timer finishes
+      setFocusMode(false);
+      try {
+        if (document.fullscreenElement) {
+          if (document.exitFullscreen) {
+            document.exitFullscreen();
+          }
+        }
+      } catch (err) {
+        console.warn("Fullscreen exit failed:", err);
+      }
+
       alert("🎉 Focus session complete! Take a well-earned break.");
       setIsBreak(true);
       setTimeLeft(breakMinutes * 60);
@@ -89,6 +130,64 @@ export default function Pomodoro({ onAwardXP, onIncrementPomodoro }: PomodoroPro
       setTimeLeft(studyMinutes * 60);
     }
   };
+
+  // Fullscreen, Back-gesture and reload lock management when focus mode is active
+  useEffect(() => {
+    if (focusMode) {
+      const enterFullscreen = async () => {
+        try {
+          const elem = document.documentElement;
+          if (elem.requestFullscreen) {
+            await elem.requestFullscreen();
+          } else if ((elem as any).mozRequestFullScreen) {
+            await (elem as any).mozRequestFullScreen();
+          } else if ((elem as any).webkitRequestFullscreen) {
+            await (elem as any).webkitRequestFullscreen();
+          } else if ((elem as any).msRequestFullscreen) {
+            await (elem as any).msRequestFullscreen();
+          }
+        } catch (err) {
+          console.warn("Fullscreen request failed or was blocked by container iframe:", err);
+        }
+      };
+
+      enterFullscreen();
+
+      // Set global focus flag to mute other systems or sounds
+      (window as any).__studymate_focus_mode_active = true;
+
+      // 1. Prevent back gesture / browser back navigation
+      window.history.pushState(null, "", window.location.href);
+      const handlePopState = () => {
+        window.history.pushState(null, "", window.location.href);
+      };
+      window.addEventListener("popstate", handlePopState);
+
+      // 2. Prevent tab close / reload / exit
+      const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+        e.preventDefault();
+        e.returnValue = "Focus Lockdown is active! Leaving now will reset your active session.";
+        return e.returnValue;
+      };
+      window.addEventListener("beforeunload", handleBeforeUnload);
+
+      return () => {
+        (window as any).__studymate_focus_mode_active = false;
+        window.removeEventListener("popstate", handlePopState);
+        window.removeEventListener("beforeunload", handleBeforeUnload);
+        
+        try {
+          if (document.fullscreenElement) {
+            if (document.exitFullscreen) {
+              document.exitFullscreen();
+            }
+          }
+        } catch (err) {
+          console.warn("Fullscreen exit failed:", err);
+        }
+      };
+    }
+  }, [focusMode]);
 
   const handleToggle = () => {
     setIsRunning(!isRunning);
@@ -403,81 +502,247 @@ export default function Pomodoro({ onAwardXP, onIncrementPomodoro }: PomodoroPro
           /* 📵 SYSTEM LOCKOUT DISTRACTION FREE SHIELD ACTIVE */
           <motion.div 
             key="distraction-mode"
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 0.95 }}
-            className="flex flex-col justify-center items-center text-center space-y-6 min-h-[520px] bg-slate-950/95 border border-rose-500/10 rounded-3xl p-8 text-white relative overflow-hidden shadow-2xl"
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -30 }}
+            className="w-full min-h-screen bg-slate-950 text-white p-6 md:p-10 flex flex-col justify-between relative overflow-hidden font-sans select-none"
           >
-            {/* Ambient pulse effect backdrops */}
-            <div className="absolute inset-0 bg-radial-gradient from-rose-500/10 via-transparent to-transparent pointer-events-none animate-pulse" />
+            {/* Dark abstract radial ambiance */}
+            <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-rose-500/10 rounded-full blur-[100px] pointer-events-none animate-pulse" />
+            <div className="absolute bottom-1/4 right-1/4 w-96 h-96 bg-indigo-500/10 rounded-full blur-[100px] pointer-events-none animate-pulse" />
 
-            <div className="space-y-2 relative z-10">
-              <span className="text-4xl animate-bounce inline-block">📵</span>
-              <h2 className="text-sm font-black tracking-widest uppercase text-rose-500">Distraction-Free Focus Fortress</h2>
-              <p className="text-xs text-slate-400 font-medium max-w-md mx-auto">
-                StudyMate Shield is active. All peripheral alerts, push channels, and external applications are silenced.
-              </p>
-            </div>
-
-            {/* Massive minimalist digital clock */}
-            <h1 className="text-7xl md:text-8xl font-black font-mono tracking-tighter text-slate-100 animate-pulse relative z-10">
-              {formatTime(timeLeft)}
-            </h1>
-
-            {/* Simulated Live Lockout Feeds */}
-            <div className="grid grid-cols-2 gap-3 max-w-sm w-full bg-slate-900/40 p-4 rounded-2xl border border-slate-800/60 relative z-10 text-left">
-              <div className="flex items-center space-x-2">
-                <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[10px] font-black text-slate-300">Social Apps</p>
-                  <span className="text-[9px] text-rose-500 font-black block uppercase tracking-wider">🔒 Blocked</span>
+            {/* Top Status Header - No exit, back, or close buttons */}
+            <div className="flex justify-between items-center pb-4 border-b border-white/5 relative z-10">
+              <div className="flex items-center space-x-2.5">
+                <span className="text-xl animate-pulse">📵</span>
+                <div>
+                  <h3 className="text-xs font-black uppercase tracking-widest text-rose-500">StudyMate Shield Enforced</h3>
+                  <p className="text-[10px] text-slate-400 font-bold">STRICT DISTRACTION-FREE LOCKDOWN ACTIVE</p>
                 </div>
               </div>
-
-              <div className="flex items-center space-x-2">
-                <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[10px] font-black text-slate-300">Device Alerts</p>
-                  <span className="text-[9px] text-rose-500 font-black block uppercase tracking-wider">🔇 Silenced</span>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[10px] font-black text-slate-300">Direct Calls</p>
-                  <span className="text-[9px] text-rose-500 font-black block uppercase tracking-wider">🚫 Muted</span>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-2">
-                <span className="w-2.5 h-2.5 bg-rose-500 rounded-full animate-ping flex-shrink-0" />
-                <div className="min-w-0">
-                  <p className="text-[10px] font-black text-slate-300">Push Services</p>
-                  <span className="text-[9px] text-rose-500 font-black block uppercase tracking-wider">🔒 Intercepted</span>
-                </div>
+              <div className="flex items-center space-x-3 text-xs font-extrabold text-slate-400 bg-slate-900/80 px-3.5 py-1.5 rounded-xl border border-white/5">
+                <span className="w-2 h-2 bg-rose-500 rounded-full animate-ping" />
+                <span>ALL DISTRACTIONS SILENCED</span>
               </div>
             </div>
 
-            {/* Quick operations */}
-            <div className="flex items-center space-x-3.5 relative z-10">
-              <button 
-                onClick={handleToggle}
-                className="px-6 py-2.5 bg-white hover:bg-slate-100 text-slate-900 rounded-xl text-xs font-black shadow transition cursor-pointer"
-              >
-                {isRunning ? "Pause Focus" : "Resume Focus"}
-              </button>
+            {/* Split Grid Revision Station */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch my-auto py-6 relative z-10 w-full max-w-7xl mx-auto flex-1">
+              
+              {/* Left Column: Giant Minimal Countdown Timer */}
+              <div className="lg:col-span-5 bg-slate-900/30 border border-white/5 rounded-3xl p-6 flex flex-col justify-center items-center text-center space-y-6">
+                
+                {/* Glowing timer title */}
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black tracking-widest text-rose-500 bg-rose-500/10 px-2.5 py-1 rounded-full uppercase">
+                    {isBreak ? "Break Chill" : "Revision Sprint"}
+                  </span>
+                  <h4 className="text-xs font-bold text-slate-400">
+                    {isBreak ? "Rest your eyes & hydrate" : "Engage with notes on the right"}
+                  </h4>
+                </div>
 
-              <button 
-                onClick={() => {
-                  playSound(400, 0.1);
-                  setFocusMode(false);
-                }}
-                className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white rounded-xl text-xs font-black border border-slate-800 transition cursor-pointer"
-              >
-                Exit Lockdown
-              </button>
+                {/* Big interactive visual countdown wheel */}
+                <div className="relative w-52 h-52 flex items-center justify-center">
+                  <svg className="absolute inset-0 w-full h-full transform -rotate-90">
+                    <circle
+                      cx="104"
+                      cy="104"
+                      r="92"
+                      className="stroke-slate-900"
+                      strokeWidth="8"
+                      fill="transparent"
+                    />
+                    <circle
+                      cx="104"
+                      cy="104"
+                      r="92"
+                      className={`transition-all duration-1000 ${
+                        isBreak ? "stroke-emerald-500 shadow-lg" : "stroke-rose-500 shadow-lg"
+                      }`}
+                      strokeWidth="8"
+                      fill="transparent"
+                      strokeDasharray={2 * Math.PI * 92}
+                      strokeDashoffset={2 * Math.PI * 92 * (1 - progressPercent / 100)}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+
+                  <div className="text-center relative z-10 space-y-0.5">
+                    <h1 className="text-5xl font-black font-mono tracking-tighter text-slate-50 animate-pulse">
+                      {formatTime(timeLeft)}
+                    </h1>
+                    <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest block">
+                      {isRunning ? "Running" : "Paused"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Interactive Controls (NO EXIT BUTTON) */}
+                <div className="flex items-center space-x-3">
+                  <button 
+                    onClick={handleReset}
+                    className="p-3 bg-slate-900 hover:bg-slate-800 border border-white/5 text-slate-400 hover:text-white rounded-2xl transition cursor-pointer"
+                    title="Reset countdown timer"
+                  >
+                    <RotateCcw className="w-4.5 h-4.5" />
+                  </button>
+
+                  <button 
+                    onClick={handleToggle}
+                    className={`px-8 py-2.5 rounded-2xl font-black text-xs shadow-md transition flex items-center space-x-1.5 cursor-pointer ${
+                      isRunning 
+                        ? "bg-white text-slate-950 hover:bg-slate-100" 
+                        : "bg-rose-600 text-white hover:bg-rose-500"
+                    }`}
+                  >
+                    {isRunning ? <Pause className="w-3.5 h-3.5 fill-current" /> : <Play className="w-3.5 h-3.5 fill-current" />}
+                    <span>{isRunning ? "Pause" : "Resume"}</span>
+                  </button>
+
+                  <button 
+                    onClick={() => setAmbientSound(!ambientSound)}
+                    className={`p-3 rounded-2xl border transition cursor-pointer ${
+                      ambientSound 
+                        ? "bg-rose-500/20 border-rose-500/30 text-rose-400" 
+                        : "bg-slate-900 border-white/5 text-slate-400 hover:text-slate-200"
+                    }`}
+                    title="Toggle white noise ambient"
+                  >
+                    {ambientSound ? <Volume2 className="w-4.5 h-4.5" /> : <VolumeX className="w-4.5 h-4.5" />}
+                  </button>
+                </div>
+
+                {/* Simulated silencing feed updates */}
+                <div className="w-full bg-slate-955/40 p-3 border border-white/5 rounded-2xl text-left space-y-1.5">
+                  <span className="text-[8px] font-black uppercase tracking-wider text-rose-500 block">Active Study Fort Status</span>
+                  <div className="grid grid-cols-2 gap-2 text-[9px] text-slate-400 font-bold">
+                    <div className="flex items-center space-x-1">
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+                      <span>📳 Phone Calls: Muted</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping" />
+                      <span>🔔 Alerts: Ignored</span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* Right Column: Immersive CBSE Revision Station & Active Notes */}
+              <div className="lg:col-span-7 bg-slate-900/20 border border-white/5 rounded-3xl p-6 flex flex-col space-y-4 overflow-hidden max-h-[580px] lg:max-h-[640px] text-left">
+                
+                {/* Header Selector bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
+                  <div className="flex items-center space-x-2">
+                    <BookOpen className="w-4 h-4 text-rose-500" />
+                    <span className="text-xs font-black uppercase tracking-wider text-slate-300">Active Syllabus revision:</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={selectedSubjectIndex}
+                      onChange={(e) => {
+                        setSelectedSubjectIndex(parseInt(e.target.value));
+                        setSelectedChapterIndex(0);
+                      }}
+                      className="bg-slate-900 border border-white/10 text-white text-[11px] font-black rounded-lg p-1.5 focus:outline-none cursor-pointer"
+                    >
+                      {subjects.map((subj: any, i: number) => (
+                        <option key={subj.subject} value={i}>{subj.subject}</option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={selectedChapterIndex}
+                      onChange={(e) => setSelectedChapterIndex(parseInt(e.target.value))}
+                      className="bg-slate-900 border border-white/10 text-white text-[11px] font-black rounded-lg p-1.5 focus:outline-none cursor-pointer max-w-[150px] truncate"
+                    >
+                      {chapters.map((chap: any, i: number) => (
+                        <option key={chap.id} value={i}>Ch {chap.number}: {chap.title}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Chapter study material reader pane */}
+                <div className="flex-1 overflow-y-auto space-y-4 pr-1 scrollbar-thin">
+                  {selectedChapter ? (
+                    <>
+                      {/* Summary Section */}
+                      <div className="bg-rose-500/5 border border-rose-500/10 p-3.5 rounded-2xl">
+                        <span className="text-[9px] font-black tracking-wider uppercase text-rose-400 block mb-1">Chapter Concept Hub</span>
+                        <p className="text-xs text-slate-300 font-semibold leading-relaxed">
+                          {selectedChapter.summary}
+                        </p>
+                      </div>
+
+                      {/* Notes Bullet points */}
+                      <div className="space-y-2">
+                        <span className="text-[9px] font-black tracking-wider uppercase text-rose-400 block">High-Yield Exam Notes</span>
+                        {selectedChapter.notes && selectedChapter.notes.length > 0 ? (
+                          <div className="space-y-2">
+                            {selectedChapter.notes.map((note: string, idx: number) => (
+                              <div key={idx} className="flex items-start gap-2 text-xs text-slate-300 leading-relaxed bg-slate-900/40 p-2.5 rounded-xl border border-white/5 font-medium">
+                                <span className="text-rose-500 mt-0.5 shrink-0">⚡</span>
+                                <span>{note}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-[11px] text-slate-500 italic">No notes uploaded for this chapter yet.</p>
+                        )}
+                      </div>
+
+                      {/* Sample self-assessment pyqs or practice questions */}
+                      {selectedChapter.practiceQuestions && selectedChapter.practiceQuestions.length > 0 && (
+                        <div className="space-y-2 pt-1">
+                          <span className="text-[9px] font-black tracking-wider uppercase text-rose-400 block">Active Practice Desk</span>
+                          <div className="space-y-1.5">
+                            {selectedChapter.practiceQuestions.map((q: string, idx: number) => (
+                              <div key={idx} className="flex items-start gap-2 text-[11px] text-slate-400 leading-relaxed bg-slate-950/40 p-2 rounded-lg border border-white/5">
+                                <span className="text-indigo-400 shrink-0">✏️</span>
+                                <span>{q}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="text-center py-12 text-slate-500">
+                      <p className="text-xs">No active chapter content found for your class grade.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Revision active scratchpad and distraction logger */}
+                <div className="border-t border-white/5 pt-3 space-y-2">
+                  <div className="flex items-center justify-between text-[10px] text-slate-400">
+                    <span className="font-extrabold uppercase tracking-wider text-rose-400 flex items-center gap-1">
+                      <PenTool className="w-3 h-3" /> Active Study Scratchpad & Distraction dump
+                    </span>
+                    <span className="font-semibold text-slate-500">Auto-saved locally</span>
+                  </div>
+                  <textarea
+                    value={scratchpad}
+                    onChange={(e) => setScratchpad(e.target.value)}
+                    placeholder="Type active revision summaries or calculations here. If a distracting thought pops up, dump it here to clear your brain!"
+                    className="w-full h-20 bg-slate-950 border border-white/10 rounded-xl p-2.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-rose-500/50 resize-none font-semibold leading-relaxed"
+                  />
+                </div>
+
+              </div>
+
             </div>
+
+            {/* Bottom Brand Bar */}
+            <div className="flex justify-between items-center pt-3 border-t border-white/5 relative z-10 text-[10px] text-slate-500 font-bold">
+              <span>STUDYMATE REV: v2.5 SECURED</span>
+              <span>FOCUS CYCLE SHIELD SYSTEM</span>
+            </div>
+
           </motion.div>
         )}
       </AnimatePresence>

@@ -2022,13 +2022,20 @@ function SpeedVisionMatrixGame({ difficulty, onFinished, opponentScore, synthSou
   const [grid, setGrid] = useState<number[]>([]);
   const [currentTarget, setCurrentTarget] = useState(1);
   const [clicks, setClicks] = useState(0);
-  const [totalTargets] = useState(10);
   const [startTime] = useState(Date.now());
 
   const getGridDimension = () => {
     if (difficulty === "easy") return 9; // 3x3
     if (difficulty === "expert") return 25; // 5x5
     return 16; // 4x4
+  };
+
+  const totalTargets = getGridDimension();
+
+  const getGridColsClass = () => {
+    if (difficulty === "easy") return "grid-cols-3 max-w-[210px]";
+    if (difficulty === "expert") return "grid-cols-5 max-w-[350px]";
+    return "grid-cols-4 max-w-[280px]";
   };
 
   const getChar = (val: number) => String.fromCharCode(64 + val);
@@ -2069,7 +2076,7 @@ function SpeedVisionMatrixGame({ difficulty, onFinished, opponentScore, synthSou
         </span>
       </div>
 
-      <div className="grid grid-cols-4 gap-3 max-w-[280px] mx-auto">
+      <div className={`grid gap-3 mx-auto ${getGridColsClass()}`}>
         {grid.map((num) => {
           const isSolved = num < currentTarget;
           return (

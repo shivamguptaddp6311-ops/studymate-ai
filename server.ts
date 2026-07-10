@@ -44,6 +44,8 @@ interface ChatUser {
   muteExpiresAt?: string | null;
   isBanned: boolean;
   banReason?: string;
+  passwordHash?: string;
+  passwordSalt?: string;
 }
 
 interface ChatReport {
@@ -74,25 +76,112 @@ interface ChatDB {
   users: { [email: string]: ChatUser };
   reports: ChatReport[];
   adminLogs: AdminLog[];
+  syncData?: { [email: string]: any };
 }
 
 let dbCache: ChatDB = {
   messages: [],
   users: {},
   reports: [],
-  adminLogs: []
+  adminLogs: [],
+  syncData: {}
 };
+
+// --- Cryptography Keys and Secrets ---
+const JWT_SECRET = process.env.JWT_SECRET || "studymate_default_jwt_secret_key_64bytes_v2_xyz";
+const DB_KEY = process.env.DB_ENCRYPTION_KEY || "studymate_default_secure_rest_key_32bytes_v1";
+
+// --- Database Encryption at Rest Helpers ---
+function encryptData(text: string): string {
+  try {
+    const key = crypto.createHash("sha256").update(DB_KEY).digest();
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
+    let encrypted = cipher.update(text, "utf8", "hex");
+    encrypted += cipher.final("hex");
+    return iv.toString("hex") + ":" + encrypted;
+  } catch (err) {
+    console.error("[Security] Encryption error:", err);
+    return text;
+  }
+}
+
+function decryptData(text: string): string {
+  try {
+    if (!text.includes(":")) {
+      // Legacy unencrypted file
+      return text;
+    }
+    const parts = text.split(":");
+    const iv = Buffer.from(parts[0], "hex");
+    const encryptedText = parts[1];
+    const key = crypto.createHash("sha256").update(DB_KEY).digest();
+    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+    let decrypted = decipher.update(encryptedText, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+  } catch (err) {
+    console.error("[Security] Decryption error:", err);
+    return text;
+  }
+}
+
+// --- Password Hashing with PBKDF2 ---
+function hashPassword(password: string): { salt: string; hash: string } {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, "sha512").toString("hex");
+  return { salt, hash };
+}
+
+function verifyPassword(password: string, salt: string, hash: string): boolean {
+  const testHash = crypto.pbkdf2Sync(password, salt, 100000, 64, "sha512").toString("hex");
+  return testHash === hash;
+}
+
+// --- Session Token Management (Custom Lightweight JWT) ---
+function createToken(payload: { email: string; isAdmin: boolean }): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const exp = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours expiry
+  const body = Buffer.from(JSON.stringify({ ...payload, exp })).toString("base64url");
+  const signatureInput = `${header}.${body}`;
+  const signature = crypto.createHmac("sha256", JWT_SECRET).update(signatureInput).digest("base64url");
+  return `${signatureInput}.${signature}`;
+}
+
+function verifyToken(token: string): { email: string; isAdmin: boolean } | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const [header, body, signature] = parts;
+    const signatureInput = `${header}.${body}`;
+    const expectedSignature = crypto.createHmac("sha256", JWT_SECRET).update(signatureInput).digest("base64url");
+    if (signature !== expectedSignature) return null;
+    
+    const decodedBody = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (decodedBody.exp && decodedBody.exp < Math.floor(Date.now() / 1000)) {
+      return null; // Token has expired
+    }
+    return decodedBody;
+  } catch (err) {
+    return null;
+  }
+}
+
+// --- In-Memory Account Lockout Tracking ---
+const failedLoginAttempts: { [email: string]: { count: number; blockUntil: number } } = {};
 
 function loadDB() {
   try {
     if (fs.existsSync(DB_PATH)) {
-      const data = fs.readFileSync(DB_PATH, "utf8");
-      dbCache = JSON.parse(data);
+      const encryptedData = fs.readFileSync(DB_PATH, "utf8");
+      const decryptedData = decryptData(encryptedData);
+      dbCache = JSON.parse(decryptedData);
       // Ensure basic shapes exist
       if (!dbCache.messages) dbCache.messages = [];
       if (!dbCache.users) dbCache.users = {};
       if (!dbCache.reports) dbCache.reports = [];
       if (!dbCache.adminLogs) dbCache.adminLogs = [];
+      if (!dbCache.syncData) dbCache.syncData = {};
     } else {
       saveDB();
     }
@@ -103,7 +192,9 @@ function loadDB() {
 
 function saveDB() {
   try {
-    fs.writeFileSync(DB_PATH, JSON.stringify(dbCache, null, 2), "utf8");
+    const rawData = JSON.stringify(dbCache, null, 2);
+    const encryptedData = encryptData(rawData);
+    fs.writeFileSync(DB_PATH, encryptedData, "utf8");
   } catch (error) {
     console.error("Failed to save chat database:", error);
   }
@@ -116,9 +207,86 @@ loadDB();
 let sseClients: Array<{ id: string; email: string; res: any }> = [];
 const lastMessageTimes: { [email: string]: number } = {};
 
+// --- Input Validation and Sanitization Helpers ---
+function sanitizeText(str: string): string {
+  if (typeof str !== "string") return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;")
+    .replace(/\//g, "&#x2F;");
+}
 
 // Setup JSON body parsing with large limit for image uploads
 app.use(express.json({ limit: "25mb" }));
+
+// --- Security Middleware Definitions ---
+
+// Enforce Secure Headers Middleware
+app.use((req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-XSS-Protection", "1; mode=block");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  res.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  next();
+});
+
+// Custom Rate Limiter Middleware for API endpoints
+const apiRequestLimits: { [ip: string]: { count: number; resetTime: number } } = {};
+const API_WINDOW_MS = 60 * 1000; // 1 minute
+const MAX_API_REQUESTS = 180; // generous 180 requests per minute
+
+function apiRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const ip = req.ip || (req.headers["x-forwarded-for"] as string) || "unknown";
+  const now = Date.now();
+  
+  if (!apiRequestLimits[ip] || now > apiRequestLimits[ip].resetTime) {
+    apiRequestLimits[ip] = {
+      count: 1,
+      resetTime: now + API_WINDOW_MS
+    };
+    return next();
+  }
+  
+  apiRequestLimits[ip].count++;
+  if (apiRequestLimits[ip].count > MAX_API_REQUESTS) {
+    console.warn(`[Security] Rate limit exceeded for IP: ${ip} on path: ${req.path}`);
+    return res.status(429).json({ error: "Rate limit exceeded. Please slow down and try again later." });
+  }
+  next();
+}
+
+app.use("/api", apiRateLimiter);
+
+// Require Authentication Middleware
+function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const authHeader = req.headers["authorization"];
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Missing or invalid authorization session token. Please log in." });
+  }
+  
+  const token = authHeader.split(" ")[1];
+  const user = verifyToken(token);
+  if (!user) {
+    return res.status(401).json({ error: "Session expired or invalid token. Please log in again." });
+  }
+  
+  (req as any).user = user;
+  next();
+}
+
+// Require Admin Middleware
+function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  requireAuth(req, res, () => {
+    const user = (req as any).user;
+    if (!user || !isAdminEmail(user.email)) {
+      return res.status(403).json({ error: "Access Denied: Administrative privileges required." });
+    }
+    next();
+  });
+}
 
 // ----------------------------------------------------
 // API ROUTES FIRST
@@ -130,12 +298,221 @@ app.get("/api/ai/providers", (req, res) => {
     const providers = getConfiguredProviders();
     res.json(providers);
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to fetch providers." });
+    res.status(500).json({ error: "Failed to fetch providers." });
+  }
+});
+
+// Secure Backend Authentication Endpoint
+app.post("/api/auth/login", (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || typeof email !== "string") {
+      return res.status(400).json({ error: "Google account email is required." });
+    }
+    
+    const emailNorm = email.toLowerCase().trim();
+    
+    // Server-side Input Validation & Sanitization
+    if (!emailNorm.includes("@") || !emailNorm.includes(".")) {
+      return res.status(400).json({ error: "Invalid email address format." });
+    }
+    
+    // Check if account is locked due to too many failed login attempts
+    const failed = failedLoginAttempts[emailNorm];
+    if (failed && failed.count >= 5 && Date.now() < failed.blockUntil) {
+      const waitMinutes = Math.ceil((failed.blockUntil - Date.now()) / 60000);
+      return res.status(429).json({ error: `Account temporarily locked due to 5 failed logins. Please try again in ${waitMinutes} minute(s).` });
+    }
+    
+    let user = dbCache.users[emailNorm];
+    const plainPassword = (password || "").trim();
+    
+    if (!plainPassword) {
+      return res.status(400).json({ error: "Password is required for secure authentication." });
+    }
+    
+    if (!user) {
+      // First-time registration
+      const { salt, hash } = hashPassword(plainPassword);
+      user = {
+        email: emailNorm,
+        username: emailNorm.split("@")[0],
+        avatar: "🎓",
+        level: 1,
+        joinDate: new Date().toDateString(),
+        country: "India",
+        violationsCount: 0,
+        isBanned: false,
+        passwordHash: hash,
+        passwordSalt: salt
+      } as any;
+      dbCache.users[emailNorm] = user;
+      saveDB();
+    } else {
+      // If user exists but has no password (legacy accounts migrated to secure schema)
+      if (!user.passwordHash || !user.passwordSalt) {
+        const { salt, hash } = hashPassword(plainPassword);
+        user.passwordHash = hash;
+        user.passwordSalt = salt;
+        saveDB();
+      } else {
+        // Verify password
+        const isMatch = verifyPassword(plainPassword, user.passwordSalt, user.passwordHash);
+        if (!isMatch) {
+          // Record failed attempt
+          if (!failedLoginAttempts[emailNorm] || Date.now() > failedLoginAttempts[emailNorm].blockUntil) {
+            failedLoginAttempts[emailNorm] = { count: 1, blockUntil: 0 };
+          } else {
+            failedLoginAttempts[emailNorm].count++;
+          }
+          
+          if (failedLoginAttempts[emailNorm].count >= 5) {
+            failedLoginAttempts[emailNorm].blockUntil = Date.now() + 5 * 60 * 1000; // block for 5 minutes
+            return res.status(429).json({ error: "Too many failed login attempts. Account locked for 5 minutes." });
+          }
+          
+          return res.status(401).json({ error: "Incorrect password. Please try again." });
+        }
+      }
+    }
+    
+    // Clear failed login attempts on success
+    delete failedLoginAttempts[emailNorm];
+    
+    // Check if the user is banned
+    if (user.isBanned) {
+      return res.status(403).json({ error: `Your account has been banned. Reason: ${user.banReason || "Moderator directive."}` });
+    }
+    
+    const isAdmin = isAdminEmail(emailNorm);
+    const token = createToken({ email: emailNorm, isAdmin });
+    
+    res.json({
+      success: true,
+      email: emailNorm,
+      token,
+      isAdmin,
+      user: {
+        username: user.username,
+        avatar: user.avatar,
+        level: user.level,
+        badge: user.badge
+      }
+    });
+    
+  } catch (err: any) {
+    console.error("[Security Error] Login exception:", err);
+    res.status(500).json({ error: "Secure authentication failed on the server." });
+  }
+});
+
+// Check if user email has an existing account
+app.get("/api/auth/check-email", (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email || typeof email !== "string") {
+      return res.status(400).json({ error: "Email is required." });
+    }
+    const emailNorm = email.toLowerCase().trim();
+    const exists = !!dbCache.users[emailNorm];
+    res.json({ exists });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to check email existence." });
+  }
+});
+
+// Sync Pull endpoint
+app.get("/api/sync/pull", requireAuth, (req, res) => {
+  try {
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    if (!dbCache.syncData) {
+      dbCache.syncData = {};
+    }
+    const userSync = dbCache.syncData[emailNorm] || null;
+    res.json({ success: true, data: userSync });
+  } catch (error: any) {
+    console.error("Sync pull error:", error);
+    res.status(500).json({ error: "Failed to pull synced data." });
+  }
+});
+
+// Sync Push endpoint
+app.post("/api/sync/push", requireAuth, (req, res) => {
+  try {
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    const { profile, tasks, alarms, timetable, habits, badges, activityLog, notifications, updatedAt } = req.body;
+    
+    if (!dbCache.syncData) {
+      dbCache.syncData = {};
+    }
+    
+    const currentSync = dbCache.syncData[emailNorm] || {};
+    
+    const nextSync = {
+      profile: profile !== undefined ? profile : currentSync.profile,
+      tasks: tasks !== undefined ? tasks : currentSync.tasks,
+      alarms: alarms !== undefined ? alarms : currentSync.alarms,
+      timetable: timetable !== undefined ? timetable : currentSync.timetable,
+      habits: habits !== undefined ? habits : currentSync.habits,
+      badges: badges !== undefined ? badges : currentSync.badges,
+      activityLog: activityLog !== undefined ? activityLog : currentSync.activityLog,
+      notifications: notifications !== undefined ? notifications : currentSync.notifications,
+      updatedAt: updatedAt || new Date().toISOString()
+    };
+    
+    dbCache.syncData[emailNorm] = nextSync;
+    
+    // Sync to ChatUser details for CommunityChat display
+    if (profile) {
+      const user = dbCache.users[emailNorm];
+      if (user) {
+        user.username = profile.nickname || profile.fullName || user.username;
+        user.avatar = profile.avatar || user.avatar;
+        user.level = profile.level || user.level;
+        if (profile.badges && profile.badges.length > 0) {
+          user.badge = profile.badges[profile.badges.length - 1];
+        }
+      }
+    }
+    
+    saveDB();
+    res.json({ success: true, data: nextSync });
+  } catch (error: any) {
+    console.error("Sync push error:", error);
+    res.status(500).json({ error: "Failed to sync and push data." });
+  }
+});
+
+// Delete Account endpoint
+app.post("/api/auth/delete-account", requireAuth, (req, res) => {
+  try {
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    
+    // 1. Delete user record
+    delete dbCache.users[emailNorm];
+    
+    // 2. Delete syncData
+    if (dbCache.syncData) {
+      delete dbCache.syncData[emailNorm];
+    }
+    
+    // 3. Clear messages written by the user
+    dbCache.messages = dbCache.messages.filter(m => m.userEmail.toLowerCase().trim() !== emailNorm);
+    
+    // 4. Clear reports related to the user
+    dbCache.reports = dbCache.reports.filter(r => r.messageAuthor.toLowerCase().trim() !== emailNorm && r.reportedBy.toLowerCase().trim() !== emailNorm);
+    
+    saveDB();
+    res.json({ success: true, message: "Your account and all associated study data have been permanently deleted." });
+  } catch (error: any) {
+    console.error("Delete account error:", error);
+    res.status(500).json({ error: "Failed to delete your account." });
   }
 });
 
 // 1. AI Solver Route - Multi-modal OCR & Step-by-Step Question Solver
-app.post("/api/gemini/solve", async (req, res) => {
+app.post("/api/gemini/solve", requireAuth, async (req, res) => {
   try {
     const { prompt, image, subject, grade, favSubjects, weakSubjects, explainBriefly, provider = "auto" } = req.body;
 
@@ -245,12 +622,12 @@ JSON schema to match:
     res.json(parsedResult);
   } catch (error: any) {
     console.error("AI solver error:", error);
-    res.status(500).json({ error: error.message || "Failed to solve the question. Please try again." });
+    res.status(500).json({ error: "Failed to solve the question. Please try again." });
   }
 });
 
 // 2. Interactive Tutor Chat - Follow-up and conversation
-app.post("/api/gemini/chat", async (req, res) => {
+app.post("/api/gemini/chat", requireAuth, async (req, res) => {
   try {
     const { message, history, image, provider = "auto" } = req.body;
 
@@ -339,12 +716,12 @@ Response Style:
     res.json({ reply: response.text });
   } catch (error: any) {
     console.error("AI chat error:", error);
-    res.status(500).json({ error: error.message || "Failed to chat with AI Assistant." });
+    res.status(500).json({ error: "Failed to chat with AI Assistant." });
   }
 });
 
 // 2.5. Dynamic CBSE Chapter Material Generator (Textbook details on-demand)
-app.post("/api/gemini/generate-chapter-materials", async (req, res) => {
+app.post("/api/gemini/generate-chapter-materials", requireAuth, async (req, res) => {
   try {
     const { grade, subject, chapterNumber, chapterTitle, provider = "auto" } = req.body;
 
@@ -418,12 +795,12 @@ Respond strictly in JSON format matching this schema:
     res.json(JSON.parse(response.text || "{}"));
   } catch (error: any) {
     console.error("AI material generator error:", error);
-    res.status(500).json({ error: error.message || "Failed to generate study materials." });
+    res.status(500).json({ error: "Failed to generate study materials." });
   }
 });
 
 // 3. AI Study Planner Generator
-app.post("/api/gemini/suggest-schedule", async (req, res) => {
+app.post("/api/gemini/suggest-schedule", requireAuth, async (req, res) => {
   try {
     const { name, grade, targetExam, dailyGoalHours, preferredTime, favSubjects, weakSubjects, provider = "auto" } = req.body;
 
@@ -504,7 +881,7 @@ The response should be JSON structured strictly like this:
     res.json(JSON.parse(response.text || "{}"));
   } catch (error: any) {
     console.error("AI schedule error:", error);
-    res.status(500).json({ error: error.message || "Failed to generate study plan." });
+    res.status(500).json({ error: "Failed to generate study plan." });
   }
 });
 
@@ -539,8 +916,17 @@ function broadcastOnlineCount() {
 
 // 1. Establish Server-Sent Events (SSE) stream for instant real-time broadcasts
 app.get("/api/chat/stream", (req, res) => {
-  const { email } = req.query;
+  const { email, token } = req.query;
   const userEmail = typeof email === "string" ? email.toLowerCase().trim() : "anonymous";
+
+  if (typeof token !== "string" || !token) {
+    return res.status(401).json({ error: "Missing SSE session token." });
+  }
+
+  const verifiedUser = verifyToken(token);
+  if (!verifiedUser || verifiedUser.email !== userEmail) {
+    return res.status(401).json({ error: "Unauthorized SSE connection." });
+  }
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -570,7 +956,7 @@ app.get("/api/chat/stream", (req, res) => {
 });
 
 // 2. Fetch paginated or searched chat history
-app.get("/api/chat/messages", (req, res) => {
+app.get("/api/chat/messages", requireAuth, (req, res) => {
   try {
     const { before, search, limit } = req.query;
     let list = [...dbCache.messages];
@@ -610,12 +996,12 @@ app.get("/api/chat/messages", (req, res) => {
 
     res.json(paginated);
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Failed to retrieve chat logs." });
+    res.status(500).json({ error: "Failed to retrieve chat logs." });
   }
 });
 
 // 3. Post a message, validating constraints and using Gemini for strict OCR/Safety moderation
-app.post("/api/chat/message", async (req, res) => {
+app.post("/api/chat/message", requireAuth, async (req, res) => {
   try {
     const { userEmail, username, avatar, level, badge, text, country, repliedToId, repliedToUser } = req.body;
 
@@ -624,7 +1010,15 @@ app.post("/api/chat/message", async (req, res) => {
     }
 
     const emailNorm = userEmail.toLowerCase().trim();
-    const cleanText = text.trim();
+    const verifiedUser = (req as any).user;
+    
+    // Verify session matches sender profile
+    if (verifiedUser.email !== emailNorm) {
+      return res.status(403).json({ error: "Unauthorized: Identity session email mismatch." });
+    }
+
+    const cleanText = sanitizeText(text.trim());
+    const cleanUsername = sanitizeText(username.trim());
 
     // Verification 1: Is user banned?
     const userState = dbCache.users[emailNorm];
@@ -819,7 +1213,7 @@ Return strictly a JSON object matching this schema:
     const newMessage: ChatMessage = {
       id: "msg-" + Date.now() + Math.random().toString(36).substring(2, 6),
       userEmail: emailNorm,
-      username,
+      username: cleanUsername,
       avatar,
       level: level || 1,
       badge,
@@ -835,7 +1229,7 @@ Return strictly a JSON object matching this schema:
     // Ensure profile is kept synced in chat users directory
     dbCache.users[emailNorm] = {
       email: emailNorm,
-      username,
+      username: cleanUsername,
       avatar,
       level: level || 1,
       badge,
@@ -862,7 +1256,7 @@ Return strictly a JSON object matching this schema:
           broadcastToSSE("notification", {
             targetEmail: matchedUser.email,
             title: "💬 Community Chat Mention",
-            message: `${username} mentioned you in global chat: "${cleanText.substring(0, 50)}${cleanText.length > 50 ? "..." : ""}"`,
+            message: `${cleanUsername} mentioned you in global chat: "${cleanText.substring(0, 50)}${cleanText.length > 50 ? "..." : ""}"`,
             type: "alert"
           });
         }
@@ -876,7 +1270,7 @@ Return strictly a JSON object matching this schema:
         broadcastToSSE("notification", {
           targetEmail: origMsg.userEmail,
           title: "💬 Community Chat Reply",
-          message: `${username} replied to your chat: "${cleanText.substring(0, 50)}${cleanText.length > 50 ? "..." : ""}"`,
+          message: `${cleanUsername} replied to your chat: "${cleanText.substring(0, 50)}${cleanText.length > 50 ? "..." : ""}"`,
           type: "info"
         });
       }
@@ -885,12 +1279,12 @@ Return strictly a JSON object matching this schema:
     res.json(newMessage);
   } catch (error: any) {
     console.error("Post message error:", error);
-    res.status(500).json({ error: error.message || "Failed to process chat message." });
+    res.status(500).json({ error: "Failed to process chat message." });
   }
 });
 
 // 4. Submit an abuse report against a message
-app.post("/api/chat/report", (req, res) => {
+app.post("/api/chat/report", requireAuth, (req, res) => {
   try {
     const { messageId, reportedBy, reason, comment } = req.body;
 
@@ -898,10 +1292,18 @@ app.post("/api/chat/report", (req, res) => {
       return res.status(400).json({ error: "Missing reported parameters." });
     }
 
+    const emailNorm = reportedBy.toLowerCase().trim();
+    if ((req as any).user.email !== emailNorm) {
+      return res.status(403).json({ error: "Unauthorized: Identity session email mismatch." });
+    }
+
     const msg = dbCache.messages.find(m => m.id === messageId);
     if (!msg) {
       return res.status(404).json({ error: "Original message not found." });
     }
+
+    const cleanComment = sanitizeText(comment || "");
+    const cleanReason = sanitizeText(reason || "");
 
     const reportId = "rep-" + Date.now() + Math.random().toString(36).substring(2, 6);
     const newReport: ChatReport = {
@@ -909,9 +1311,9 @@ app.post("/api/chat/report", (req, res) => {
       messageId,
       messageText: msg.text,
       messageAuthor: msg.userEmail,
-      reportedBy,
-      reason,
-      comment: comment || "",
+      reportedBy: emailNorm,
+      reason: cleanReason,
+      comment: cleanComment,
       timestamp: new Date().toISOString(),
       status: "pending"
     };
@@ -925,16 +1327,21 @@ app.post("/api/chat/report", (req, res) => {
 
     res.json({ success: true, report: newReport });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Failed to log report." });
+    res.status(500).json({ error: "Failed to log report." });
   }
 });
 
 // 5. Broadcast typing state
-app.post("/api/chat/typing", (req, res) => {
+app.post("/api/chat/typing", requireAuth, (req, res) => {
   try {
     const { userEmail, username, isTyping } = req.body;
     if (userEmail && username) {
-      broadcastToSSE("typingState", { userEmail, username, isTyping });
+      const emailNorm = userEmail.toLowerCase().trim();
+      if ((req as any).user.email !== emailNorm) {
+        return res.status(403).json({ error: "Unauthorized session email mismatch." });
+      }
+      const cleanUsername = sanitizeText(username);
+      broadcastToSSE("typingState", { userEmail: emailNorm, username: cleanUsername, isTyping });
     }
     res.json({ success: true });
   } catch (error) {
@@ -943,33 +1350,39 @@ app.post("/api/chat/typing", (req, res) => {
 });
 
 // 6. Admin Panel stats retrieval
-app.get("/api/chat/admin/stats", (req, res) => {
+app.get("/api/chat/admin/stats", requireAdmin, (req, res) => {
   try {
-    const { email } = req.query;
-    if (!isAdminEmail(email as string)) {
-      return res.status(403).json({ error: "Unauthorized access to administrator dashboard." });
-    }
+    const sanitizedUsers = Object.values(dbCache.users).map(u => ({
+      email: u.email,
+      username: u.username,
+      avatar: u.avatar,
+      level: u.level,
+      badge: u.badge,
+      joinDate: u.joinDate,
+      country: u.country,
+      violationsCount: u.violationsCount,
+      muteExpiresAt: u.muteExpiresAt,
+      isBanned: u.isBanned,
+      banReason: u.banReason
+    }));
 
     res.json({
       reports: dbCache.reports,
       adminLogs: dbCache.adminLogs,
-      users: Object.values(dbCache.users),
+      users: sanitizedUsers,
       totalMessages: dbCache.messages.length,
       activeUsersCount: new Set(sseClients.map(c => c.email)).size
     });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Failed to retrieve logs." });
+    res.status(500).json({ error: "Failed to retrieve logs." });
   }
 });
 
 // 7. Admin Action Endpoint (Mute, Ban, Delete)
-app.post("/api/chat/admin/action", (req, res) => {
+app.post("/api/chat/admin/action", requireAdmin, (req, res) => {
   try {
-    const { adminEmail, action, targetId, targetEmail, reason } = req.body;
-
-    if (!isAdminEmail(adminEmail)) {
-      return res.status(403).json({ error: "Unauthorized access to moderator commands." });
-    }
+    const { action, targetId, targetEmail, reason } = req.body;
+    const adminEmail = (req as any).user.email;
 
     const timestamp = new Date().toISOString();
 
@@ -1111,7 +1524,8 @@ app.post("/api/chat/admin/action", (req, res) => {
 
     res.json({ success: true });
   } catch (error: any) {
-    res.status(500).json({ error: error.message || "Failed to process admin actions." });
+    console.error("Admin action error:", error);
+    res.status(500).json({ error: "Failed to process admin actions." });
   }
 });
 

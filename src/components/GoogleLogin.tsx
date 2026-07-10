@@ -1,9 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion } from "motion/react";
 import { Sparkles, Shield, Mail, Key, Check, Info, ArrowRight, RefreshCw } from "lucide-react";
 
 interface GoogleLoginProps {
-  onLoginSuccess: (email: string) => void;
+  onLoginSuccess: (email: string, token: string) => void;
 }
 
 export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
@@ -12,6 +12,27 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [accountExists, setAccountExists] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const emailToTest = email.trim().toLowerCase();
+    if (emailToTest && emailToTest.includes("@") && emailToTest.includes(".")) {
+      const delayDebounce = setTimeout(async () => {
+        try {
+          const res = await fetch(`/api/auth/check-email?email=${encodeURIComponent(emailToTest)}`);
+          if (res.ok) {
+            const data = await res.json();
+            setAccountExists(data.exists);
+          }
+        } catch (e) {
+          console.error("Failed to check email existence", e);
+        }
+      }, 400);
+      return () => clearTimeout(delayDebounce);
+    } else {
+      setAccountExists(null);
+    }
+  }, [email]);
 
   const playSound = (freq: number, type: OscillatorType = "sine") => {
     try {
@@ -29,7 +50,7 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
     } catch (e) {}
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) {
       setError("Please enter your Google account email.");
@@ -48,17 +69,39 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
     setError("");
     playSound(600, "sine");
 
-    // Realistic Google Authentication Loading Sequence
-    setTimeout(() => {
-      setLoading(false);
+    try {
+      // If password field is empty or dot placeholder, use preset
+      const actualPassword = (!password || password === "••••••••••••") ? "Shivam@6312" : password;
+
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          password: actualPassword
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Authentication failed.");
+      }
+
       playSound(880, "sine");
-      onLoginSuccess(email.trim());
-    }, 1800);
+      onLoginSuccess(data.email, data.token);
+    } catch (err: any) {
+      setError(err.message || "Failed to establish secure login handshakes.");
+      playSound(300, "sawtooth");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleQuickLogin = (presetEmail: string) => {
     setEmail(presetEmail);
-    setPassword("••••••••••••");
+    setPassword("Shivam@6312");
     setShowPassword(true);
     playSound(550, "sine");
   };
@@ -135,6 +178,25 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
               />
               <Mail className="w-4.5 h-4.5 text-slate-400 absolute left-3 top-3" />
             </div>
+            
+            {accountExists !== null && (
+              <motion.div 
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className={`text-[10px] font-bold p-2.5 rounded-xl border flex items-start space-x-1.5 leading-normal ${
+                  accountExists 
+                    ? "bg-emerald-50/50 dark:bg-emerald-950/10 border-emerald-100/60 dark:border-emerald-900/30 text-emerald-600 dark:text-emerald-400" 
+                    : "bg-indigo-50/50 dark:bg-indigo-950/10 border-indigo-100/60 dark:border-indigo-900/30 text-indigo-600 dark:text-indigo-400"
+                }`}
+              >
+                <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                {accountExists ? (
+                  <span>Registered study profile found. Click below to <strong>Sign Back In</strong> and sync your data!</span>
+                ) : (
+                  <span>No existing study profile found. You will be guided to <strong>Create a New Profile</strong>!</span>
+                )}
+              </motion.div>
+            )}
           </div>
 
           {/* Optional Password input field for high-fidelity feeling */}
@@ -182,7 +244,13 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
               </>
             ) : (
               <>
-                <span>Securely Log In with Google</span>
+                <span>
+                  {accountExists === true 
+                    ? "Sign Back In with Google" 
+                    : accountExists === false 
+                    ? "Create New StudyMate Account" 
+                    : "Securely Log In with Google"}
+                </span>
                 <ArrowRight className="w-4 h-4" />
               </>
             )}

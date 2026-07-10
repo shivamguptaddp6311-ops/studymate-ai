@@ -10,6 +10,7 @@ import {
 
 interface OnboardingProps {
   onComplete: (profile: UserProfile) => void;
+  defaultEmail?: string;
 }
 
 const AVATAR_OPTIONS = [
@@ -43,7 +44,7 @@ const WALKTHROUGH_PAGES = [
   }
 ];
 
-export default function Onboarding({ onComplete }: OnboardingProps) {
+export default function Onboarding({ onComplete, defaultEmail }: OnboardingProps) {
   const [slideIndex, setSlideIndex] = useState(0); // 0-3 for Walkthrough, 4 for Details Setup, 5 for Academic Setup, 6 for Goal Setup
   const [formData, setFormData] = useState<Partial<UserProfile>>({
     fullName: "",
@@ -63,13 +64,19 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
     preferredStudyTime: "Evening",
     favoriteSubjects: [],
     weakSubjects: [],
-    emailAddress: "",
+    emailAddress: defaultEmail || "",
     phoneNumber: "",
     xp: 10,
     level: 1,
     badges: ["day1"],
     unlockedFeatures: ["dashboard"]
   });
+
+  React.useEffect(() => {
+    if (defaultEmail) {
+      setFormData((prev) => ({ ...prev, emailAddress: defaultEmail }));
+    }
+  }, [defaultEmail]);
 
   const [customPhoto, setCustomPhoto] = useState<string | null>(null);
   const [photoMode, setPhotoMode] = useState<"emoji" | "upload">("emoji");
@@ -329,10 +336,11 @@ export default function Onboarding({ onComplete }: OnboardingProps) {
                     <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">Email Address *</label>
                     <input
                       type="email"
-                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm outline-none transition"
+                      className="w-full px-3.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-sm outline-none transition disabled:opacity-75 disabled:bg-slate-50 dark:disabled:bg-slate-900/40 cursor-not-allowed"
                       placeholder="shivamguptaddp6312@gmail.com"
                       value={formData.emailAddress}
                       onChange={(e) => setFormData({ ...formData, emailAddress: e.target.value })}
+                      disabled={!!defaultEmail}
                     />
                     {errors.emailAddress && <p className="text-xs text-rose-500 mt-1">{errors.emailAddress}</p>}
                   </div>

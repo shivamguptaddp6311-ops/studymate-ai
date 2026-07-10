@@ -8,10 +8,20 @@ import {
 interface SettingsViewProps {
   darkMode: boolean;
   onToggleDarkMode: () => void;
-  profile: UserProfile;
+  profile: UserProfile | null;
+  syncStatus: "synced" | "syncing" | "offline" | "idle";
+  onTriggerSync: () => Promise<void>;
+  onDeleteAccount: () => Promise<void>;
 }
 
-export default function SettingsView({ darkMode, onToggleDarkMode, profile }: SettingsViewProps) {
+export default function SettingsView({ 
+  darkMode, 
+  onToggleDarkMode, 
+  profile,
+  syncStatus,
+  onTriggerSync,
+  onDeleteAccount
+}: SettingsViewProps) {
   // Local settings options states
   const [allowNotifications, setAllowNotifications] = useState(true);
   const [alarmVolume, setAlarmVolume] = useState(80);
@@ -142,26 +152,39 @@ export default function SettingsView({ darkMode, onToggleDarkMode, profile }: Se
         <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-6 rounded-3xl shadow-sm space-y-4">
           <h3 className="font-extrabold text-slate-800 dark:text-slate-100 text-sm flex items-center">
             <Database className="w-4.5 h-4.5 text-indigo-500 mr-1.5" />
-            Google Drive Backup
+            Google Cloud Sync
           </h3>
-          <p className="text-[10px] text-slate-400">Secure offline-first database. Link your Google Drive to enable encrypted auto-backups.</p>
+          <p className="text-[10px] text-slate-400">Permanently save and sync your study profile, homework, streaks, and settings to your Google account.</p>
+
+          <div className="flex items-center justify-between text-xs font-bold border border-slate-100 dark:border-slate-800 p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/40">
+            <span className="text-slate-500 text-[10px] uppercase tracking-wider">Sync Status</span>
+            <div className="flex items-center space-x-1.5">
+              {syncStatus === "syncing" ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 text-indigo-500 animate-spin" />
+                  <span className="text-indigo-600 dark:text-indigo-400">Syncing...</span>
+                </>
+              ) : syncStatus === "offline" ? (
+                <>
+                  <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                  <span className="text-amber-600 dark:text-amber-400">Saved Locally (Offline)</span>
+                </>
+              ) : (
+                <>
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  <span className="text-emerald-600 dark:text-emerald-400">Synced to Google</span>
+                </>
+              )}
+            </div>
+          </div>
 
           <button
-            onClick={handleBackupRequest}
-            disabled={savingBackup}
-            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center space-x-1.5 cursor-pointer"
+            onClick={onTriggerSync}
+            disabled={syncStatus === "syncing"}
+            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow transition flex items-center justify-center space-x-1.5 cursor-pointer disabled:opacity-50"
           >
-            {savingBackup ? (
-              <>
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Syncing cloud files...</span>
-              </>
-            ) : (
-              <>
-                <Database className="w-3.5 h-3.5" />
-                <span>{isBackupLinked ? "Cloud database synchronized" : "Backup database now"}</span>
-              </>
-            )}
+            <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === "syncing" ? "animate-spin" : ""}`} />
+            <span>{syncStatus === "syncing" ? "Synchronizing..." : "Sync Database Now"}</span>
           </button>
         </div>
 
@@ -292,6 +315,27 @@ export default function SettingsView({ darkMode, onToggleDarkMode, profile }: Se
 
           </div>
         </div>
+      </div>
+
+      {/* Danger Zone */}
+      <div className="bg-rose-500/5 border border-rose-500/15 p-6 rounded-3xl shadow-sm space-y-4">
+        <div className="flex items-start space-x-3.5">
+          <div className="p-2 bg-rose-500/10 text-rose-600 rounded-xl">
+            <ShieldAlert className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="font-extrabold text-slate-800 dark:text-slate-200 text-sm">Danger Zone: Permanent Deletion</h3>
+            <p className="text-[10px] text-slate-400 mt-0.5 leading-relaxed">
+              Wipe all files, logged schedules, high-score statistics, homework lists, and completely delete your StudyMate user profile from Google Cloud. This action is **irreversible**.
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={onDeleteAccount}
+          className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-xs rounded-xl shadow transition flex items-center justify-center space-x-1.5 cursor-pointer"
+        >
+          <span>Wipe & Delete Google Account Link</span>
+        </button>
       </div>
 
       {/* Safety info card */}

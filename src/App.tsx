@@ -135,6 +135,100 @@ export default function App() {
   const [darkMode, setDarkMode] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
+  const [focusLockdown, setFocusLockdown] = useState(false);
+
+  // Fullscreen states for AI Assistant and Community Chat
+  const [aiFullScreen, setAiFullScreen] = useState(false);
+  const [chatFullScreen, setChatFullScreen] = useState(false);
+
+  // Helper functions for browser-native fullscreen
+  const triggerBrowserFullscreen = (element: HTMLElement) => {
+    try {
+      if (element.requestFullscreen) {
+        element.requestFullscreen();
+      } else if ((element as any).webkitRequestFullscreen) {
+        (element as any).webkitRequestFullscreen();
+      } else if ((element as any).msRequestFullscreen) {
+        (element as any).msRequestFullscreen();
+      }
+    } catch (e) {
+      console.warn("Native browser fullscreen blocked or not supported:", e);
+    }
+  };
+
+  const exitBrowserFullscreen = () => {
+    try {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    } catch (e) {
+      console.warn("Native browser exit fullscreen blocked or not supported:", e);
+    }
+  };
+
+  // Sync React state if user exits native fullscreen via browser mechanisms (e.g. Esc key)
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!document.fullscreenElement;
+      if (!isCurrentlyFullscreen) {
+        setAiFullScreen(false);
+        setChatFullScreen(false);
+      }
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    document.addEventListener("mozfullscreenchange", handleFullscreenChange);
+    document.addEventListener("MSFullscreenChange", handleFullscreenChange);
+
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("mozfullscreenchange", handleFullscreenChange);
+      document.removeEventListener("MSFullscreenChange", handleFullscreenChange);
+    };
+  }, []);
+
+  // Exit fullscreen state automatically when the user changes screens/tabs
+  useEffect(() => {
+    setAiFullScreen(false);
+    setChatFullScreen(false);
+    exitBrowserFullscreen();
+  }, [currentTab]);
+
+  const toggleAiFullScreen = () => {
+    const nextVal = !aiFullScreen;
+    setAiFullScreen(nextVal);
+    
+    // Attempt native browser fullscreen for premium experience
+    setTimeout(() => {
+      const panel = document.getElementById("studymate_ai_panel");
+      if (panel) {
+        if (nextVal) {
+          triggerBrowserFullscreen(panel);
+        } else {
+          exitBrowserFullscreen();
+        }
+      }
+    }, 50);
+  };
+
+  const toggleChatFullScreen = () => {
+    const nextVal = !chatFullScreen;
+    setChatFullScreen(nextVal);
+
+    // Attempt native browser fullscreen
+    setTimeout(() => {
+      const panel = document.getElementById("studymate_chat_panel");
+      if (panel) {
+        if (nextVal) {
+          triggerBrowserFullscreen(panel);
+        } else {
+          exitBrowserFullscreen();
+        }
+      }
+    }, 50);
+  };
 
   // Alarm clock ticking states
   const [triggeredAlarm, setTriggeredAlarm] = useState<Alarm | null>(null);
@@ -149,6 +243,10 @@ export default function App() {
     message: string, 
     type: "info" | "alert" | "success" | "reminder"
   ) => {
+    if (focusLockdown) {
+      console.log(`[Focus Mode] Suppressed notification: ${title}`);
+      return;
+    }
     const newNotice: AppNotification = {
       id: `notice-${Date.now()}`,
       title,
@@ -212,14 +310,16 @@ export default function App() {
   };
 
   // Log in Success handler
-  const handleLoginSuccess = (email: string) => {
+  const handleLoginSuccess = (email: string, token: string) => {
     localStorage.setItem("studymate_logged_in_email", email);
+    localStorage.setItem("studymate_token", token);
     setLoggedInEmail(email);
   };
 
   // Log Out / Clear session handler
   const handleLogout = () => {
     localStorage.removeItem("studymate_logged_in_email");
+    localStorage.removeItem("studymate_token");
     setLoggedInEmail(null);
     setProfile(null);
     setTasks([]);
@@ -231,186 +331,343 @@ export default function App() {
     setCurrentTab("dashboard");
   };
 
-  // 1. Core Boot Loader (Triggers on load and when Gmail logs in)
+  // Durable Google Cloud Sync status
+  const [syncStatus, setSyncStatus] = useState<"synced" | "syncing" | "offline" | "idle">("synced");
+
+  // Trigger automatic secure push to Google Cloud Database
+  const triggerCloudSync = async (
+    currentProfile?: UserProfile | null,
+    currentTasks?: Task[],
+    currentAlarms?: Alarm[],
+    currentTimetable?: TimetableItem[],
+    currentHabits?: Habit[],
+    currentBadges?: Badge[],
+    currentNotifications?: AppNotification[]
+  ) => {
+    if (!loggedInEmail) return;
+    setSyncStatus("syncing");
+    
+    try {
+      const token = localStorage.getItem("studymate_token") || "";
+      const payload = {
+        profile: currentProfile !== undefined ? currentProfile : profile,
+        tasks: currentTasks !== undefined ? currentTasks : tasks,
+        alarms: currentAlarms !== undefined ? currentAlarms : alarms,
+        timetable: currentTimetable !== undefined ? currentTimetable : timetable,
+        habits: currentHabits !== undefined ? currentHabits : habits,
+        badges: currentBadges !== undefined ? currentBadges : badges,
+        notifications: currentNotifications !== undefined ? currentNotifications : notifications,
+        updatedAt: new Date().toISOString()
+      };
+
+      const res = await fetch("/api/sync/push", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        throw new Error("Sync push rejected by server");
+      }
+      setSyncStatus("synced");
+    } catch (error) {
+      console.warn("[Cloud Sync Error] Connection failure, cached locally:", error);
+      setSyncStatus("offline");
+    }
+  };
+
+  const handleTriggerSync = async () => {
+    await triggerCloudSync();
+  };
+
+  const handleDeleteAccount = async () => {
+    const confirm1 = window.confirm("Are you absolutely sure you want to permanently delete your StudyMate account and all synchronized records? This cannot be undone.");
+    if (!confirm1) return;
+    const confirm2 = window.confirm("FINAL WARNING: All your tasks, study logs, streaks, and grades will be immediately wiped from Google Cloud. Type OK to proceed.");
+    if (!confirm2) return;
+    
+    setSyncStatus("syncing");
+    try {
+      const token = localStorage.getItem("studymate_token") || "";
+      const res = await fetch("/api/auth/delete-account", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        // Clear local storage prefix
+        const dbPrefix = loggedInEmail ? loggedInEmail.replace(/[^a-zA-Z0-9]/g, "_") : "";
+        if (dbPrefix) {
+          localStorage.removeItem(`studymate_profile_${dbPrefix}`);
+          localStorage.removeItem(`studymate_tasks_${dbPrefix}`);
+          localStorage.removeItem(`studymate_alarms_${dbPrefix}`);
+          localStorage.removeItem(`studymate_timetable_${dbPrefix}`);
+          localStorage.removeItem(`studymate_habits_${dbPrefix}`);
+          localStorage.removeItem(`studymate_badges_${dbPrefix}`);
+          localStorage.removeItem(`studymate_notifications_${dbPrefix}`);
+        }
+        localStorage.removeItem("studymate_token");
+        localStorage.removeItem("studymate_logged_in_email");
+        
+        setProfile(null);
+        setTasks([]);
+        setAlarms([]);
+        setTimetable([]);
+        setHabits([]);
+        setBadges([]);
+        setNotifications([]);
+        setLoggedInEmail(null);
+        setSyncStatus("idle");
+        alert("Your account and linked database have been successfully deleted from our servers.");
+      } else {
+        throw new Error("Failed to delete account on server.");
+      }
+    } catch (err) {
+      console.error("Account deletion failed:", err);
+      alert("Network failure or connection error. Could not delete account from server. Please try again.");
+      setSyncStatus("offline");
+    }
+  };
+
+  // 1. Core Boot Loader with Auto-Restore Sync Pull
   useEffect(() => {
     if (!loggedInEmail) {
       setBooted(true);
       return;
     }
 
-    setBooted(false);
+    const loadAndSyncData = async () => {
+      setBooted(false);
+      setSyncStatus("syncing");
 
-    // Load profile
-    const storedProfile = localStorage.getItem(getStorageKey("studymate_profile"));
-    let userProf: UserProfile | null = null;
-    if (storedProfile) {
-      userProf = JSON.parse(storedProfile);
-    }
-
-    if (userProf) {
-      // Manage / calculate Login Streak days
-      const todayStr = new Date().toISOString().split("T")[0];
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().split("T")[0];
-
-      let nextStreak = userProf.streakCounter || 1;
-      
-      if (userProf.lastLoginDate && userProf.lastLoginDate !== todayStr) {
-        // Automatic day increment for 10-Day Syllabus Test timeline
-        const testStorageKeyPrefix = `studymate_${userProf.emailAddress.replace(/[^a-zA-Z0-9]/g, "_")}`;
-        const savedDays = localStorage.getItem(`${testStorageKeyPrefix}_days_elapsed`);
-        const currentDays = savedDays ? parseInt(savedDays) : 0;
-        const nextDays = Math.min(currentDays + 1, 10);
-        localStorage.setItem(`${testStorageKeyPrefix}_days_elapsed`, String(nextDays));
-
-        if (userProf.lastLoginDate === yesterdayStr) {
-          nextStreak += 1;
-          setTimeout(() => {
-            handleAddNotification(
-              "🔥 Consistency Streak Extended!",
-              `Congratulations! You logged in yesterday and today to keep your streak alive. Current streak: ${nextStreak} days!`,
-              "success"
-            );
-          }, 1000);
-        } else {
-          // Reset streak but encourage them
-          nextStreak = 1;
-          setTimeout(() => {
-            handleAddNotification(
-              "💪 New Streak Started!",
-              "Welcome back to StudyMate! Let's build a consistent daily study routine starting today.",
-              "info"
-            );
-          }, 1000);
+      // A. Try to fetch from server first (reliable cloud sync / auto-restore)
+      let serverData: any = null;
+      let hasNetworkError = false;
+      try {
+        const token = localStorage.getItem("studymate_token") || "";
+        const res = await fetch("/api/sync/pull", {
+          headers: {
+            "Authorization": `Bearer ${token}`
+          }
+        });
+        if (res.ok) {
+          const result = await res.json();
+          if (result.success && result.data) {
+            serverData = result.data;
+          }
         }
+      } catch (err) {
+        console.warn("Failed to contact sync server, falling back to offline cache:", err);
+        hasNetworkError = true;
       }
 
-      userProf.streakCounter = nextStreak;
-      userProf.lastLoginDate = todayStr;
-      
-      setProfile(userProf);
-      localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(userProf));
-    } else {
-      setProfile(null);
-    }
+      // B. Load / Merge data
+      const dbPrefix = loggedInEmail.replace(/[^a-zA-Z0-9]/g, "_");
+      const localProfileStr = localStorage.getItem(`studymate_profile_${dbPrefix}`);
+      const localProfile = localProfileStr ? JSON.parse(localProfileStr) : null;
 
-    // Load tasks
-    const storedTasks = localStorage.getItem(getStorageKey("studymate_tasks"));
-    if (storedTasks) {
-      setTasks(JSON.parse(storedTasks));
-    } else {
-      setTasks([]);
-    }
+      let finalProfile: UserProfile | null = null;
+      if (serverData && serverData.profile) {
+        finalProfile = serverData.profile;
+        localStorage.setItem(`studymate_profile_${dbPrefix}`, JSON.stringify(finalProfile));
+      } else if (localProfile) {
+        finalProfile = localProfile;
+      }
 
-    // Load alarms
-    const storedAlarms = localStorage.getItem(getStorageKey("studymate_alarms"));
-    if (storedAlarms) {
-      setAlarms(JSON.parse(storedAlarms));
-    } else {
-      setAlarms([]);
-    }
+      if (finalProfile) {
+        const todayStr = new Date().toISOString().split("T")[0];
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayStr = yesterday.toISOString().split("T")[0];
 
-    // Load timetable
-    const storedTimetable = localStorage.getItem(getStorageKey("studymate_timetable"));
-    if (storedTimetable) {
-      setTimetable(JSON.parse(storedTimetable));
-    } else {
-      setTimetable([]);
-    }
+        let nextStreak = finalProfile.streakCounter || 1;
+        
+        if (finalProfile.lastLoginDate && finalProfile.lastLoginDate !== todayStr) {
+          const savedDays = localStorage.getItem(`studymate_${dbPrefix}_days_elapsed`);
+          const currentDays = savedDays ? parseInt(savedDays) : 0;
+          const nextDays = Math.min(currentDays + 1, 10);
+          localStorage.setItem(`studymate_${dbPrefix}_days_elapsed`, String(nextDays));
 
-    // Load habits
-    const storedHabits = localStorage.getItem(getStorageKey("studymate_habits"));
-    if (storedHabits) {
-      setHabits(JSON.parse(storedHabits));
-    } else {
-      setHabits([]);
-    }
-
-    // Load badges
-    const storedBadges = localStorage.getItem(getStorageKey("studymate_badges"));
-    if (storedBadges) {
-      setBadges(JSON.parse(storedBadges));
-    } else {
-      setBadges(DEFAULT_BADGES); // Initialize locked templates of awards
-    }
-
-    // Load notifications with customized real CBSE tips
-    const storedNotices = localStorage.getItem(getStorageKey("studymate_notifications"));
-    if (storedNotices) {
-      setNotifications(JSON.parse(storedNotices));
-    } else {
-      const initialStudyNotifications: AppNotification[] = [
-        {
-          id: "notice-study-1",
-          title: "🧠 Technique: The Feynman Fast Study Method",
-          message: "To master any chapter fast: Explain the core concepts to a 10-year old in simple terms. This immediately exposes gap areas in your retention!",
-          type: "info",
-          timestamp: "09:00 AM",
-          read: false
-        },
-        {
-          id: "notice-study-2",
-          title: "📈 CBSE Current Affairs & Focus Areas",
-          message: "CBSE board marks allocations are increasing competency-based and case-study questions. Practice conceptual reasoning rather than direct memorization!",
-          type: "success",
-          timestamp: "Yesterday",
-          read: false
-        },
-        {
-          id: "notice-study-3",
-          title: "⚡ Memory Hack: Spaced Repetition",
-          message: "Revise a completed subject after 1 day, 3 days, 7 days, and 30 days. This shifts the material from fragile short-term to permanent memory storage.",
-          type: "reminder",
-          timestamp: "2 days ago",
-          read: false
-        },
-        {
-          id: "notice-study-4",
-          title: "🔑 Quick Remember: Acronym Mnemonics",
-          message: "Convert complicated definitions or lists into catchphrases or acronyms. Your brain recalls structured formulas 10x faster than dry facts.",
-          type: "info",
-          timestamp: "3 days ago",
-          read: false
+          if (finalProfile.lastLoginDate === yesterdayStr) {
+            nextStreak += 1;
+            setTimeout(() => {
+              handleAddNotification(
+                "🔥 Consistency Streak Extended!",
+                `Congratulations! You logged in yesterday and today to keep your streak alive. Current streak: ${nextStreak} days!`,
+                "success"
+              );
+            }, 1000);
+          } else {
+            nextStreak = 1;
+            setTimeout(() => {
+              handleAddNotification(
+                "💪 New Streak Started!",
+                "Welcome back to StudyMate! Let's build a consistent daily study routine starting today.",
+                "info"
+              );
+            }, 1000);
+          }
         }
-      ];
-      setNotifications(initialStudyNotifications);
-      localStorage.setItem(getStorageKey("studymate_notifications"), JSON.stringify(initialStudyNotifications));
-    }
 
-    // Auto morning motivation trigger
-    const todayStr = new Date().toISOString().split("T")[0];
-    const lastMorningTrigger = localStorage.getItem(getStorageKey("studymate_last_morning_motivation"));
-    if (lastMorningTrigger !== todayStr) {
-      const today = new Date();
-      const daySeed = today.getDate() + today.getMonth() * 31;
-      const dailyIndex = daySeed % MORNING_MOTIVATIONAL_POOL.length;
-      const morningNotice = MORNING_MOTIVATIONAL_POOL[dailyIndex];
-      const newNotice: AppNotification = {
-        id: `morning-notice-${Date.now()}`,
-        title: morningNotice.title,
-        message: morningNotice.message,
-        type: morningNotice.type,
-        timestamp: "07:30 AM",
-        read: false
-      };
-      
-      const loadedNoticesStr = localStorage.getItem(getStorageKey("studymate_notifications"));
-      const currentNotices = loadedNoticesStr ? JSON.parse(loadedNoticesStr) : [];
-      const updatedNotices = [newNotice, ...currentNotices];
-      setNotifications(updatedNotices);
-      localStorage.setItem(getStorageKey("studymate_notifications"), JSON.stringify(updatedNotices));
-      localStorage.setItem(getStorageKey("studymate_last_morning_motivation"), todayStr);
-    }
+        finalProfile.streakCounter = nextStreak;
+        finalProfile.lastLoginDate = todayStr;
+        
+        setProfile(finalProfile);
+        localStorage.setItem(`studymate_profile_${dbPrefix}`, JSON.stringify(finalProfile));
+      } else {
+        setProfile(null);
+      }
 
-    // Load dark mode preference
-    const storedTheme = localStorage.getItem("studymate_dark_mode");
-    if (storedTheme === "true") {
-      setDarkMode(true);
-      document.documentElement.classList.add("dark");
-    }
+      // Load tasks
+      let finalTasks: Task[] = [];
+      if (serverData && serverData.tasks) {
+        finalTasks = serverData.tasks;
+      } else {
+        const storedTasks = localStorage.getItem(`studymate_tasks_${dbPrefix}`);
+        if (storedTasks) finalTasks = JSON.parse(storedTasks);
+      }
+      setTasks(finalTasks);
+      localStorage.setItem(`studymate_tasks_${dbPrefix}`, JSON.stringify(finalTasks));
 
-    setBooted(true);
+      // Load alarms
+      let finalAlarms: Alarm[] = [];
+      if (serverData && serverData.alarms) {
+        finalAlarms = serverData.alarms;
+      } else {
+        const storedAlarms = localStorage.getItem(`studymate_alarms_${dbPrefix}`);
+        if (storedAlarms) finalAlarms = JSON.parse(storedAlarms);
+      }
+      setAlarms(finalAlarms);
+      localStorage.setItem(`studymate_alarms_${dbPrefix}`, JSON.stringify(finalAlarms));
+
+      // Load timetable
+      let finalTimetable: TimetableItem[] = [];
+      if (serverData && serverData.timetable) {
+        finalTimetable = serverData.timetable;
+      } else {
+        const storedTimetable = localStorage.getItem(`studymate_timetable_${dbPrefix}`);
+        if (storedTimetable) finalTimetable = JSON.parse(storedTimetable);
+      }
+      setTimetable(finalTimetable);
+      localStorage.setItem(`studymate_timetable_${dbPrefix}`, JSON.stringify(finalTimetable));
+
+      // Load habits
+      let finalHabits: Habit[] = [];
+      if (serverData && serverData.habits) {
+        finalHabits = serverData.habits;
+      } else {
+        const storedHabits = localStorage.getItem(`studymate_habits_${dbPrefix}`);
+        if (storedHabits) finalHabits = JSON.parse(storedHabits);
+      }
+      setHabits(finalHabits);
+      localStorage.setItem(`studymate_habits_${dbPrefix}`, JSON.stringify(finalHabits));
+
+      // Load badges
+      let finalBadges: Badge[] = [];
+      if (serverData && serverData.badges) {
+        finalBadges = serverData.badges;
+      } else {
+        const storedBadges = localStorage.getItem(`studymate_badges_${dbPrefix}`);
+        if (storedBadges) {
+          finalBadges = JSON.parse(storedBadges);
+        } else {
+          finalBadges = DEFAULT_BADGES;
+        }
+      }
+      setBadges(finalBadges);
+      localStorage.setItem(`studymate_badges_${dbPrefix}`, JSON.stringify(finalBadges));
+
+      // Load notifications
+      let finalNotifications: AppNotification[] = [];
+      if (serverData && serverData.notifications) {
+        finalNotifications = serverData.notifications;
+      } else {
+        const storedNotices = localStorage.getItem(`studymate_notifications_${dbPrefix}`);
+        if (storedNotices) {
+          finalNotifications = JSON.parse(storedNotices);
+        } else {
+          finalNotifications = [
+            {
+              id: "notice-study-1",
+              title: "🧠 Technique: The Feynman Fast Study Method",
+              message: "To master any chapter fast: Explain the core concepts to a 10-year old in simple terms. This immediately exposes gap areas in your retention!",
+              type: "info",
+              timestamp: "09:00 AM",
+              read: false
+            },
+            {
+              id: "notice-study-2",
+              title: "📈 CBSE Current Affairs & Focus Areas",
+              message: "CBSE board marks allocations are increasing competency-based and case-study questions. Practice conceptual reasoning rather than direct memorization!",
+              type: "success",
+              timestamp: "Yesterday",
+              read: false
+            },
+            {
+              id: "notice-study-3",
+              title: "⚡ Memory Hack: Spaced Repetition",
+              message: "Revise a completed subject after 1 day, 3 days, 7 days, and 30 days. This shifts the material from fragile short-term to permanent memory storage.",
+              type: "reminder",
+              timestamp: "2 days ago",
+              read: false
+            },
+            {
+              id: "notice-study-4",
+              title: "🔑 Quick Remember: Acronym Mnemonics",
+              message: "Convert complicated definitions or lists into catchphrases or acronyms. Your brain recalls structured formulas 10x faster than dry facts.",
+              type: "info",
+              timestamp: "3 days ago",
+              read: false
+            }
+          ];
+        }
+      }
+      setNotifications(finalNotifications);
+      localStorage.setItem(`studymate_notifications_${dbPrefix}`, JSON.stringify(finalNotifications));
+
+      const todayStr = new Date().toISOString().split("T")[0];
+      const lastMorningTrigger = localStorage.getItem(`studymate_last_morning_motivation_${dbPrefix}`);
+      if (lastMorningTrigger !== todayStr) {
+        const today = new Date();
+        const daySeed = today.getDate() + today.getMonth() * 31;
+        const dailyIndex = daySeed % MORNING_MOTIVATIONAL_POOL.length;
+        const morningNotice = MORNING_MOTIVATIONAL_POOL[dailyIndex];
+        const newNotice: AppNotification = {
+          id: `morning-notice-${Date.now()}`,
+          title: morningNotice.title,
+          message: morningNotice.message,
+          type: morningNotice.type,
+          timestamp: "07:30 AM",
+          read: false
+        };
+        
+        const updatedNotices = [newNotice, ...finalNotifications];
+        setNotifications(updatedNotices);
+        localStorage.setItem(`studymate_notifications_${dbPrefix}`, JSON.stringify(updatedNotices));
+        localStorage.setItem(`studymate_last_morning_motivation_${dbPrefix}`, todayStr);
+      }
+
+      // Load dark mode preference
+      const storedTheme = localStorage.getItem("studymate_dark_mode");
+      if (storedTheme === "true") {
+        setDarkMode(true);
+        document.documentElement.classList.add("dark");
+      }
+
+      setBooted(true);
+      setSyncStatus(hasNetworkError ? "offline" : "synced");
+
+      // Sync offline data up if server profile was empty but we had local cache
+      if (!serverData && finalProfile && !hasNetworkError) {
+        triggerCloudSync(finalProfile, finalTasks, finalAlarms, finalTimetable, finalHabits, finalBadges, finalNotifications);
+      }
+    };
+
+    loadAndSyncData();
   }, [loggedInEmail]);
 
   // 2. Ticking Clock Alarm Sync check
@@ -497,6 +754,7 @@ export default function App() {
     });
     setBadges(updatedBadges);
     localStorage.setItem(getStorageKey("studymate_badges"), JSON.stringify(updatedBadges));
+    triggerCloudSync(updated, undefined, undefined, undefined, undefined, updatedBadges, undefined);
   };
 
   const handleIncrementPomodoro = () => {
@@ -507,6 +765,7 @@ export default function App() {
     };
     setProfile(updated);
     localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(updated));
+    triggerCloudSync(updated, undefined, undefined, undefined, undefined, undefined, undefined);
   };
 
   // Onboarding Complete Callback
@@ -533,6 +792,7 @@ export default function App() {
       `Welcome to StudyMate, ${freshProfile.fullName}! Your CBSE syllabus classes are now actively synced to ${freshProfile.emailAddress}.`,
       "success"
     );
+    triggerCloudSync(freshProfile, undefined, undefined, undefined, undefined, undefined, undefined);
   };
 
   // Tasks actions
@@ -550,26 +810,49 @@ export default function App() {
     const nextTasks = [newTask, ...tasks];
     setTasks(nextTasks);
     localStorage.setItem(getStorageKey("studymate_tasks"), JSON.stringify(nextTasks));
-    handleAwardXP(20); // creation XP reward
+    
+    if (profile) {
+      const newXP = profile.xp + 20;
+      const newLevel = Math.floor(newXP / 300) + 1;
+      const updatedProf = { ...profile, xp: newXP, level: newLevel };
+      setProfile(updatedProf);
+      localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(updatedProf));
+      triggerCloudSync(updatedProf, nextTasks, undefined, undefined, undefined, undefined, undefined);
+    } else {
+      triggerCloudSync(undefined, nextTasks, undefined, undefined, undefined, undefined, undefined);
+    }
   };
 
   const handleToggleTask = (id: string) => {
+    let xpGain = 0;
     const nextTasks = tasks.map((t) => {
       if (t.id === id) {
         const nextState = !t.completed;
-        if (nextState) handleAwardXP(50); // bonus completed reward
+        if (nextState) xpGain = 50;
         return { ...t, completed: nextState };
       }
       return t;
     });
     setTasks(nextTasks);
     localStorage.setItem(getStorageKey("studymate_tasks"), JSON.stringify(nextTasks));
+    
+    if (xpGain > 0 && profile) {
+      const newXP = profile.xp + xpGain;
+      const newLevel = Math.floor(newXP / 300) + 1;
+      const updatedProf = { ...profile, xp: newXP, level: newLevel };
+      setProfile(updatedProf);
+      localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(updatedProf));
+      triggerCloudSync(updatedProf, nextTasks, undefined, undefined, undefined, undefined, undefined);
+    } else {
+      triggerCloudSync(undefined, nextTasks, undefined, undefined, undefined, undefined, undefined);
+    }
   };
 
   const handleDeleteTask = (id: string) => {
     const nextTasks = tasks.filter((t) => t.id !== id);
     setTasks(nextTasks);
     localStorage.setItem(getStorageKey("studymate_tasks"), JSON.stringify(nextTasks));
+    triggerCloudSync(undefined, nextTasks, undefined, undefined, undefined, undefined, undefined);
   };
 
   // Alarm actions
@@ -590,19 +873,31 @@ export default function App() {
     const nextAlarms = [newAlarm, ...alarms];
     setAlarms(nextAlarms);
     localStorage.setItem(getStorageKey("studymate_alarms"), JSON.stringify(nextAlarms));
-    handleAwardXP(10);
+    
+    if (profile) {
+      const newXP = profile.xp + 10;
+      const newLevel = Math.floor(newXP / 300) + 1;
+      const updatedProf = { ...profile, xp: newXP, level: newLevel };
+      setProfile(updatedProf);
+      localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(updatedProf));
+      triggerCloudSync(updatedProf, undefined, nextAlarms, undefined, undefined, undefined, undefined);
+    } else {
+      triggerCloudSync(undefined, undefined, nextAlarms, undefined, undefined, undefined, undefined);
+    }
   };
 
   const handleToggleAlarm = (id: string) => {
     const nextAlarms = alarms.map((a) => a.id === id ? { ...a, isActive: !a.isActive } : a);
     setAlarms(nextAlarms);
     localStorage.setItem(getStorageKey("studymate_alarms"), JSON.stringify(nextAlarms));
+    triggerCloudSync(undefined, undefined, nextAlarms, undefined, undefined, undefined, undefined);
   };
 
   const handleDeleteAlarm = (id: string) => {
     const nextAlarms = alarms.filter((a) => a.id !== id);
     setAlarms(nextAlarms);
     localStorage.setItem(getStorageKey("studymate_alarms"), JSON.stringify(nextAlarms));
+    triggerCloudSync(undefined, undefined, nextAlarms, undefined, undefined, undefined, undefined);
   };
 
   // Timetable planner actions
@@ -617,25 +912,46 @@ export default function App() {
     const nextTimetable = [...timetable, newItem];
     setTimetable(nextTimetable);
     localStorage.setItem(getStorageKey("studymate_timetable"), JSON.stringify(nextTimetable));
-    handleAwardXP(15);
+    
+    if (profile) {
+      const newXP = profile.xp + 15;
+      const newLevel = Math.floor(newXP / 300) + 1;
+      const updatedProf = { ...profile, xp: newXP, level: newLevel };
+      setProfile(updatedProf);
+      localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(updatedProf));
+      triggerCloudSync(updatedProf, undefined, undefined, nextTimetable, undefined, undefined, undefined);
+    } else {
+      triggerCloudSync(undefined, undefined, undefined, nextTimetable, undefined, undefined, undefined);
+    }
   };
 
   const handleDeleteTimetableItem = (id: string) => {
     const nextTimetable = timetable.filter((t) => t.id !== id);
     setTimetable(nextTimetable);
     localStorage.setItem(getStorageKey("studymate_timetable"), JSON.stringify(nextTimetable));
+    triggerCloudSync(undefined, undefined, undefined, nextTimetable, undefined, undefined, undefined);
   };
 
   const handleLoadAISchedule = (aiData: { timetable: TimetableItem[]; studyTips: string[] }) => {
-    // Overwrites or appends timetable
     const combined = [...timetable, ...aiData.timetable];
     setTimetable(combined);
     localStorage.setItem(getStorageKey("studymate_timetable"), JSON.stringify(combined));
-    handleAwardXP(50); // XP bonus for loading custom AI schedule!
+    
+    if (profile) {
+      const newXP = profile.xp + 50;
+      const newLevel = Math.floor(newXP / 300) + 1;
+      const updatedProf = { ...profile, xp: newXP, level: newLevel };
+      setProfile(updatedProf);
+      localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(updatedProf));
+      triggerCloudSync(updatedProf, undefined, undefined, combined, undefined, undefined, undefined);
+    } else {
+      triggerCloudSync(undefined, undefined, undefined, combined, undefined, undefined, undefined);
+    }
   };
 
   // Habit trackers
   const handleToggleHabitDate = (id: string, dateStr: string) => {
+    let xpGain = 0;
     const nextHabits = habits.map((h) => {
       if (h.id === id) {
         const completed = h.datesCompleted.includes(dateStr);
@@ -644,7 +960,7 @@ export default function App() {
           nextDates = h.datesCompleted.filter((d) => d !== dateStr);
         } else {
           nextDates = [...h.datesCompleted, dateStr];
-          handleAwardXP(30); // XP for checked habit
+          xpGain = 30;
         }
         return { ...h, datesCompleted: nextDates };
       }
@@ -652,6 +968,17 @@ export default function App() {
     });
     setHabits(nextHabits);
     localStorage.setItem(getStorageKey("studymate_habits"), JSON.stringify(nextHabits));
+    
+    if (xpGain > 0 && profile) {
+      const newXP = profile.xp + xpGain;
+      const newLevel = Math.floor(newXP / 300) + 1;
+      const updatedProf = { ...profile, xp: newXP, level: newLevel };
+      setProfile(updatedProf);
+      localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(updatedProf));
+      triggerCloudSync(updatedProf, undefined, undefined, undefined, nextHabits, undefined, undefined);
+    } else {
+      triggerCloudSync(undefined, undefined, undefined, undefined, nextHabits, undefined, undefined);
+    }
   };
 
   const handleAddHabit = (name: string, icon: string, color: string) => {
@@ -665,13 +992,24 @@ export default function App() {
     const nextHabits = [...habits, newHabit];
     setHabits(nextHabits);
     localStorage.setItem(getStorageKey("studymate_habits"), JSON.stringify(nextHabits));
-    handleAwardXP(15);
+    
+    if (profile) {
+      const newXP = profile.xp + 15;
+      const newLevel = Math.floor(newXP / 300) + 1;
+      const updatedProf = { ...profile, xp: newXP, level: newLevel };
+      setProfile(updatedProf);
+      localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(updatedProf));
+      triggerCloudSync(updatedProf, undefined, undefined, undefined, nextHabits, undefined, undefined);
+    } else {
+      triggerCloudSync(undefined, undefined, undefined, undefined, nextHabits, undefined, undefined);
+    }
   };
 
   const handleDeleteHabit = (id: string) => {
     const nextHabits = habits.filter((h) => h.id !== id);
     setHabits(nextHabits);
     localStorage.setItem(getStorageKey("studymate_habits"), JSON.stringify(nextHabits));
+    triggerCloudSync(undefined, undefined, undefined, undefined, nextHabits, undefined, undefined);
   };
 
   // Profile modification callback
@@ -683,6 +1021,7 @@ export default function App() {
     };
     setProfile(updated);
     localStorage.setItem(getStorageKey("studymate_profile"), JSON.stringify(updated));
+    triggerCloudSync(updated, undefined, undefined, undefined, undefined, undefined, undefined);
   };
 
   // Account Wipe / Reset Default Callback
@@ -755,11 +1094,16 @@ export default function App() {
     { id: "settings", label: "Settings", icon: Settings, symbol: "⚙️" }
   ];
 
+  const isFullScreenActive = 
+    focusLockdown || 
+    (currentTab === "assistant" && aiFullScreen) || 
+    (currentTab === "chat" && chatFullScreen);
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col md:flex-row font-sans transition-colors duration-300">
       
       {/* Side drawer for Desktop screen viewports */}
-      <aside className="hidden md:flex flex-col w-64 bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800/80 p-5 space-y-6 flex-shrink-0">
+      <aside className={`hidden md:flex flex-col w-64 bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800/80 p-5 space-y-6 flex-shrink-0 ${isFullScreenActive ? "md:!hidden" : ""}`}>
         {/* Branding header */}
         <div className="flex items-center space-x-2.5 pb-2 border-b border-slate-100 dark:border-slate-800/60">
           <span className="text-2xl">🎓</span>
@@ -820,7 +1164,7 @@ export default function App() {
       </aside>
 
       {/* Mobile top app bar */}
-      <header className="md:hidden bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800/80 px-4 py-3.5 flex justify-between items-center z-30 flex-shrink-0">
+      <header className={`md:hidden bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800/80 px-4 py-3.5 flex justify-between items-center z-30 flex-shrink-0 ${isFullScreenActive ? "!hidden" : ""}`}>
         <div className="flex items-center space-x-2">
           <span className="text-xl">🎓</span>
           <h2 className="text-sm font-black font-display tracking-tight text-indigo-600 dark:text-indigo-400">StudyMate</h2>
@@ -844,7 +1188,7 @@ export default function App() {
       </header>
 
       {/* Mobile Drawer menu list overlays */}
-      {mobileMenuOpen && (
+      {mobileMenuOpen && !isFullScreenActive && (
         <div className="md:hidden fixed inset-0 top-[57px] bg-white dark:bg-slate-900 z-40 flex flex-col p-6 space-y-4">
           <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b pb-2">Navigation Routes</h4>
           <div className="grid grid-cols-2 gap-2 overflow-y-auto max-h-[70%]">
@@ -884,10 +1228,10 @@ export default function App() {
       )}
 
       {/* Main active screen tab contents viewport */}
-      <main className="flex-1 p-4 md:p-8 pb-24 md:pb-8 overflow-y-auto max-h-screen">
+      <main className={`flex-1 overflow-y-auto max-h-screen ${isFullScreenActive ? "p-0 h-screen w-screen overflow-hidden flex flex-col" : "p-4 md:p-8 pb-24 md:pb-8"}`}>
         
         {/* Unified App Header for notification center and theme triggers */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100 dark:border-slate-800/80">
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100 dark:border-slate-800/80 ${isFullScreenActive ? "hidden" : ""}`}>
           <div>
             <h1 className="text-xl md:text-2xl font-black text-slate-950 dark:text-slate-50 tracking-tight capitalize flex items-center gap-2">
               <span>{currentTab === "dashboard" ? "🏠" : NAV_LINKS.find(l => l.id === currentTab)?.label === "10-Day Test" ? "🎯" : "📚"}</span>
@@ -1028,13 +1372,15 @@ export default function App() {
         </div>
         
         {/* Floating trigger alert for quick feedback */}
-        <TriggeredAlarmsOverlay 
-          triggeredAlarm={triggeredAlarm}
-          profile={profile}
-          onClearTriggeredAlarm={() => setTriggeredAlarm(null)}
-          onNavigate={(tab) => setCurrentTab(tab)}
-          onAwardXP={handleAwardXP}
-        />
+        {!focusLockdown && (
+          <TriggeredAlarmsOverlay 
+            triggeredAlarm={triggeredAlarm}
+            profile={profile}
+            onClearTriggeredAlarm={() => setTriggeredAlarm(null)}
+            onNavigate={(tab) => setCurrentTab(tab)}
+            onAwardXP={handleAwardXP}
+          />
+        )}
 
         {currentTab === "dashboard" && (
           <Dashboard 
@@ -1110,6 +1456,9 @@ export default function App() {
           <Pomodoro 
             onAwardXP={handleAwardXP}
             onIncrementPomodoro={handleIncrementPomodoro}
+            isFocusLockdown={focusLockdown}
+            onFocusLockdownChange={setFocusLockdown}
+            profileClassGrade={profile.classGrade}
           />
         )}
 
@@ -1152,6 +1501,8 @@ export default function App() {
             profile={profile}
             onAwardXP={handleAwardXP}
             onAddNotification={handleAddNotification}
+            isFullScreen={aiFullScreen}
+            onToggleFullScreen={toggleAiFullScreen}
           />
         )}
 
@@ -1160,6 +1511,8 @@ export default function App() {
             profile={profile}
             onAwardXP={handleAwardXP}
             handleAddNotification={handleAddNotification}
+            isFullScreen={chatFullScreen}
+            onToggleFullScreen={toggleChatFullScreen}
           />
         )}
 
@@ -1168,13 +1521,16 @@ export default function App() {
             darkMode={darkMode}
             onToggleDarkMode={handleToggleDarkMode}
             profile={profile}
+            syncStatus={syncStatus}
+            onTriggerSync={handleTriggerSync}
+            onDeleteAccount={handleDeleteAccount}
           />
         )}
 
       </main>
 
       {/* Mobile persistent bottom navigation bar */}
-      <div id="mobile_bottom_bar" className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-100 dark:border-slate-800/80 z-40 px-4 py-3.5 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-lg">
+      <div id="mobile_bottom_bar" className={`md:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-100 dark:border-slate-800/80 z-40 px-4 py-3.5 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-lg ${isFullScreenActive ? "!hidden" : ""}`}>
         {NAV_LINKS.map((link) => {
           const Icon = link.icon;
           const isSelected = currentTab === link.id;

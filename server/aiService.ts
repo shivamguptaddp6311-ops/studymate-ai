@@ -246,32 +246,43 @@ async function callGemini(
     config.responseSchema = responseSchema;
   }
 
-  try {
-    const response = await gemini.models.generateContent({
-      model: "gemini-3.5-flash",
-      contents,
-      config
-    });
-
-    if (!response.text) {
-      throw new Error("Empty text response from Gemini");
+  const fetchWithRetry = async (modelName: string): Promise<any> => {
+    let lastErr: any = null;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await gemini.models.generateContent({
+          model: modelName,
+          contents,
+          config
+        });
+        if (res.text) return res;
+        throw new Error("Empty text response from Gemini");
+      } catch (e: any) {
+        lastErr = e;
+        const isQuotaOr429 = e?.message?.includes("429") || e?.message?.includes("RESOURCE_EXHAUSTED") || e?.message?.includes("quota");
+        if (isQuotaOr429 && modelName === "gemini-3.5-flash") {
+          // If it is a quota limit, don't waste retries, trigger fallback immediately
+          break;
+        }
+        console.warn(`[AIService] Gemini attempt ${attempt} failed: ${e?.message || e}. Retrying...`);
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        }
+      }
     }
+    throw lastErr || new Error("Failed to generate content from Gemini");
+  };
 
+  try {
+    const response = await fetchWithRetry("gemini-3.5-flash");
     return response.text;
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota")) {
       console.warn("[AIService] gemini-3.5-flash hit 429/quota limit. Retrying with gemini-3.1-flash-lite...");
       try {
-        const fallbackResponse = await gemini.models.generateContent({
-          model: "gemini-3.1-flash-lite",
-          contents,
-          config
-        });
-        if (fallbackResponse.text) {
-          console.log("[AIService] Successfully resolved request using gemini-3.1-flash-lite fallback.");
-          return fallbackResponse.text;
-        }
+        const fallbackResponse = await fetchWithRetry("gemini-3.1-flash-lite");
+        return fallbackResponse.text;
       } catch (fallbackErr) {
         console.error("[AIService] gemini-3.1-flash-lite fallback also failed:", fallbackErr);
       }
@@ -353,9 +364,9 @@ async function callGroq(
 
   const formattedMessages = convertMessagesToOpenAIFormat(messages, systemInstruction);
 
-  // If there's an image, Groq's standard models don't support it unless we use llama-3.2-11b-vision-preview
-  // Let's use llama-3.2-11b-vision-preview if image is uploaded, else llama-3.3-70b-versatile
-  const model = image ? "llama-3.2-11b-vision-preview" : "llama-3.3-70b-versatile";
+  // If there's an image, Groq's standard models don't support it unless we use llama-3.2-11b-vision-instruct
+  // Let's use llama-3.2-11b-vision-instruct if image is uploaded, else llama-3.3-70b-versatile
+  const model = image ? "llama-3.2-11b-vision-instruct" : "llama-3.3-70b-versatile";
 
   if (image && formattedMessages.length > 0) {
     const lastMsg = formattedMessages[formattedMessages.length - 1];
@@ -437,7 +448,8 @@ async function callOpenRouter(
   const body: any = {
     model,
     messages: formattedMessages,
-    temperature: 0.7
+    temperature: 0.7,
+    max_tokens: 4000
   };
 
   if (responseSchema) {

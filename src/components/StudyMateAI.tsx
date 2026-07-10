@@ -3,7 +3,8 @@ import {
   Sparkles, Send, Image as ImageIcon, Trash2, X, Paperclip, 
   Check, Brain, GraduationCap, Lightbulb, MessageSquare, AlertCircle, RefreshCw,
   Camera, Crop, ArrowRight,
-  Sliders, Settings, CheckCircle, Languages, Activity, ChevronUp, ChevronDown
+  Sliders, Settings, CheckCircle, Languages, Activity, ChevronUp, ChevronDown,
+  Maximize2, Minimize2, Undo, RotateCcw
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "motion/react";
@@ -13,6 +14,8 @@ interface StudyMateAIProps {
   profile: UserProfile;
   onAwardXP?: (amount: number, reason: string) => void;
   onAddNotification?: (title: string, text: string, type: "success" | "info" | "alert") => void;
+  isFullScreen?: boolean;
+  onToggleFullScreen?: () => void;
 }
 
 interface ChatMessage {
@@ -23,7 +26,13 @@ interface ChatMessage {
   timestamp: Date;
 }
 
-export default function StudyMateAI({ profile, onAwardXP, onAddNotification }: StudyMateAIProps) {
+export default function StudyMateAI({ 
+  profile, 
+  onAwardXP, 
+  onAddNotification,
+  isFullScreen = false,
+  onToggleFullScreen
+}: StudyMateAIProps) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     // Attempt local storage recall of history for persistence
     const saved = localStorage.getItem(`studymate_ai_chat_history_${profile.fullName}`);
@@ -61,9 +70,17 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   const [cameraActive, setCameraActive] = useState(false);
   const [cropSourceImage, setCropSourceImage] = useState<string | null>(null);
   const [cropBox, setCropBox] = useState({ x: 15, y: 15, width: 70, height: 70 });
-  const [dragType, setDragType] = useState<"none" | "center" | "tl" | "tr" | "bl" | "br">("none");
+  const [dragType, setDragType] = useState<"none" | "center" | "tl" | "tr" | "bl" | "br" | "pan">("none");
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [dragBoxStart, setDragBoxStart] = useState({ x: 15, y: 15, width: 70, height: 70 });
+
+  // High performance zoom, pan, and undo history states
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [undoHistory, setUndoHistory] = useState<{ x: number; y: number; width: number; height: number }[]>([]);
+  const [pinchStartDist, setPinchStartDist] = useState(0);
+  const [pinchStartZoom, setPinchStartZoom] = useState(1);
+  const [pinchStartPan, setPinchStartPan] = useState({ x: 0, y: 0 });
 
   // Scanned Solved Question State
   const [scannedSolution, setScannedSolution] = useState<any | null>(null);
@@ -72,6 +89,7 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   const scrollRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const cropStageRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -154,55 +172,218 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   };
 
   // ----------------------------------------------------
-  // Hand Cropping Gestures (Drag-to-Crop resize math)
+  // Automatic Boundary Detector
   // ----------------------------------------------------
-  const handleCropDragStart = (e: React.MouseEvent | React.TouchEvent, type: "center" | "tl" | "tr" | "bl" | "br") => {
+  const detectQuestionBoundaries = (imageSrc: string) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const size = 150;
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        
+        ctx.drawImage(img, 0, 0, size, size);
+        const imgData = ctx.getImageData(0, 0, size, size);
+        const data = imgData.data;
+
+        let totalLuminance = 0;
+        const numPixels = size * size;
+        for (let i = 0; i < data.length; i += 4) {
+          const r = data[i];
+          const g = data[i+1];
+          const b = data[i+2];
+          totalLuminance += 0.299 * r + 0.587 * g + 0.114 * b;
+        }
+        const avgLuminance = totalLuminance / numPixels;
+
+        // If background is light, text is dark (luminance < avgLuminance * 0.85)
+        const textThreshold = Math.min(145, avgLuminance * 0.85);
+
+        const rowDensity = new Array(size).fill(0);
+        const colDensity = new Array(size).fill(0);
+
+        for (let y = 0; y < size; y++) {
+          for (let x = 0; x < size; x++) {
+            const idx = (y * size + x) * 4;
+            const r = data[idx];
+            const g = data[idx+1];
+            const b = data[idx+2];
+            const L = 0.299 * r + 0.587 * g + 0.114 * b;
+            if (L < textThreshold) {
+              rowDensity[y]++;
+              colDensity[x]++;
+            }
+          }
+        }
+
+        const noiseThreshold = 2;
+        let minY = 0;
+        let maxY = size - 1;
+        let minX = 0;
+        let maxX = size - 1;
+
+        for (let y = 0; y < size; y++) {
+          if (rowDensity[y] > noiseThreshold) {
+            minY = y;
+            break;
+          }
+        }
+        for (let y = size - 1; y >= 0; y--) {
+          if (rowDensity[y] > noiseThreshold) {
+            maxY = y;
+            break;
+          }
+        }
+        for (let x = 0; x < size; x++) {
+          if (colDensity[x] > noiseThreshold) {
+            minX = x;
+            break;
+          }
+        }
+        for (let x = size - 1; x >= 0; x--) {
+          if (colDensity[x] > noiseThreshold) {
+            maxX = x;
+            break;
+          }
+        }
+
+        const margin = 5;
+        const boxX = Math.max(0, Math.round((minX / size) * 100) - margin);
+        const boxY = Math.max(0, Math.round((minY / size) * 100) - margin);
+        const boxW = Math.min(100 - boxX, Math.round(((maxX - minX) / size) * 100) + margin * 2);
+        const boxH = Math.min(100 - boxY, Math.round(((maxY - minY) / size) * 100) + margin * 2);
+
+        if (boxW >= 15 && boxH >= 15 && boxW < 98 && boxH < 98) {
+          setCropBox({ x: boxX, y: boxY, width: boxW, height: boxH });
+        }
+      } catch (err) {
+        console.warn("Boundary detection failed, using defaults:", err);
+      }
+    };
+    img.src = imageSrc;
+  };
+
+  // Run boundary detection and reset state on image change
+  useEffect(() => {
+    if (cropSourceImage) {
+      detectQuestionBoundaries(cropSourceImage);
+      setZoom(1);
+      setPan({ x: 0, y: 0 });
+      setUndoHistory([]);
+    }
+  }, [cropSourceImage]);
+
+  // ----------------------------------------------------
+  // Hand Cropping Gestures (Smooth, Fast & Zoomable math)
+  // ----------------------------------------------------
+  const handleCropDragStart = (e: React.MouseEvent | React.TouchEvent, type: "center" | "tl" | "tr" | "bl" | "br" | "pan") => {
     e.preventDefault();
+    
+    // Check if it's a multi-touch pinch gesture
+    if ('touches' in e && e.touches.length === 2) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      setDragType("none");
+      setPinchStartDist(dist);
+      setPinchStartZoom(zoom);
+      setPinchStartPan({ ...pan });
+      return;
+    }
+
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
+    
     setDragType(type);
     setDragStart({ x: clientX, y: clientY });
     setDragBoxStart({ ...cropBox });
+    setPinchStartPan({ ...pan });
   };
 
   const handleCropDragMove = (e: React.MouseEvent | React.TouchEvent) => {
+    // 1. Handle dual touch pinch zoom
+    if ('touches' in e && e.touches.length === 2) {
+      e.preventDefault();
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+      if (pinchStartDist > 0) {
+        const factor = dist / pinchStartDist;
+        const nextZoom = Math.max(1, Math.min(5, pinchStartZoom * factor));
+        setZoom(nextZoom);
+      }
+      return;
+    }
+
     if (dragType === "none") return;
+    e.preventDefault();
+
     const clientX = 'touches' in e ? e.touches[0].clientX : (e as React.MouseEvent).clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : (e as React.MouseEvent).clientY;
 
     const dx = clientX - dragStart.x;
     const dy = clientY - dragStart.y;
 
-    // Approximating pixel-to-percentage scaling factors
-    const scaleFactor = 0.25; 
-    const pctDx = dx * scaleFactor;
-    const pctDy = dy * scaleFactor;
+    if (dragType === "pan") {
+      setPan({
+        x: pinchStartPan.x + dx,
+        y: pinchStartPan.y + dy
+      });
+      return;
+    }
 
-    setCropBox(prev => {
-      let nextX = prev.x;
-      let nextY = prev.y;
-      let nextW = prev.width;
-      let nextH = prev.height;
+    const rect = cropStageRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    const mouseX = ((clientX - rect.left) / rect.width) * 100;
+    const mouseY = ((clientY - rect.top) / rect.height) * 100;
+
+    const boxStart = dragBoxStart;
+    const MIN_SIZE = 10;
+
+    setCropBox(() => {
+      let nextX = boxStart.x;
+      let nextY = boxStart.y;
+      let nextW = boxStart.width;
+      let nextH = boxStart.height;
 
       if (dragType === "center") {
-        nextX = Math.max(0, Math.min(100 - prev.width, dragBoxStart.x + pctDx));
-        nextY = Math.max(0, Math.min(100 - prev.height, dragBoxStart.y + pctDy));
+        const pctDx = (dx / rect.width) * 100;
+        const pctDy = (dy / rect.height) * 100;
+        nextX = Math.max(0, Math.min(100 - boxStart.width, boxStart.x + pctDx));
+        nextY = Math.max(0, Math.min(100 - boxStart.height, boxStart.y + pctDy));
       } else if (dragType === "tl") {
-        nextX = Math.max(0, Math.min(prev.x + prev.width - 15, dragBoxStart.x + pctDx));
-        nextY = Math.max(0, Math.min(prev.y + prev.height - 15, dragBoxStart.y + pctDy));
-        nextW = dragBoxStart.width - (nextX - dragBoxStart.x);
-        nextH = dragBoxStart.height - (nextY - dragBoxStart.y);
+        const fixedRight = boxStart.x + boxStart.width;
+        const fixedBottom = boxStart.y + boxStart.height;
+        nextX = Math.max(0, Math.min(fixedRight - MIN_SIZE, mouseX));
+        nextY = Math.max(0, Math.min(fixedBottom - MIN_SIZE, mouseY));
+        nextW = fixedRight - nextX;
+        nextH = fixedBottom - nextY;
       } else if (dragType === "tr") {
-        nextY = Math.max(0, Math.min(prev.y + prev.height - 15, dragBoxStart.y + pctDy));
-        nextW = Math.max(15, Math.min(100 - prev.x, dragBoxStart.width + pctDx));
-        nextH = dragBoxStart.height - (nextY - dragBoxStart.y);
+        const fixedLeft = boxStart.x;
+        const fixedBottom = boxStart.y + boxStart.height;
+        nextX = fixedLeft;
+        nextY = Math.max(0, Math.min(fixedBottom - MIN_SIZE, mouseY));
+        nextW = Math.max(MIN_SIZE, Math.min(100 - fixedLeft, mouseX - fixedLeft));
+        nextH = fixedBottom - nextY;
       } else if (dragType === "bl") {
-        nextX = Math.max(0, Math.min(prev.x + prev.width - 15, dragBoxStart.x + pctDx));
-        nextW = dragBoxStart.width - (nextX - dragBoxStart.x);
-        nextH = Math.max(15, Math.min(100 - prev.y, dragBoxStart.height + pctDy));
+        const fixedRight = boxStart.x + boxStart.width;
+        const fixedTop = boxStart.y;
+        nextX = Math.max(0, Math.min(fixedRight - MIN_SIZE, mouseX));
+        nextY = fixedTop;
+        nextW = fixedRight - nextX;
+        nextH = Math.max(MIN_SIZE, Math.min(100 - fixedTop, mouseY - fixedTop));
       } else if (dragType === "br") {
-        nextW = Math.max(15, Math.min(100 - prev.x, dragBoxStart.width + pctDx));
-        nextH = Math.max(15, Math.min(100 - prev.y, dragBoxStart.height + pctDy));
+        const fixedLeft = boxStart.x;
+        const fixedTop = boxStart.y;
+        nextX = fixedLeft;
+        nextY = fixedTop;
+        nextW = Math.max(MIN_SIZE, Math.min(100 - fixedLeft, mouseX - fixedLeft));
+        nextH = Math.max(MIN_SIZE, Math.min(100 - fixedTop, mouseY - fixedTop));
       }
 
       return {
@@ -215,7 +396,30 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   };
 
   const handleCropDragEnd = () => {
+    if (dragType !== "none") {
+      setUndoHistory(prev => {
+        const nextHist = [...prev, { ...cropBox }];
+        if (nextHist.length > 20) nextHist.shift();
+        return nextHist;
+      });
+    }
     setDragType("none");
+    setPinchStartDist(0);
+  };
+
+  const handleUndoCrop = () => {
+    if (undoHistory.length > 0) {
+      const prevBox = undoHistory[undoHistory.length - 1];
+      setCropBox(prevBox);
+      setUndoHistory(prev => prev.slice(0, -1));
+    }
+  };
+
+  const handleResetCrop = () => {
+    setCropBox({ x: 15, y: 15, width: 70, height: 70 });
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setUndoHistory([]);
   };
 
   const executeCrop = () => {
@@ -226,13 +430,50 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
       if (ctx) {
-        const sx = (cropBox.x / 100) * img.width;
-        const sy = (cropBox.y / 100) * img.height;
-        const sWidth = (cropBox.width / 100) * img.width;
-        const sHeight = (cropBox.height / 100) * img.height;
+        const Wi = img.naturalWidth;
+        const Hi = img.naturalHeight;
+
+        const rect = cropStageRef.current?.getBoundingClientRect();
+        const Ws = rect ? rect.width : 350;
+        const Hs = rect ? rect.height : 350;
+
+        const Ls = (cropBox.x / 100) * Ws;
+        const Ts = (cropBox.y / 100) * Hs;
+        const Rs = ((cropBox.x + cropBox.width) / 100) * Ws;
+        const Bs = ((cropBox.y + cropBox.height) / 100) * Hs;
+
+        const getOriginalCoords = (xs: number, ys: number) => {
+          const f = Math.min(Ws / Wi, Hs / Hi);
+          const Wd = Wi * f;
+          const Hd = Hi * f;
+          const Xd = (Ws - Wd) / 2;
+          const Yd = (Hs - Hd) / 2;
+
+          const Cx = Ws / 2;
+          const Cy = Hs / 2;
+
+          const x1 = Cx + (xs - Cx - pan.x) / zoom;
+          const y1 = Cy + (ys - Cy - pan.y) / zoom;
+
+          const xi = (x1 - Xd) / f;
+          const yi = (y1 - Yd) / f;
+
+          return { x: xi, y: yi };
+        };
+
+        const topLeft = getOriginalCoords(Ls, Ts);
+        const bottomRight = getOriginalCoords(Rs, Bs);
+
+        const sx = Math.max(0, Math.min(Wi - 1, topLeft.x));
+        const sy = Math.max(0, Math.min(Hi - 1, topLeft.y));
+        const sWidth = Math.max(10, Math.min(Wi - sx, bottomRight.x - topLeft.x));
+        const sHeight = Math.max(10, Math.min(Hi - sy, bottomRight.y - topLeft.y));
 
         canvas.width = sWidth;
         canvas.height = sHeight;
+
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
         const croppedDataUrl = canvas.toDataURL("image/png");
         
@@ -249,9 +490,13 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
     setErrorMessage(null);
     setScannedSolution(null);
     try {
+      const token = localStorage.getItem("studymate_token") || "";
       const res = await fetch("/api/gemini/solve", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           image: base64Image,
           grade: profile.classGrade,
@@ -317,7 +562,8 @@ ${data.conceptualExplanation || ""}`;
       }
       const reader = new FileReader();
       reader.onloadend = () => {
-        setSelectedImage(reader.result as string);
+        setCropSourceImage(reader.result as string);
+        setCropBox({ x: 15, y: 15, width: 70, height: 70 });
         setErrorMessage(null);
       };
       reader.readAsDataURL(file);
@@ -368,9 +614,13 @@ ${data.conceptualExplanation || ""}`;
         finalPrompt += `\n\n[Personalization Context: Student Grade level is "${profile.classGrade}", targeting exam "${profile.targetExam}". Favorite subjects are: ${profile.favoriteSubjects.join(", ") || "None"}. Weak subjects needing extra patient guidance are: ${profile.weakSubjects.join(", ") || "None"}.]`;
       }
 
+      const token = localStorage.getItem("studymate_token") || "";
       const response = await fetch("/api/gemini/chat", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
         body: JSON.stringify({
           message: finalPrompt,
           history: recentHistory,
@@ -424,7 +674,14 @@ ${data.conceptualExplanation || ""}`;
   ];
 
   return (
-    <div id="studymate_ai_panel" className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl shadow-sm h-[calc(100vh-140px)] flex flex-col overflow-hidden relative">
+    <div 
+      id="studymate_ai_panel" 
+      className={`bg-white dark:bg-slate-900 shadow-sm flex flex-col overflow-hidden relative transition-all duration-300 ${
+        isFullScreen 
+          ? "w-screen h-screen rounded-none border-none border-t-0" 
+          : "border border-slate-100 dark:border-slate-800 rounded-3xl h-[calc(100vh-140px)]"
+      }`}
+    >
       
       {/* Clear Chat confirmation dialog overlay */}
       <AnimatePresence>
@@ -505,6 +762,18 @@ ${data.conceptualExplanation || ""}`;
         </div>
 
         <div className="flex items-center space-x-2">
+          {/* Full Screen Toggle */}
+          {onToggleFullScreen && (
+            <button
+              type="button"
+              onClick={onToggleFullScreen}
+              className="p-1.5 bg-slate-50 dark:bg-slate-800/40 border border-slate-200/40 dark:border-slate-800/60 rounded-xl transition duration-150 cursor-pointer text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 flex items-center justify-center"
+              title={isFullScreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+            >
+              {isFullScreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+          )}
+
           {/* Personalization Toggle */}
           <button
             onClick={() => setUsePersonalization(!usePersonalization)}
@@ -783,13 +1052,36 @@ ${data.conceptualExplanation || ""}`;
           </div>
 
           {/* Interactive Crop Stage */}
-          <div className="relative w-full max-w-sm aspect-square bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden select-none">
-            {/* The source image */}
-            <img 
-              src={cropSourceImage} 
-              alt="Source to Crop" 
-              className="w-full h-full object-contain pointer-events-none" 
-            />
+          <div 
+            ref={cropStageRef}
+            className="relative w-full max-w-sm aspect-square bg-slate-900 border border-slate-800/80 rounded-3xl overflow-hidden select-none cursor-crosshair flex items-center justify-center"
+            onMouseDown={(e) => {
+              if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('bg-black/60')) {
+                handleCropDragStart(e, "pan");
+              }
+            }}
+            onTouchStart={(e) => {
+              if (e.touches.length === 2) {
+                handleCropDragStart(e, "pan");
+              } else if (e.target === e.currentTarget || (e.target as HTMLElement).classList.contains('bg-black/60')) {
+                handleCropDragStart(e, "pan");
+              }
+            }}
+          >
+            {/* The source image wrapper with scale/pan applied */}
+            <div 
+              className="w-full h-full transition-transform duration-75 ease-out"
+              style={{
+                transform: `scale(${zoom}) translate(${pan.x}px, ${pan.y}px)`,
+                transformOrigin: "center center"
+              }}
+            >
+              <img 
+                src={cropSourceImage} 
+                alt="Source to Crop" 
+                className="w-full h-full object-contain pointer-events-none" 
+              />
+            </div>
 
             {/* Tinted dark overlays to shade uncropped area */}
             <div className="absolute inset-0 bg-black/60 pointer-events-none"></div>
@@ -841,6 +1133,54 @@ ${data.conceptualExplanation || ""}`;
           </div>
 
           <div className="w-full max-w-sm pb-6 flex flex-col items-center space-y-4">
+            {/* Control Panel: Undo, Reset, and Zoom sliders/buttons */}
+            <div className="flex items-center justify-center space-x-3 w-full">
+              <button
+                type="button"
+                onClick={handleResetCrop}
+                className="flex items-center space-x-1.5 px-3 py-2 bg-slate-850 hover:bg-slate-800 text-xs text-slate-200 hover:text-white rounded-xl transition cursor-pointer font-bold border border-slate-800"
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Reset</span>
+              </button>
+              
+              <button
+                type="button"
+                onClick={handleUndoCrop}
+                disabled={undoHistory.length === 0}
+                className={`flex items-center space-x-1.5 px-3 py-2 text-xs rounded-xl transition font-bold border ${
+                  undoHistory.length === 0 
+                    ? "bg-slate-900/40 text-slate-600 border-slate-900/60 cursor-not-allowed" 
+                    : "bg-slate-850 hover:bg-slate-800 text-slate-200 hover:text-white border-slate-800 cursor-pointer"
+                }`}
+              >
+                <Undo className="w-3.5 h-3.5 text-purple-400" />
+                <span>Undo</span>
+              </button>
+
+              <div className="flex items-center bg-slate-850 border border-slate-800 rounded-xl px-1">
+                <button
+                  type="button"
+                  onClick={() => setZoom(prev => Math.max(1, prev - 0.25))}
+                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg text-xs font-black transition cursor-pointer"
+                  title="Zoom Out"
+                >
+                  -
+                </button>
+                <span className="text-[10px] text-slate-400 font-mono font-bold px-2 w-11 text-center">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setZoom(prev => Math.min(5, prev + 0.25))}
+                  className="p-1.5 text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg text-xs font-black transition cursor-pointer"
+                  title="Zoom In"
+                >
+                  +
+                </button>
+              </div>
+            </div>
+
             <button
               type="button"
               onClick={executeCrop}
@@ -849,8 +1189,8 @@ ${data.conceptualExplanation || ""}`;
               <Check className="w-4 h-4" />
               <span>Crop & Solve Question</span>
             </button>
-            <p className="text-[10px] text-slate-400 font-semibold text-center">
-              Drag corners by hand to select the particular math equation, question, or diagram to solve!
+            <p className="text-[10px] text-slate-400 font-semibold text-center leading-relaxed">
+              Drag corners to resize. Pinch or use controls to Zoom/Pan the image behind the selection. Boundary detected automatically!
             </p>
           </div>
         </div>
