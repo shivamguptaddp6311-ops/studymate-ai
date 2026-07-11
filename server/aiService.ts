@@ -12,7 +12,7 @@ const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL
 let aiInstance: GoogleGenAI | null = null;
 function getGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey || !isValidKey(apiKey)) return null;
   if (!aiInstance) {
     aiInstance = new GoogleGenAI({
       apiKey: apiKey,
@@ -38,14 +38,28 @@ export interface AIResponse {
   providerUsed: AIProvider;
 }
 
+// Check if API key is a valid non-placeholder value
+function isValidKey(key: string | undefined): boolean {
+  if (!key) return false;
+  const k = key.trim();
+  return (
+    k !== "" &&
+    !k.startsWith("MY_") &&
+    !k.includes("YOUR_") &&
+    k !== "null" &&
+    k !== "undefined" &&
+    k.length > 5
+  );
+}
+
 // Check configured keys
 export function getConfiguredProviders() {
   return {
-    gemini: !!process.env.GEMINI_API_KEY,
-    openai: !!process.env.OPENAI_API_KEY,
-    groq: !!process.env.GROQ_API_KEY,
-    openrouter: !!process.env.OPENROUTER_API_KEY,
-    anthropic: !!process.env.ANTHROPIC_API_KEY,
+    gemini: isValidKey(process.env.GEMINI_API_KEY),
+    openai: isValidKey(process.env.OPENAI_API_KEY),
+    groq: isValidKey(process.env.GROQ_API_KEY),
+    openrouter: isValidKey(process.env.OPENROUTER_API_KEY),
+    anthropic: isValidKey(process.env.ANTHROPIC_API_KEY),
   };
 }
 
@@ -56,7 +70,6 @@ function convertMessagesToOpenAIFormat(messages: AIMessage[], systemInstruction?
     formatted.push({ role: "system", content: systemInstruction });
   }
   messages.forEach(m => {
-    // OpenAI/Groq/OpenRouter roles: system, user, assistant
     const role = m.role === "model" ? "assistant" : m.role;
     formatted.push({ role, content: m.content });
   });
@@ -64,8 +77,6 @@ function convertMessagesToOpenAIFormat(messages: AIMessage[], systemInstruction?
 }
 
 function convertMessagesToAnthropicFormat(messages: AIMessage[]) {
-  // Anthropic messages cannot contain system messages. System instructions must be passed separately.
-  // And it doesn't allow model/assistant consecutive messages or leading model/assistant messages.
   const formatted: any[] = [];
   messages.forEach(m => {
     if (m.role !== "system") {
@@ -76,11 +87,87 @@ function convertMessagesToAnthropicFormat(messages: AIMessage[]) {
   return formatted;
 }
 
+// Timeout promise wrapper
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(errorMessage)), timeoutMs);
+    promise
+      .then(res => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch(err => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
+// Exponential backoff retry utility
+async function retryWithBackoff<T>(
+  operation: () => Promise<T>,
+  retries = 3,
+  delay = 1000,
+  onRetry?: (error: any, attempt: number) => void
+): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      lastError = error;
+      const is429 =
+        error?.status === 429 ||
+        error?.message?.includes("429") ||
+        error?.message?.includes("RESOURCE_EXHAUSTED") ||
+        error?.message?.includes("quota") ||
+        error?.message?.includes("rate limit") ||
+        error?.message?.includes("Rate limit");
+      
+      if (attempt === retries) {
+        break;
+      }
+      if (onRetry) onRetry(error, attempt);
+      const actualDelay = is429 ? delay * 3 * attempt : delay * attempt;
+      await new Promise(resolve => setTimeout(resolve, actualDelay));
+    }
+  }
+  throw lastError;
+}
+
+// Robust fallback JSON parser helper
+export function parseJsonResponse(text: string): any {
+  if (!text) return {};
+  const cleaned = text.trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (e) {
+    // Attempt markdown json extraction
+    const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (jsonMatch && jsonMatch[1]) {
+      try {
+        return JSON.parse(jsonMatch[1].trim());
+      } catch (e2) {
+        // continue
+      }
+    }
+    // Attempt relaxed cleanup (e.g. strip wrapping ```, trim whitespaces)
+    let relaxed = cleaned;
+    relaxed = relaxed.replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+    try {
+      return JSON.parse(relaxed.trim());
+    } catch (e3) {
+      console.error("[AIService] Failed all attempts to parse JSON response:", text);
+      throw new Error("Failed to parse JSON response from AI provider.");
+    }
+  }
+}
+
 // Main execution function with retries and automatic fallback
 export async function executeAIRequest(options: {
   messages: AIMessage[];
   systemInstruction?: string;
-  image?: string; // Base64 data (with or without data:image prefix)
+  image?: string; // Base64 data (with or without data: prefix)
   preferredProvider?: AIProvider;
   responseSchema?: any; // optional Gemini-specific schema
   temperature?: number;
@@ -109,12 +196,12 @@ export async function executeAIRequest(options: {
 
   // Determine list of providers to try
   const config = getConfiguredProviders();
-  const fallbackOrder: AIProvider[] = ["gemini", "openai", "groq", "openrouter", "anthropic"];
+  // Standard fallback sequence requested by user
+  const fallbackOrder: AIProvider[] = ["gemini", "openai", "groq", "anthropic", "openrouter"];
   
   let providersToTry: AIProvider[] = [];
 
   if (preferredProvider !== "auto" && preferredProvider !== undefined) {
-    // If a specific provider is preferred, try it first, then try the fallback ones
     providersToTry.push(preferredProvider);
     fallbackOrder.forEach(p => {
       if (p !== preferredProvider) {
@@ -125,13 +212,11 @@ export async function executeAIRequest(options: {
     providersToTry = [...fallbackOrder];
   }
 
-  // Filter to only those that have keys configured
+  // Filter based on configured keys
   providersToTry = providersToTry.filter(p => config[p as keyof typeof config]);
 
   if (providersToTry.length === 0) {
-    // If no keys are set, fallback to attempting Gemini anyway (might be injected by system),
-    // or throw a clear error
-    if (process.env.GEMINI_API_KEY) {
+    if (isValidKey(process.env.GEMINI_API_KEY)) {
       providersToTry = ["gemini"];
     } else {
       throw new Error(
@@ -140,14 +225,22 @@ export async function executeAIRequest(options: {
     }
   }
 
+  const isPdf = !!image && (image.startsWith("data:application/pdf") || image.includes("pdf"));
+
   let lastError: any = null;
 
   for (const provider of providersToTry) {
     try {
+      // Validate support for document/PDF format
+      if (isPdf && ["openai", "groq", "anthropic"].includes(provider)) {
+        console.warn(`[AIService] Skipping provider ${provider} because PDF document input is only natively supported by Gemini/OpenRouter.`);
+        continue;
+      }
+
       console.log(`[AIService] Attempting request using provider: ${provider}`);
       let resultText = "";
 
-      // Append active provider context to systemInstruction so the model knows which engine is executing the request
+      // Append active provider context
       let activeSystemInstruction = systemInstruction || "";
       const providerContext = `\n\n[Active AI Engine Context: You are currently running on the "${provider}" provider backend. If the user asks which AI provider, model, engine, or backend you are currently using, you MUST truthfully tell them that you are currently using ${provider}.]`;
       if (activeSystemInstruction) {
@@ -168,7 +261,12 @@ export async function executeAIRequest(options: {
         resultText = await callAnthropic(messages, activeSystemInstruction, image, responseSchema);
       }
 
+      if (!resultText || resultText.trim() === "") {
+        throw new Error(`Provider ${provider} returned an empty or invalid response.`);
+      }
+
       console.log(`[AIService] Successfully received response from provider: ${provider}`);
+      
       // Save in cache
       responseCache.set(cacheKey, {
         text: resultText,
@@ -182,7 +280,6 @@ export async function executeAIRequest(options: {
     } catch (err: any) {
       console.warn(`[AIService] Provider ${provider} failed:`, err.message || err);
       lastError = err;
-      // Continue to next provider in fallback loop
     }
   }
 
@@ -202,12 +299,9 @@ async function callGemini(
   const gemini = getGeminiClient();
   if (!gemini) throw new Error("Gemini API key is not configured");
 
-  // Reconstruct parts
   const contents: any[] = [];
   
-  // Format history
   messages.forEach((m, idx) => {
-    // For Gemini, we push as parts
     const isLast = idx === messages.length - 1;
     const parts: any[] = [{ text: m.content }];
 
@@ -246,45 +340,37 @@ async function callGemini(
     config.responseSchema = responseSchema;
   }
 
-  const fetchWithRetry = async (modelName: string): Promise<any> => {
-    let lastErr: any = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const res = await gemini.models.generateContent({
-          model: modelName,
-          contents,
-          config
-        });
-        if (res.text) return res;
-        throw new Error("Empty text response from Gemini");
-      } catch (e: any) {
-        lastErr = e;
-        const isQuotaOr429 = e?.message?.includes("429") || e?.message?.includes("RESOURCE_EXHAUSTED") || e?.message?.includes("quota");
-        if (isQuotaOr429 && modelName === "gemini-3.5-flash") {
-          // If it is a quota limit, don't waste retries, trigger fallback immediately
-          break;
-        }
-        console.warn(`[AIService] Gemini attempt ${attempt} failed: ${e?.message || e}. Retrying...`);
-        if (attempt < 3) {
-          await new Promise(resolve => setTimeout(resolve, 500 * attempt));
-        }
-      }
-    }
-    throw lastErr || new Error("Failed to generate content from Gemini");
+  const executeCall = async (modelName: string): Promise<string> => {
+    return await retryWithBackoff(async () => {
+      const responsePromise = gemini.models.generateContent({
+        model: modelName,
+        contents,
+        config
+      });
+
+      const res = await withTimeout(
+        responsePromise,
+        30000,
+        `Gemini API request timed out after 30 seconds for model: ${modelName}`
+      );
+
+      if (res.text) return res.text;
+      throw new Error("Empty text response received from Gemini SDK.");
+    }, 3, 1000, (err, attempt) => {
+      console.warn(`[AIService] Gemini attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
+    });
   };
 
   try {
-    const response = await fetchWithRetry("gemini-3.5-flash");
-    return response.text;
+    return await executeCall("gemini-3.5-flash");
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     if (errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota")) {
-      console.warn("[AIService] gemini-3.5-flash hit 429/quota limit. Retrying with gemini-3.1-flash-lite...");
+      console.warn("[AIService] gemini-3.5-flash hit 429/quota limit. Instantly falling back to gemini-3.1-flash-lite...");
       try {
-        const fallbackResponse = await fetchWithRetry("gemini-3.1-flash-lite");
-        return fallbackResponse.text;
+        return await executeCall("gemini-3.1-flash-lite");
       } catch (fallbackErr) {
-        console.error("[AIService] gemini-3.1-flash-lite fallback also failed:", fallbackErr);
+        console.error("[AIService] gemini-3.1-flash-lite fallback failed:", fallbackErr);
       }
     }
     throw err;
@@ -302,7 +388,6 @@ async function callOpenAI(
 
   const formattedMessages = convertMessagesToOpenAIFormat(messages, systemInstruction);
 
-  // Handle multi-modal if image is provided
   if (image && formattedMessages.length > 0) {
     const lastMsg = formattedMessages[formattedMessages.length - 1];
     if (lastMsg.role === "user") {
@@ -325,7 +410,6 @@ async function callOpenAI(
 
   if (responseSchema) {
     body.response_format = { type: "json_object" };
-    // Force json in system prompt as well
     const sysMsg = formattedMessages.find(m => m.role === "system");
     const jsonInstruction = "\nCRITICAL: Respond strictly with a JSON object.";
     if (sysMsg) {
@@ -335,22 +419,32 @@ async function callOpenAI(
     }
   }
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(body)
+  return await retryWithBackoff(async () => {
+    const fetchPromise = fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    const response = await withTimeout(
+      fetchPromise,
+      30000,
+      "OpenAI API request timed out after 30 seconds."
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`OpenAI API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "";
+  }, 3, 1000, (err, attempt) => {
+    console.warn(`[AIService] OpenAI attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
   });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(`OpenAI API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content || "";
 }
 
 async function callGroq(
@@ -363,9 +457,6 @@ async function callGroq(
   if (!apiKey) throw new Error("Groq API key is not configured");
 
   const formattedMessages = convertMessagesToOpenAIFormat(messages, systemInstruction);
-
-  // If there's an image, Groq's standard models don't support it unless we use llama-3.2-11b-vision-instruct
-  // Let's use llama-3.2-11b-vision-instruct if image is uploaded, else llama-3.3-70b-versatile
   const model = image ? "llama-3.2-11b-vision-instruct" : "llama-3.3-70b-versatile";
 
   if (image && formattedMessages.length > 0) {
@@ -399,22 +490,32 @@ async function callGroq(
     }
   }
 
-  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify(body)
+  return await retryWithBackoff(async () => {
+    const fetchPromise = fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    const response = await withTimeout(
+      fetchPromise,
+      30000,
+      "Groq API request timed out after 30 seconds."
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Groq API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "";
+  }, 3, 1000, (err, attempt) => {
+    console.warn(`[AIService] Groq attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
   });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(`Groq API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content || "";
 }
 
 async function callOpenRouter(
@@ -427,8 +528,6 @@ async function callOpenRouter(
   if (!apiKey) throw new Error("OpenRouter API key is not configured");
 
   const formattedMessages = convertMessagesToOpenAIFormat(messages, systemInstruction);
-
-  // We'll use google/gemini-2.5-flash as the default model on OpenRouter since it's robust and supports images
   const model = "google/gemini-2.5-flash";
 
   if (image && formattedMessages.length > 0) {
@@ -463,24 +562,34 @@ async function callOpenRouter(
     }
   }
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`,
-      "HTTP-Referer": "https://studymate-ai.com",
-      "X-Title": "StudyMate AI"
-    },
-    body: JSON.stringify(body)
+  return await retryWithBackoff(async () => {
+    const fetchPromise = fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://studymate-ai.com",
+        "X-Title": "StudyMate AI"
+      },
+      body: JSON.stringify(body)
+    });
+
+    const response = await withTimeout(
+      fetchPromise,
+      30000,
+      "OpenRouter API request timed out after 30 seconds."
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`OpenRouter API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "";
+  }, 3, 1000, (err, attempt) => {
+    console.warn(`[AIService] OpenRouter attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
   });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(`OpenRouter API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data.choices?.[0]?.message?.content || "";
 }
 
 async function callAnthropic(
@@ -494,7 +603,6 @@ async function callAnthropic(
 
   const formattedMessages = convertMessagesToAnthropicFormat(messages);
 
-  // If there's an image, Anthropic requires a special base64 format block
   if (image && formattedMessages.length > 0) {
     const lastMsg = formattedMessages[formattedMessages.length - 1];
     if (lastMsg.role === "user") {
@@ -535,7 +643,6 @@ async function callAnthropic(
   }
 
   if (responseSchema) {
-    // Append JSON instruction to system instruction
     const jsonInstruction = "\nCRITICAL: Respond strictly with a JSON object.";
     if (body.system) {
       body.system += jsonInstruction;
@@ -544,21 +651,31 @@ async function callAnthropic(
     }
   }
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify(body)
+  return await retryWithBackoff(async () => {
+    const fetchPromise = fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01"
+      },
+      body: JSON.stringify(body)
+    });
+
+    const response = await withTimeout(
+      fetchPromise,
+      30000,
+      "Anthropic API request timed out after 30 seconds."
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Anthropic API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data.content?.[0]?.text || "";
+  }, 3, 1000, (err, attempt) => {
+    console.warn(`[AIService] Anthropic attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
   });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(`Anthropic API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
-  }
-
-  const data = await response.json();
-  return data.content?.[0]?.text || "";
 }

@@ -3,73 +3,26 @@ import path from "path";
 import dotenv from "dotenv";
 import fs from "fs";
 import crypto from "crypto";
+import helmet from "helmet";
+import cookieParser from "cookie-parser";
+import cors from "cors";
+import compression from "compression";
+import { rateLimit } from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI, Type } from "@google/genai";
-import { executeAIRequest, getConfiguredProviders, AIProvider, AIMessage } from "./server/aiService";
+import { Type } from "@google/genai";
+import { executeAIRequest, getConfiguredProviders, AIProvider, AIMessage, parseJsonResponse } from "./server/aiService";
+import { firebaseDB, runAutomatedMigration, ChatUser, ChatMessage, ChatReport, AdminLog, SyncData } from "./server/firebase";
 
 dotenv.config();
 
 const app = express();
+app.set("trust proxy", 1);
 const PORT = 3000;
 
 // Chat Database definition and persistence paths
 const DB_PATH = path.join(process.cwd(), "server_chat_db.json");
 
-interface ChatMessage {
-  id: string;
-  userEmail: string;
-  username: string;
-  avatar: string;
-  level: number;
-  badge?: string;
-  text: string;
-  country?: string;
-  timestamp: string;
-  repliedToId?: string | null;
-  repliedToUser?: string | null;
-  isDeleted: boolean;
-  deletedBy?: string;
-  reportsCount: number;
-}
-
-interface ChatUser {
-  email: string;
-  username: string;
-  avatar: string;
-  level: number;
-  badge?: string;
-  joinDate: string;
-  country?: string;
-  violationsCount: number;
-  muteExpiresAt?: string | null;
-  isBanned: boolean;
-  banReason?: string;
-  passwordHash?: string;
-  passwordSalt?: string;
-}
-
-interface ChatReport {
-  id: string;
-  messageId: string;
-  messageText: string;
-  messageAuthor: string;
-  reportedBy: string;
-  reason: string;
-  comment: string;
-  timestamp: string;
-  status: "pending" | "reviewed";
-  actionTaken?: string;
-  reviewedAt?: string;
-}
-
-interface AdminLog {
-  id: string;
-  adminEmail: string;
-  action: string;
-  targetEmail?: string;
-  details: string;
-  timestamp: string;
-}
+// Types are imported from ./server/firebase
 
 interface ChatDB {
   messages: ChatMessage[];
@@ -88,13 +41,28 @@ let dbCache: ChatDB = {
 };
 
 // --- Cryptography Keys and Secrets ---
-const JWT_SECRET = process.env.JWT_SECRET || "studymate_default_jwt_secret_key_64bytes_v2_xyz";
-const DB_KEY = process.env.DB_ENCRYPTION_KEY || "studymate_default_secure_rest_key_32bytes_v1";
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "fallback_secure_refresh_key_studymate_7d_xyz";
+const DB_KEY = process.env.DB_ENCRYPTION_KEY;
+
+// Validate environment variables on boot
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  console.error("CRITICAL CONFIG ERROR: JWT_SECRET environment variable is missing, empty, or too short (must be at least 32 characters).");
+  process.exit(1);
+}
+if (!JWT_REFRESH_SECRET || JWT_REFRESH_SECRET.length < 32) {
+  console.error("CRITICAL CONFIG ERROR: JWT_REFRESH_SECRET environment variable is missing, empty, or too short (must be at least 32 characters).");
+  process.exit(1);
+}
+if (!DB_KEY || DB_KEY.length < 16) {
+  console.error("CRITICAL CONFIG ERROR: DB_ENCRYPTION_KEY environment variable is missing, empty, or too short (must be at least 16 characters).");
+  process.exit(1);
+}
 
 // --- Database Encryption at Rest Helpers ---
 function encryptData(text: string): string {
   try {
-    const key = crypto.createHash("sha256").update(DB_KEY).digest();
+    const key = crypto.createHash("sha256").update(DB_KEY!).digest();
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
     let encrypted = cipher.update(text, "utf8", "hex");
@@ -115,7 +83,7 @@ function decryptData(text: string): string {
     const parts = text.split(":");
     const iv = Buffer.from(parts[0], "hex");
     const encryptedText = parts[1];
-    const key = crypto.createHash("sha256").update(DB_KEY).digest();
+    const key = crypto.createHash("sha256").update(DB_KEY!).digest();
     const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
     let decrypted = decipher.update(encryptedText, "hex", "utf8");
     decrypted += decipher.final("utf8");
@@ -135,26 +103,35 @@ function hashPassword(password: string): { salt: string; hash: string } {
 
 function verifyPassword(password: string, salt: string, hash: string): boolean {
   const testHash = crypto.pbkdf2Sync(password, salt, 100000, 64, "sha512").toString("hex");
-  return testHash === hash;
+  return crypto.timingSafeEqual(Buffer.from(testHash, "hex"), Buffer.from(hash, "hex"));
 }
 
-// --- Session Token Management (Custom Lightweight JWT) ---
-function createToken(payload: { email: string; isAdmin: boolean }): string {
+// --- Access and Refresh Token Management ---
+function createAccessToken(payload: { email: string; isAdmin: boolean }): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
-  const exp = Math.floor(Date.now() / 1000) + (24 * 60 * 60); // 24 hours expiry
+  const exp = Math.floor(Date.now() / 1000) + (15 * 60); // 15 minutes short-lived expiry
   const body = Buffer.from(JSON.stringify({ ...payload, exp })).toString("base64url");
   const signatureInput = `${header}.${body}`;
-  const signature = crypto.createHmac("sha256", JWT_SECRET).update(signatureInput).digest("base64url");
+  const signature = crypto.createHmac("sha256", JWT_SECRET!).update(signatureInput).digest("base64url");
   return `${signatureInput}.${signature}`;
 }
 
-function verifyToken(token: string): { email: string; isAdmin: boolean } | null {
+function createRefreshToken(payload: { email: string }): string {
+  const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  const exp = Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60); // 7 days long-lived expiry
+  const body = Buffer.from(JSON.stringify({ ...payload, exp })).toString("base64url");
+  const signatureInput = `${header}.${body}`;
+  const signature = crypto.createHmac("sha256", JWT_REFRESH_SECRET).update(signatureInput).digest("base64url");
+  return `${signatureInput}.${signature}`;
+}
+
+function verifyAccessToken(token: string): { email: string; isAdmin: boolean } | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
     const [header, body, signature] = parts;
     const signatureInput = `${header}.${body}`;
-    const expectedSignature = crypto.createHmac("sha256", JWT_SECRET).update(signatureInput).digest("base64url");
+    const expectedSignature = crypto.createHmac("sha256", JWT_SECRET!).update(signatureInput).digest("base64url");
     if (signature !== expectedSignature) return null;
     
     const decodedBody = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
@@ -167,41 +144,62 @@ function verifyToken(token: string): { email: string; isAdmin: boolean } | null 
   }
 }
 
+function verifyRefreshToken(token: string): { email: string } | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const [header, body, signature] = parts;
+    const signatureInput = `${header}.${body}`;
+    const expectedSignature = crypto.createHmac("sha256", JWT_REFRESH_SECRET).update(signatureInput).digest("base64url");
+    if (signature !== expectedSignature) return null;
+    
+    const decodedBody = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
+    if (decodedBody.exp && decodedBody.exp < Math.floor(Date.now() / 1000)) {
+      return null; // Token has expired
+    }
+    return decodedBody;
+  } catch (err) {
+    return null;
+  }
+}
+
+// Backward compatibility delegators
+function verifyToken(token: string): { email: string; isAdmin: boolean } | null {
+  return verifyAccessToken(token);
+}
+
+function createToken(payload: { email: string; isAdmin: boolean }): string {
+  return createAccessToken(payload);
+}
+
+// --- Recursive Object XSS / Injection Sanitizer ---
+function sanitizeObject<T>(obj: T): T {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj === "string") {
+    return sanitizeText(obj) as any;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeObject(item)) as any;
+  }
+  if (typeof obj === "object") {
+    const result: any = {};
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        result[key] = sanitizeObject((obj as any)[key]);
+      }
+    }
+    return result;
+  }
+  return obj;
+}
+
 // --- In-Memory Account Lockout Tracking ---
 const failedLoginAttempts: { [email: string]: { count: number; blockUntil: number } } = {};
 
-function loadDB() {
-  try {
-    if (fs.existsSync(DB_PATH)) {
-      const encryptedData = fs.readFileSync(DB_PATH, "utf8");
-      const decryptedData = decryptData(encryptedData);
-      dbCache = JSON.parse(decryptedData);
-      // Ensure basic shapes exist
-      if (!dbCache.messages) dbCache.messages = [];
-      if (!dbCache.users) dbCache.users = {};
-      if (!dbCache.reports) dbCache.reports = [];
-      if (!dbCache.adminLogs) dbCache.adminLogs = [];
-      if (!dbCache.syncData) dbCache.syncData = {};
-    } else {
-      saveDB();
-    }
-  } catch (error) {
-    console.error("Failed to load chat database, resetting:", error);
-  }
-}
-
-function saveDB() {
-  try {
-    const rawData = JSON.stringify(dbCache, null, 2);
-    const encryptedData = encryptData(rawData);
-    fs.writeFileSync(DB_PATH, encryptedData, "utf8");
-  } catch (error) {
-    console.error("Failed to save chat database:", error);
-  }
-}
-
-// Perform initial boot database loading
-loadDB();
+// Perform initial database migration and setup
+runAutomatedMigration().catch(err => {
+  console.error("[Migration] Startup migration failed:", err);
+});
 
 // Track SSE connections for real-time dispatching
 let sseClients: Array<{ id: string; email: string; res: any }> = [];
@@ -219,12 +217,31 @@ function sanitizeText(str: string): string {
     .replace(/\//g, "&#x2F;");
 }
 
-// Setup JSON body parsing with large limit for image uploads
-app.use(express.json({ limit: "25mb" }));
+// --- Async Handler Wrapper to Prevent Server Crashes ---
+export const asyncHandler = (fn: (req: express.Request, res: express.Response, next: express.NextFunction) => Promise<any>) => {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    fn(req, res, next).catch(next);
+  };
+};
 
-// --- Security Middleware Definitions ---
+// 1. Lightweight Structured Request Logging Middleware
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    const duration = Date.now() - start;
+    console.log(`[Request] ${req.method} ${req.originalUrl} - Status: ${res.statusCode} - ${duration}ms`);
+  });
+  next();
+});
 
-// Enforce Secure Headers Middleware
+// 2. Enforce Secure Headers Middleware using Helmet + custom configurations
+app.use(helmet({
+  contentSecurityPolicy: false, // Prevents loading issues in Sandbox/iFrame
+  crossOriginEmbedderPolicy: false,
+  crossOriginOpenerPolicy: { policy: "unsafe-none" },
+  crossOriginResourcePolicy: { policy: "cross-origin" }
+}));
+
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-XSS-Protection", "1; mode=block");
@@ -233,53 +250,80 @@ app.use((req, res, next) => {
   next();
 });
 
-// Custom Rate Limiter Middleware for API endpoints
-const apiRequestLimits: { [ip: string]: { count: number; resetTime: number } } = {};
-const API_WINDOW_MS = 60 * 1000; // 1 minute
-const MAX_API_REQUESTS = 180; // generous 180 requests per minute
+// 3. Setup CORS with Credentials support and strict matching
+const allowedOrigins = [
+  "https://ais-dev-7trcurr3ybqbdmvjkvx3x7-634393143987.asia-southeast1.run.app",
+  "https://ais-pre-7trcurr3ybqbdmvjkvx3x7-634393143987.asia-southeast1.run.app",
+];
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    const isLocal = origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:");
+    const isDevPre = allowedOrigins.includes(origin);
+    const isAppUrl = process.env.APP_URL && origin === process.env.APP_URL;
+    if (isLocal || isDevPre || isAppUrl) {
+      callback(null, true);
+    } else {
+      callback(null, false); // Securely reject unauthorized domains
+    }
+  },
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
+}));
 
-function apiRateLimiter(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const ip = req.ip || (req.headers["x-forwarded-for"] as string) || "unknown";
-  const now = Date.now();
-  
-  if (!apiRequestLimits[ip] || now > apiRequestLimits[ip].resetTime) {
-    apiRequestLimits[ip] = {
-      count: 1,
-      resetTime: now + API_WINDOW_MS
-    };
-    return next();
-  }
-  
-  apiRequestLimits[ip].count++;
-  if (apiRequestLimits[ip].count > MAX_API_REQUESTS) {
-    console.warn(`[Security] Rate limit exceeded for IP: ${ip} on path: ${req.path}`);
-    return res.status(429).json({ error: "Rate limit exceeded. Please slow down and try again later." });
-  }
-  next();
-}
+// 4. Setup Response Compression
+app.use(compression());
 
+// 5. Setup Cookie Parsing
+app.use(cookieParser());
+
+// 6. Setup General express-rate-limit Rate Limiter for API
+const apiRateLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 180, // generous 180 requests per minute
+  message: { error: "Rate limit exceeded. Please slow down and try again later." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use("/api", apiRateLimiter);
 
-// Require Authentication Middleware
-function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
-  const authHeader = req.headers["authorization"];
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ error: "Missing or invalid authorization session token. Please log in." });
+// 8. Setup JSON and urlencoded body parsing with large limit for image/document uploads
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ limit: "25mb", extended: true }));
+
+// --- Security Middleware Definitions ---
+
+// Require Authentication Middleware (async-aware with fast ban check)
+async function requireAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  try {
+    const authHeader = req.headers["authorization"];
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ error: "Missing or invalid authorization session token. Please log in." });
+    }
+    
+    const token = authHeader.split(" ")[1];
+    const user = verifyToken(token);
+    if (!user) {
+      return res.status(401).json({ error: "Session expired or invalid token. Please log in again." });
+    }
+
+    // Fast check to ensure user has not been banned
+    const userState = await firebaseDB.getUser(user.email);
+    if (userState && userState.isBanned) {
+      return res.status(403).json({ error: "Your account has been suspended for violating CBSE study group guidelines." });
+    }
+    
+    (req as any).user = user;
+    next();
+  } catch (err) {
+    next(err);
   }
-  
-  const token = authHeader.split(" ")[1];
-  const user = verifyToken(token);
-  if (!user) {
-    return res.status(401).json({ error: "Session expired or invalid token. Please log in again." });
-  }
-  
-  (req as any).user = user;
-  next();
 }
 
 // Require Admin Middleware
-function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  requireAuth(req, res, () => {
+async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  await requireAuth(req, res, () => {
     const user = (req as any).user;
     if (!user || !isAdminEmail(user.email)) {
       return res.status(403).json({ error: "Access Denied: Administrative privileges required." });
@@ -302,8 +346,17 @@ app.get("/api/ai/providers", (req, res) => {
   }
 });
 
+// Setup Auth Rate Limiter
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30, // Limit each IP to 30 authentication requests per 15 minutes
+  message: { error: "Too many authentication attempts. Please try again in 15 minutes." },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Secure Backend Authentication Endpoint
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", authLimiter, async (req, res) => {
   try {
     const { email, password } = req.body;
     
@@ -325,7 +378,7 @@ app.post("/api/auth/login", (req, res) => {
       return res.status(429).json({ error: `Account temporarily locked due to 5 failed logins. Please try again in ${waitMinutes} minute(s).` });
     }
     
-    let user = dbCache.users[emailNorm];
+    let user = await firebaseDB.getUser(emailNorm);
     const plainPassword = (password || "").trim();
     
     if (!plainPassword) {
@@ -346,16 +399,15 @@ app.post("/api/auth/login", (req, res) => {
         isBanned: false,
         passwordHash: hash,
         passwordSalt: salt
-      } as any;
-      dbCache.users[emailNorm] = user;
-      saveDB();
+      };
+      await firebaseDB.saveUser(emailNorm, user);
     } else {
       // If user exists but has no password (legacy accounts migrated to secure schema)
       if (!user.passwordHash || !user.passwordSalt) {
         const { salt, hash } = hashPassword(plainPassword);
         user.passwordHash = hash;
         user.passwordSalt = salt;
-        saveDB();
+        await firebaseDB.saveUser(emailNorm, { passwordHash: hash, passwordSalt: salt });
       } else {
         // Verify password
         const isMatch = verifyPassword(plainPassword, user.passwordSalt, user.passwordHash);
@@ -386,12 +438,22 @@ app.post("/api/auth/login", (req, res) => {
     }
     
     const isAdmin = isAdminEmail(emailNorm);
-    const token = createToken({ email: emailNorm, isAdmin });
+    const token = createAccessToken({ email: emailNorm, isAdmin });
+    const refreshToken = createRefreshToken({ email: emailNorm });
+    
+    // Set secure refresh token cookie
+    res.cookie("refreshToken", refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
     
     res.json({
       success: true,
       email: emailNorm,
       token,
+      refreshToken,
       isAdmin,
       user: {
         username: user.username,
@@ -407,15 +469,69 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
+// Secure Token Refresh Endpoint
+app.post("/api/auth/refresh", authLimiter, async (req, res) => {
+  try {
+    let refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+    
+    if (!refreshToken || typeof refreshToken !== "string") {
+      return res.status(400).json({ error: "Refresh token is required." });
+    }
+    
+    const verified = verifyRefreshToken(refreshToken);
+    if (!verified) {
+      return res.status(401).json({ error: "Invalid or expired refresh token. Please log in again." });
+    }
+    
+    const emailNorm = verified.email.toLowerCase().trim();
+    const user = await firebaseDB.getUser(emailNorm);
+    if (!user) {
+      return res.status(401).json({ error: "User account does not exist." });
+    }
+    
+    if (user.isBanned) {
+      return res.status(403).json({ error: "Account has been banned." });
+    }
+    
+    const isAdmin = isAdminEmail(emailNorm);
+    const newAccessToken = createAccessToken({ email: emailNorm, isAdmin });
+    const newRefreshToken = createRefreshToken({ email: emailNorm });
+    
+    // Rotate cookie
+    res.cookie("refreshToken", newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+    });
+    
+    res.json({
+      success: true,
+      token: newAccessToken,
+      refreshToken: newRefreshToken
+    });
+  } catch (error) {
+    console.error("Token refresh exception:", error);
+    res.status(500).json({ error: "Server error during token refresh." });
+  }
+});
+
+// Secure Logout Endpoint
+app.post("/api/auth/logout", (req, res) => {
+  res.clearCookie("refreshToken");
+  res.json({ success: true, message: "Logged out successfully from server." });
+});
+
 // Check if user email has an existing account
-app.get("/api/auth/check-email", (req, res) => {
+app.get("/api/auth/check-email", async (req, res) => {
   try {
     const { email } = req.query;
     if (!email || typeof email !== "string") {
       return res.status(400).json({ error: "Email is required." });
     }
     const emailNorm = email.toLowerCase().trim();
-    const exists = !!dbCache.users[emailNorm];
+    const user = await firebaseDB.getUser(emailNorm);
+    const exists = !!user;
     res.json({ exists });
   } catch (error) {
     res.status(500).json({ error: "Failed to check email existence." });
@@ -423,13 +539,10 @@ app.get("/api/auth/check-email", (req, res) => {
 });
 
 // Sync Pull endpoint
-app.get("/api/sync/pull", requireAuth, (req, res) => {
+app.get("/api/sync/pull", requireAuth, async (req, res) => {
   try {
     const emailNorm = (req as any).user.email.toLowerCase().trim();
-    if (!dbCache.syncData) {
-      dbCache.syncData = {};
-    }
-    const userSync = dbCache.syncData[emailNorm] || null;
+    const userSync = await firebaseDB.getSyncData(emailNorm);
     res.json({ success: true, data: userSync });
   } catch (error: any) {
     console.error("Sync pull error:", error);
@@ -438,16 +551,12 @@ app.get("/api/sync/pull", requireAuth, (req, res) => {
 });
 
 // Sync Push endpoint
-app.post("/api/sync/push", requireAuth, (req, res) => {
+app.post("/api/sync/push", requireAuth, async (req, res) => {
   try {
     const emailNorm = (req as any).user.email.toLowerCase().trim();
     const { profile, tasks, alarms, timetable, habits, badges, activityLog, notifications, updatedAt } = req.body;
     
-    if (!dbCache.syncData) {
-      dbCache.syncData = {};
-    }
-    
-    const currentSync = dbCache.syncData[emailNorm] || {};
+    const currentSync = await firebaseDB.getSyncData(emailNorm) || {};
     
     const nextSync = {
       profile: profile !== undefined ? profile : currentSync.profile,
@@ -461,11 +570,11 @@ app.post("/api/sync/push", requireAuth, (req, res) => {
       updatedAt: updatedAt || new Date().toISOString()
     };
     
-    dbCache.syncData[emailNorm] = nextSync;
+    await firebaseDB.saveSyncData(emailNorm, nextSync);
     
     // Sync to ChatUser details for CommunityChat display
     if (profile) {
-      const user = dbCache.users[emailNorm];
+      const user = await firebaseDB.getUser(emailNorm);
       if (user) {
         user.username = profile.nickname || profile.fullName || user.username;
         user.avatar = profile.avatar || user.avatar;
@@ -473,10 +582,10 @@ app.post("/api/sync/push", requireAuth, (req, res) => {
         if (profile.badges && profile.badges.length > 0) {
           user.badge = profile.badges[profile.badges.length - 1];
         }
+        await firebaseDB.saveUser(emailNorm, user);
       }
     }
     
-    saveDB();
     res.json({ success: true, data: nextSync });
   } catch (error: any) {
     console.error("Sync push error:", error);
@@ -485,25 +594,10 @@ app.post("/api/sync/push", requireAuth, (req, res) => {
 });
 
 // Delete Account endpoint
-app.post("/api/auth/delete-account", requireAuth, (req, res) => {
+app.post("/api/auth/delete-account", requireAuth, async (req, res) => {
   try {
     const emailNorm = (req as any).user.email.toLowerCase().trim();
-    
-    // 1. Delete user record
-    delete dbCache.users[emailNorm];
-    
-    // 2. Delete syncData
-    if (dbCache.syncData) {
-      delete dbCache.syncData[emailNorm];
-    }
-    
-    // 3. Clear messages written by the user
-    dbCache.messages = dbCache.messages.filter(m => m.userEmail.toLowerCase().trim() !== emailNorm);
-    
-    // 4. Clear reports related to the user
-    dbCache.reports = dbCache.reports.filter(r => r.messageAuthor.toLowerCase().trim() !== emailNorm && r.reportedBy.toLowerCase().trim() !== emailNorm);
-    
-    saveDB();
+    await firebaseDB.purgeAccount(emailNorm);
     res.json({ success: true, message: "Your account and all associated study data have been permanently deleted." });
   } catch (error: any) {
     console.error("Delete account error:", error);
@@ -606,19 +700,7 @@ JSON schema to match:
       throw new Error("No response received from AI model.");
     }
 
-    // Try parsing JSON with fallback cleanup for any markdown code blocks
-    let parsedResult;
-    try {
-      parsedResult = JSON.parse(responseText);
-    } catch (parseErr) {
-      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-      if (jsonMatch && jsonMatch[1]) {
-        parsedResult = JSON.parse(jsonMatch[1].trim());
-      } else {
-        throw parseErr;
-      }
-    }
-
+    const parsedResult = parseJsonResponse(responseText);
     res.json(parsedResult);
   } catch (error: any) {
     console.error("AI solver error:", error);
@@ -792,7 +874,7 @@ Respond strictly in JSON format matching this schema:
       responseSchema
     });
 
-    res.json(JSON.parse(response.text || "{}"));
+    res.json(parseJsonResponse(response.text || "{}"));
   } catch (error: any) {
     console.error("AI material generator error:", error);
     res.status(500).json({ error: "Failed to generate study materials." });
@@ -878,7 +960,7 @@ The response should be JSON structured strictly like this:
       responseSchema
     });
 
-    res.json(JSON.parse(response.text || "{}"));
+    res.json(parseJsonResponse(response.text || "{}"));
   } catch (error: any) {
     console.error("AI schedule error:", error);
     res.status(500).json({ error: "Failed to generate study plan." });
@@ -945,8 +1027,12 @@ app.get("/api/chat/stream", (req, res) => {
 
   // If user is admin, tell them how many reports are pending immediately
   if (isAdminEmail(userEmail)) {
-    const pendingCount = dbCache.reports.filter(r => r.status === "pending").length;
-    res.write(`data: ${JSON.stringify({ type: "adminInit", data: { pendingReportsCount: pendingCount } })}\n\n`);
+    firebaseDB.getReports().then(reports => {
+      const pendingCount = reports.filter(r => r.status === "pending").length;
+      res.write(`data: ${JSON.stringify({ type: "adminInit", data: { pendingReportsCount: pendingCount } })}\n\n`);
+    }).catch(err => {
+      console.error("SSE admin init report counting failed:", err);
+    });
   }
 
   req.on("close", () => {
@@ -956,45 +1042,12 @@ app.get("/api/chat/stream", (req, res) => {
 });
 
 // 2. Fetch paginated or searched chat history
-app.get("/api/chat/messages", requireAuth, (req, res) => {
+app.get("/api/chat/messages", requireAuth, async (req, res) => {
   try {
     const { before, search, limit } = req.query;
-    let list = [...dbCache.messages];
-
-    // Map deleted messages to hide content for standard clients
-    const mappedList = list.map(m => {
-      if (m.isDeleted) {
-        return {
-          ...m,
-          text: "🚫 This message was removed by a community moderator.",
-          isDeleted: true
-        };
-      }
-      return m;
-    });
-
-    let filtered = mappedList;
-
-    // Search filter
-    if (search && typeof search === "string" && search.trim() !== "") {
-      const q = search.toLowerCase().trim();
-      filtered = filtered.filter(m => m.text.toLowerCase().includes(q) || m.username.toLowerCase().includes(q));
-    }
-
-    // Lazy load before cursor (using ISO string time)
-    if (before && typeof before === "string") {
-      const beforeTime = new Date(before).getTime();
-      filtered = filtered.filter(m => new Date(m.timestamp).getTime() < beforeTime);
-    }
-
-    // Sort by timestamp chronological order
-    filtered.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-    // Page constraints
     const maxLimit = limit ? parseInt(limit as string) : 50;
-    const paginated = filtered.slice(-maxLimit);
-
-    res.json(paginated);
+    const messages = await firebaseDB.getMessages(before as string, search as string, maxLimit);
+    res.json(messages);
   } catch (error: any) {
     res.status(500).json({ error: "Failed to retrieve chat logs." });
   }
@@ -1021,7 +1074,7 @@ app.post("/api/chat/message", requireAuth, async (req, res) => {
     const cleanUsername = sanitizeText(username.trim());
 
     // Verification 1: Is user banned?
-    const userState = dbCache.users[emailNorm];
+    const userState = await firebaseDB.getUser(emailNorm);
     if (userState && userState.isBanned) {
       return res.status(403).json({ error: "Your account has been suspended for violating CBSE study group guidelines." });
     }
@@ -1053,9 +1106,10 @@ app.post("/api/chat/message", requireAuth, async (req, res) => {
     }
 
     // Verification 5: Duplicate message check
-    const activeMsgs = dbCache.messages.filter(m => m.userEmail === emailNorm && !m.isDeleted);
-    if (activeMsgs.length > 0) {
-      const lastMsg = activeMsgs[activeMsgs.length - 1];
+    const activeMsgs = await firebaseDB.getMessages(undefined, undefined, 10);
+    const userActiveMsgs = activeMsgs.filter(m => m.userEmail === emailNorm && !m.isDeleted);
+    if (userActiveMsgs.length > 0) {
+      const lastMsg = userActiveMsgs[userActiveMsgs.length - 1];
       if (lastMsg.text.toLowerCase().trim() === cleanText.toLowerCase()) {
         return res.status(400).json({ error: "Spam Guard: Duplicate message block. Try posting something new!" });
       }
@@ -1120,7 +1174,7 @@ Return strictly a JSON object matching this schema:
         responseSchema
       });
 
-      const resJson = JSON.parse(response.text || "{}");
+      const resJson = parseJsonResponse(response.text || "{}");
       isViolation = !!resJson.isViolation;
       violationReason = resJson.reason || "profanity";
       violationExplain = resJson.explanation || "Your message violates community guidelines.";
@@ -1142,8 +1196,9 @@ Return strictly a JSON object matching this schema:
 
     // 9. Handle infraction consequences (Warning, 10-Min Mute, 24-Hr Mute, Suspension)
     if (isViolation) {
-      if (!dbCache.users[emailNorm]) {
-        dbCache.users[emailNorm] = {
+      let activeUser = userState;
+      if (!activeUser) {
+        activeUser = {
           email: emailNorm,
           username,
           avatar,
@@ -1156,8 +1211,8 @@ Return strictly a JSON object matching this schema:
         };
       }
 
-      dbCache.users[emailNorm].violationsCount += 1;
-      const count = dbCache.users[emailNorm].violationsCount;
+      activeUser.violationsCount = (activeUser.violationsCount || 0) + 1;
+      const count = activeUser.violationsCount;
 
       let penaltyMsg = "";
       let muteExpiresString: string | null = null;
@@ -1168,24 +1223,24 @@ Return strictly a JSON object matching this schema:
       } else if (count === 2) {
         const expiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
         muteExpiresString = expiry.toISOString();
-        dbCache.users[emailNorm].muteExpiresAt = muteExpiresString;
+        activeUser.muteExpiresAt = muteExpiresString;
         penaltyMsg = "Your message violates community guidelines. This is infraction (2/3). You are MUTED for 10 minutes.";
       } else if (count === 3) {
         const expiry = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
         muteExpiresString = expiry.toISOString();
-        dbCache.users[emailNorm].muteExpiresAt = muteExpiresString;
+        activeUser.muteExpiresAt = muteExpiresString;
         penaltyMsg = "Your message violates community guidelines. This is infraction (3/3). You are MUTED for 24 hours.";
       } else {
         accountBanned = true;
-        dbCache.users[emailNorm].isBanned = true;
-        dbCache.users[emailNorm].banReason = "Repeated deliberate abuse of chat safety guidelines.";
+        activeUser.isBanned = true;
+        activeUser.banReason = "Repeated deliberate abuse of chat safety guidelines.";
         penaltyMsg = "Your account has been SUSPENDED due to continued guidelines violations.";
       }
 
-      saveDB();
+      await firebaseDB.saveUser(emailNorm, activeUser);
 
       // Log to system logs
-      dbCache.adminLogs.push({
+      await firebaseDB.saveAdminLog({
         id: "log-" + Date.now(),
         adminEmail: "AUTO_AI_MODERATOR",
         action: accountBanned ? "BAN_USER" : "WARNING_PENALTY",
@@ -1193,7 +1248,6 @@ Return strictly a JSON object matching this schema:
         details: `Auto-moderated text: "${cleanText}". Reason: ${violationReason}. Outcome: ${penaltyMsg}`,
         timestamp: new Date().toISOString()
       });
-      saveDB();
 
       // Notify admins
       broadcastToSSE("adminLogsUpdated", {});
@@ -1227,21 +1281,20 @@ Return strictly a JSON object matching this schema:
     };
 
     // Ensure profile is kept synced in chat users directory
-    dbCache.users[emailNorm] = {
+    await firebaseDB.saveUser(emailNorm, {
       email: emailNorm,
       username: cleanUsername,
       avatar,
       level: level || 1,
       badge,
-      joinDate: dbCache.users[emailNorm]?.joinDate || new Date().toISOString(),
+      joinDate: userState?.joinDate || new Date().toISOString(),
       country: country || "India",
-      violationsCount: dbCache.users[emailNorm]?.violationsCount || 0,
-      muteExpiresAt: dbCache.users[emailNorm]?.muteExpiresAt || null,
+      violationsCount: userState?.violationsCount || 0,
+      muteExpiresAt: userState?.muteExpiresAt || null,
       isBanned: false
-    };
+    });
 
-    dbCache.messages.push(newMessage);
-    saveDB();
+    await firebaseDB.saveMessage(newMessage);
 
     // Broadcast message via SSE
     broadcastToSSE("message", newMessage);
@@ -1249,23 +1302,27 @@ Return strictly a JSON object matching this schema:
     // Analyze mentions and dispatch notifications
     const mentionMatch = cleanText.match(/@([a-zA-Z0-9_\-]+)/g);
     if (mentionMatch) {
-      mentionMatch.forEach(m => {
-        const nameToFind = m.substring(1).toLowerCase().trim();
-        const matchedUser = Object.values(dbCache.users).find(u => u.username.toLowerCase().trim() === nameToFind);
-        if (matchedUser && matchedUser.email !== emailNorm) {
-          broadcastToSSE("notification", {
-            targetEmail: matchedUser.email,
-            title: "💬 Community Chat Mention",
-            message: `${cleanUsername} mentioned you in global chat: "${cleanText.substring(0, 50)}${cleanText.length > 50 ? "..." : ""}"`,
-            type: "alert"
-          });
-        }
+      firebaseDB.getAllUsers().then(users => {
+        mentionMatch.forEach(m => {
+          const nameToFind = m.substring(1).toLowerCase().trim();
+          const matchedUser = users.find(u => u.username.toLowerCase().trim() === nameToFind);
+          if (matchedUser && matchedUser.email !== emailNorm) {
+            broadcastToSSE("notification", {
+              targetEmail: matchedUser.email,
+              title: "💬 Community Chat Mention",
+              message: `${cleanUsername} mentioned you in global chat: "${cleanText.substring(0, 50)}${cleanText.length > 50 ? "..." : ""}"`,
+              type: "alert"
+            });
+          }
+        });
+      }).catch(err => {
+        console.error("Error dispatching mentions:", err);
       });
     }
 
     // Analyze replied messages
     if (repliedToId) {
-      const origMsg = dbCache.messages.find(m => m.id === repliedToId);
+      const origMsg = await firebaseDB.getRawMessage(repliedToId);
       if (origMsg && origMsg.userEmail !== emailNorm) {
         broadcastToSSE("notification", {
           targetEmail: origMsg.userEmail,
@@ -1284,7 +1341,7 @@ Return strictly a JSON object matching this schema:
 });
 
 // 4. Submit an abuse report against a message
-app.post("/api/chat/report", requireAuth, (req, res) => {
+app.post("/api/chat/report", requireAuth, async (req, res) => {
   try {
     const { messageId, reportedBy, reason, comment } = req.body;
 
@@ -1297,7 +1354,7 @@ app.post("/api/chat/report", requireAuth, (req, res) => {
       return res.status(403).json({ error: "Unauthorized: Identity session email mismatch." });
     }
 
-    const msg = dbCache.messages.find(m => m.id === messageId);
+    const msg = await firebaseDB.getRawMessage(messageId);
     if (!msg) {
       return res.status(404).json({ error: "Original message not found." });
     }
@@ -1318,15 +1375,15 @@ app.post("/api/chat/report", requireAuth, (req, res) => {
       status: "pending"
     };
 
-    dbCache.reports.push(newReport);
-    msg.reportsCount = (msg.reportsCount || 0) + 1;
-    saveDB();
+    await firebaseDB.saveReport(newReport);
+    await firebaseDB.updateMessage(messageId, { reportsCount: (msg.reportsCount || 0) + 1 });
 
     // Broadcast event to active admins
     broadcastToSSE("reportCreated", newReport);
 
     res.json({ success: true, report: newReport });
   } catch (error: any) {
+    console.error("Report logging failed:", error);
     res.status(500).json({ error: "Failed to log report." });
   }
 });
@@ -1350,9 +1407,14 @@ app.post("/api/chat/typing", requireAuth, (req, res) => {
 });
 
 // 6. Admin Panel stats retrieval
-app.get("/api/chat/admin/stats", requireAdmin, (req, res) => {
+app.get("/api/chat/admin/stats", requireAdmin, async (req, res) => {
   try {
-    const sanitizedUsers = Object.values(dbCache.users).map(u => ({
+    const users = await firebaseDB.getAllUsers();
+    const reports = await firebaseDB.getReports();
+    const adminLogs = await firebaseDB.getAdminLogs();
+    const messages = await firebaseDB.getMessages(undefined, undefined, 1000);
+
+    const sanitizedUsers = users.map(u => ({
       email: u.email,
       username: u.username,
       avatar: u.avatar,
@@ -1367,37 +1429,39 @@ app.get("/api/chat/admin/stats", requireAdmin, (req, res) => {
     }));
 
     res.json({
-      reports: dbCache.reports,
-      adminLogs: dbCache.adminLogs,
+      reports: reports,
+      adminLogs: adminLogs,
       users: sanitizedUsers,
-      totalMessages: dbCache.messages.length,
+      totalMessages: messages.length,
       activeUsersCount: new Set(sseClients.map(c => c.email)).size
     });
   } catch (error: any) {
+    console.error("Admin stats fetch failed:", error);
     res.status(500).json({ error: "Failed to retrieve logs." });
   }
 });
 
 // 7. Admin Action Endpoint (Mute, Ban, Delete)
-app.post("/api/chat/admin/action", requireAdmin, (req, res) => {
+app.post("/api/chat/admin/action", requireAdmin, async (req, res) => {
   try {
     const { action, targetId, targetEmail, reason } = req.body;
     const adminEmail = (req as any).user.email;
-
     const timestamp = new Date().toISOString();
 
     if (action === "deleteMessage") {
-      const msg = dbCache.messages.find(m => m.id === targetId);
+      const msg = await firebaseDB.getRawMessage(targetId);
       if (msg) {
-        msg.isDeleted = true;
-        msg.deletedBy = adminEmail;
+        await firebaseDB.updateMessage(targetId, { isDeleted: true, deletedBy: adminEmail });
 
         // Resolve reports
-        dbCache.reports.forEach(r => {
+        const reports = await firebaseDB.getReports();
+        for (const r of reports) {
           if (r.messageId === targetId && r.status === "pending") {
-            r.status = "reviewed";
-            r.actionTaken = "DELETED";
-            r.reviewedAt = timestamp;
+            await firebaseDB.updateReport(r.id, {
+              status: "reviewed",
+              actionTaken: "DELETED",
+              reviewedAt: timestamp
+            });
 
             // Notify reporter of review update
             broadcastToSSE("notification", {
@@ -1407,10 +1471,11 @@ app.post("/api/chat/admin/action", requireAdmin, (req, res) => {
               type: "success"
             });
           }
-        });
+        }
 
-        dbCache.adminLogs.push({
-          id: "log-" + Date.now(),
+        const logId = "log-" + Date.now();
+        await firebaseDB.saveAdminLog({
+          id: logId,
           adminEmail,
           action: "DELETE_MESSAGE",
           targetEmail: msg.userEmail,
@@ -1418,92 +1483,92 @@ app.post("/api/chat/admin/action", requireAdmin, (req, res) => {
           timestamp
         });
 
-        saveDB();
         broadcastToSSE("messageDeleted", { messageId: targetId });
         broadcastToSSE("adminLogsUpdated", {});
       }
     } else if (action === "muteUser") {
-      const u = dbCache.users[targetEmail.toLowerCase().trim()];
+      const targetEmailNorm = targetEmail.toLowerCase().trim();
+      const u = await firebaseDB.getUser(targetEmailNorm);
       if (u) {
         const muteExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24 Hours
-        u.muteExpiresAt = muteExpiry;
+        await firebaseDB.saveUser(targetEmailNorm, { muteExpiresAt: muteExpiry });
 
-        dbCache.adminLogs.push({
+        await firebaseDB.saveAdminLog({
           id: "log-" + Date.now(),
           adminEmail,
           action: "MUTE_USER",
-          targetEmail: targetEmail.toLowerCase().trim(),
+          targetEmail: targetEmailNorm,
           details: `Muted user for 24 hours. Reason: ${reason || "Community violation."}`,
           timestamp
         });
 
-        saveDB();
-        broadcastToSSE("userMuted", { email: targetEmail, expiresAt: muteExpiry });
+        broadcastToSSE("userMuted", { email: targetEmailNorm, expiresAt: muteExpiry });
         broadcastToSSE("adminLogsUpdated", {});
       }
     } else if (action === "unmuteUser") {
-      const u = dbCache.users[targetEmail.toLowerCase().trim()];
+      const targetEmailNorm = targetEmail.toLowerCase().trim();
+      const u = await firebaseDB.getUser(targetEmailNorm);
       if (u) {
-        u.muteExpiresAt = null;
+        await firebaseDB.saveUser(targetEmailNorm, { muteExpiresAt: null });
 
-        dbCache.adminLogs.push({
+        await firebaseDB.saveAdminLog({
           id: "log-" + Date.now(),
           adminEmail,
           action: "UNMUTE_USER",
-          targetEmail: targetEmail.toLowerCase().trim(),
+          targetEmail: targetEmailNorm,
           details: `Unmuted user manually.`,
           timestamp
         });
 
-        saveDB();
-        broadcastToSSE("userUnmuted", { email: targetEmail });
+        broadcastToSSE("userUnmuted", { email: targetEmailNorm });
         broadcastToSSE("adminLogsUpdated", {});
       }
     } else if (action === "banUser") {
-      const u = dbCache.users[targetEmail.toLowerCase().trim()];
+      const targetEmailNorm = targetEmail.toLowerCase().trim();
+      const u = await firebaseDB.getUser(targetEmailNorm);
       if (u) {
-        u.isBanned = true;
-        u.banReason = reason || "Abuse of rules.";
+        await firebaseDB.saveUser(targetEmailNorm, { isBanned: true, banReason: reason || "Abuse of rules." });
 
-        dbCache.adminLogs.push({
+        await firebaseDB.saveAdminLog({
           id: "log-" + Date.now(),
           adminEmail,
           action: "BAN_USER",
-          targetEmail: targetEmail.toLowerCase().trim(),
+          targetEmail: targetEmailNorm,
           details: `Banned user. Reason: ${reason || "Abuse"}`,
           timestamp
         });
 
-        saveDB();
-        broadcastToSSE("userBanned", { email: targetEmail });
+        broadcastToSSE("userBanned", { email: targetEmailNorm });
         broadcastToSSE("adminLogsUpdated", {});
       }
     } else if (action === "unbanUser") {
-      const u = dbCache.users[targetEmail.toLowerCase().trim()];
+      const targetEmailNorm = targetEmail.toLowerCase().trim();
+      const u = await firebaseDB.getUser(targetEmailNorm);
       if (u) {
-        u.isBanned = false;
-        u.banReason = undefined;
+        await firebaseDB.saveUser(targetEmailNorm, { isBanned: false, banReason: "" });
 
-        dbCache.adminLogs.push({
+        await firebaseDB.saveAdminLog({
           id: "log-" + Date.now(),
           adminEmail,
           action: "UNBAN_USER",
-          targetEmail: targetEmail.toLowerCase().trim(),
+          targetEmail: targetEmailNorm,
           details: "Unbanned user manually.",
           timestamp
         });
 
-        saveDB();
         broadcastToSSE("adminLogsUpdated", {});
       }
     } else if (action === "resolveReport") {
-      const rep = dbCache.reports.find(r => r.id === targetId);
+      const reports = await firebaseDB.getReports();
+      const rep = reports.find(r => r.id === targetId);
       if (rep) {
-        rep.status = "reviewed";
-        rep.actionTaken = "RESOLVED_WITHOUT_DELETE";
-        rep.reviewedAt = timestamp;
+        await firebaseDB.updateReport(targetId, {
+          status: "reviewed",
+          actionTaken: "RESOLVED_WITHOUT_DELETE",
+          reviewedAt: timestamp
+        });
 
-        dbCache.adminLogs.push({
+        await firebaseDB.saveAdminLog({
           id: "log-" + Date.now(),
           adminEmail,
           action: "RESOLVE_REPORT",
@@ -1511,7 +1576,6 @@ app.post("/api/chat/admin/action", requireAdmin, (req, res) => {
           timestamp
         });
 
-        saveDB();
         broadcastToSSE("notification", {
           targetEmail: rep.reportedBy,
           title: "⚖️ Report Reviewed",
@@ -1530,8 +1594,36 @@ app.post("/api/chat/admin/action", requireAdmin, (req, res) => {
 });
 
 // ----------------------------------------------------
+// SYSTEM HEALTH AND UTILITIES
+// ----------------------------------------------------
+
+// 1. Health check endpoint for container probes and status validation
+app.get("/api/health", (req, res) => {
+  res.json({
+    status: "healthy",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+    memoryUsage: process.memoryUsage(),
+    env: process.env.NODE_ENV || "development"
+  });
+});
+
+// --- Global Error Handling Middleware ---
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error("[Global Error Handler]", err);
+  const status = err.statusCode || err.status || 500;
+  const message = err.message || "An unexpected server error occurred.";
+  res.status(status).json({
+    error: message,
+    ...(process.env.NODE_ENV !== "production" ? { stack: err.stack } : {})
+  });
+});
+
+// ----------------------------------------------------
 // VITE AND STATIC ASSET SERVING MIDDLEWARE
 // ----------------------------------------------------
+
+let serverInstance: any;
 
 async function start() {
   if (process.env.NODE_ENV !== "production") {
@@ -1548,9 +1640,38 @@ async function start() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  serverInstance = app.listen(PORT, "0.0.0.0", () => {
     console.log(`StudyMate server listening on http://0.0.0.0:${PORT}`);
   });
 }
+
+// Graceful Shutdown implementation
+function gracefulShutdown(signal: string) {
+  console.log(`Received ${signal}. Shutting down gracefully...`);
+  if (serverInstance) {
+    serverInstance.close(() => {
+      console.log("HTTP server closed.");
+      // Clear real-time active SSE clients
+      sseClients.forEach(c => {
+        try {
+          c.res.end();
+        } catch {}
+      });
+      console.log("Graceful shutdown completed successfully.");
+      process.exit(0);
+    });
+    
+    // Safety exit timeout if close hangs
+    setTimeout(() => {
+      console.error("Graceful shutdown timed out, force exiting...");
+      process.exit(1);
+    }, 10000);
+  } else {
+    process.exit(0);
+  }
+}
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
 start();

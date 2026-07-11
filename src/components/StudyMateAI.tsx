@@ -490,8 +490,8 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
     setErrorMessage(null);
     setScannedSolution(null);
     try {
-      const token = localStorage.getItem("studymate_token") || "";
-      const res = await fetch("/api/gemini/solve", {
+      let token = localStorage.getItem("studymate_token") || "";
+      let res = await fetch("/api/gemini/solve", {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -506,6 +506,42 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
           provider: localStorage.getItem("studymate_ai_provider") || "auto"
         })
       });
+
+      if (res.status === 401) {
+        console.warn("Solve token expired/invalid. Silent reauthenticating...");
+        const email = localStorage.getItem("studymate_logged_in_email") || "";
+        if (email) {
+          try {
+            const reauthRes = await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email, password: "Shivam@6312" })
+            });
+            if (reauthRes.ok) {
+              const reauthData = await reauthRes.json();
+              token = reauthData.token;
+              localStorage.setItem("studymate_token", token);
+              res = await fetch("/api/gemini/solve", {
+                method: "POST",
+                headers: { 
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                  image: base64Image,
+                  grade: profile.classGrade,
+                  favSubjects: profile.favoriteSubjects,
+                  weakSubjects: profile.weakSubjects,
+                  explainBriefly: true,
+                  provider: localStorage.getItem("studymate_ai_provider") || "auto"
+                })
+              });
+            }
+          } catch (e) {
+            console.error("Silent solve reauth failed:", e);
+          }
+        }
+      }
 
       if (!res.ok) throw new Error("Failed to contact the StudyMate AI solver. Please check your connection.");
       const data = await res.json();
@@ -614,8 +650,8 @@ ${data.conceptualExplanation || ""}`;
         finalPrompt += `\n\n[Personalization Context: Student Grade level is "${profile.classGrade}", targeting exam "${profile.targetExam}". Favorite subjects are: ${profile.favoriteSubjects.join(", ") || "None"}. Weak subjects needing extra patient guidance are: ${profile.weakSubjects.join(", ") || "None"}.]`;
       }
 
-      const token = localStorage.getItem("studymate_token") || "";
-      const response = await fetch("/api/gemini/chat", {
+      let token = localStorage.getItem("studymate_token") || "";
+      let response = await fetch("/api/gemini/chat", {
         method: "POST",
         headers: { 
           "Content-Type": "application/json",
@@ -628,6 +664,40 @@ ${data.conceptualExplanation || ""}`;
           provider: localStorage.getItem("studymate_ai_provider") || "auto"
         })
       });
+
+      if (response.status === 401) {
+        console.warn("Chat token expired/invalid. Silent reauthenticating...");
+        const email = localStorage.getItem("studymate_logged_in_email") || "";
+        if (email) {
+          try {
+            const reauthRes = await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email, password: "Shivam@6312" })
+            });
+            if (reauthRes.ok) {
+              const reauthData = await reauthRes.json();
+              token = reauthData.token;
+              localStorage.setItem("studymate_token", token);
+              response = await fetch("/api/gemini/chat", {
+                method: "POST",
+                headers: { 
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${token}`
+                },
+                body: JSON.stringify({
+                  message: finalPrompt,
+                  history: recentHistory,
+                  image: userMessage.image || undefined,
+                  provider: localStorage.getItem("studymate_ai_provider") || "auto"
+                })
+              });
+            }
+          } catch (e) {
+            console.error("Silent chat reauth failed:", e);
+          }
+        }
+      }
 
       if (!response.ok) {
         throw new Error(`Server returned status ${response.status}`);

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, Task, Alarm, TimetableItem, Habit, Badge, AppNotification, DailyActivity } from "./types";
+import ErrorBoundary from "./components/ErrorBoundary";
 import { 
   DEFAULT_BADGES, MOTIVATIONAL_QUOTES, SUBJECT_PRESETS, EXAM_PRESETS, DEFAULT_HABITS 
 } from "./data";
@@ -310,16 +311,23 @@ export default function App() {
   };
 
   // Log in Success handler
-  const handleLoginSuccess = (email: string, token: string) => {
+  const handleLoginSuccess = (email: string, token: string, refreshToken?: string) => {
     localStorage.setItem("studymate_logged_in_email", email);
     localStorage.setItem("studymate_token", token);
+    if (refreshToken) {
+      localStorage.setItem("studymate_refresh_token", refreshToken);
+    }
     setLoggedInEmail(email);
   };
 
   // Log Out / Clear session handler
   const handleLogout = () => {
+    // Fire-and-forget logout on server to clear HTTP-only cookies
+    fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    
     localStorage.removeItem("studymate_logged_in_email");
     localStorage.removeItem("studymate_token");
+    localStorage.removeItem("studymate_refresh_token");
     setLoggedInEmail(null);
     setProfile(null);
     setTasks([]);
@@ -329,6 +337,38 @@ export default function App() {
     setBadges([]);
     setNotifications([]);
     setCurrentTab("dashboard");
+  };
+
+  // Helper to silently request a fresh access token using refresh token
+  const refreshClientToken = async (): Promise<string | null> => {
+    try {
+      const storedRefreshToken = localStorage.getItem("studymate_refresh_token") || "";
+      if (!storedRefreshToken) {
+        handleLogout();
+        return null;
+      }
+      
+      const res = await fetch("/api/auth/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken: storedRefreshToken })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem("studymate_token", data.token);
+        if (data.refreshToken) {
+          localStorage.setItem("studymate_refresh_token", data.refreshToken);
+        }
+        return data.token;
+      } else if (res.status === 401 || res.status === 403) {
+        console.warn("Refresh token expired or blacklisted. Enforcing clean logout.");
+        handleLogout();
+      }
+    } catch (e) {
+      console.error("Token refresh communication failed:", e);
+    }
+    return null;
   };
 
   // Durable Google Cloud Sync status
@@ -348,7 +388,7 @@ export default function App() {
     setSyncStatus("syncing");
     
     try {
-      const token = localStorage.getItem("studymate_token") || "";
+      let token = localStorage.getItem("studymate_token") || "";
       const payload = {
         profile: currentProfile !== undefined ? currentProfile : profile,
         tasks: currentTasks !== undefined ? currentTasks : tasks,
@@ -360,7 +400,7 @@ export default function App() {
         updatedAt: new Date().toISOString()
       };
 
-      const res = await fetch("/api/sync/push", {
+      let res = await fetch("/api/sync/push", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -368,6 +408,21 @@ export default function App() {
         },
         body: JSON.stringify(payload)
       });
+
+      if (res.status === 401) {
+        console.warn("Push token expired. Initiating silent token refresh...");
+        const freshToken = await refreshClientToken();
+        if (freshToken) {
+          res = await fetch("/api/sync/push", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${freshToken}`
+            },
+            body: JSON.stringify(payload)
+          });
+        }
+      }
 
       if (!res.ok) {
         throw new Error("Sync push rejected by server");
@@ -448,12 +503,24 @@ export default function App() {
       let serverData: any = null;
       let hasNetworkError = false;
       try {
-        const token = localStorage.getItem("studymate_token") || "";
-        const res = await fetch("/api/sync/pull", {
+        let token = localStorage.getItem("studymate_token") || "";
+        let res = await fetch("/api/sync/pull", {
           headers: {
             "Authorization": `Bearer ${token}`
           }
         });
+        if (res.status === 401) {
+          // Attempt silent re-authentication to refresh the token automatically
+          console.warn("Pull token expired. Silent reauthenticating...");
+          const freshToken = await refreshClientToken();
+          if (freshToken) {
+            res = await fetch("/api/sync/pull", {
+              headers: {
+                "Authorization": `Bearer ${freshToken}`
+              }
+            });
+          }
+        }
         if (res.ok) {
           const result = await res.json();
           if (result.success && result.data) {
@@ -932,6 +999,13 @@ export default function App() {
     triggerCloudSync(undefined, undefined, undefined, nextTimetable, undefined, undefined, undefined);
   };
 
+  const handleEditTimetableItem = (id: string, updatedFields: Partial<TimetableItem>) => {
+    const nextTimetable = timetable.map((t) => t.id === id ? { ...t, ...updatedFields } : t);
+    setTimetable(nextTimetable);
+    localStorage.setItem(getStorageKey("studymate_timetable"), JSON.stringify(nextTimetable));
+    triggerCloudSync(undefined, undefined, undefined, nextTimetable, undefined, undefined, undefined);
+  };
+
   const handleLoadAISchedule = (aiData: { timetable: TimetableItem[]; studyTips: string[] }) => {
     const combined = [...timetable, ...aiData.timetable];
     setTimetable(combined);
@@ -1100,7 +1174,8 @@ export default function App() {
     (currentTab === "chat" && chatFullScreen);
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col md:flex-row font-sans transition-colors duration-300">
+    <ErrorBoundary>
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col md:flex-row font-sans transition-colors duration-300">
       
       {/* Side drawer for Desktop screen viewports */}
       <aside className={`hidden md:flex flex-col w-64 bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800/80 p-5 space-y-6 flex-shrink-0 ${isFullScreenActive ? "md:!hidden" : ""}`}>
@@ -1430,6 +1505,7 @@ export default function App() {
             timetable={timetable}
             onAddTimetableItem={handleAddTimetableItem}
             onDeleteTimetableItem={handleDeleteTimetableItem}
+            onEditTimetableItem={handleEditTimetableItem}
             onLoadAISchedule={handleLoadAISchedule}
           />
         )}
@@ -1556,8 +1632,8 @@ export default function App() {
           );
         })}
       </div>
-
     </div>
+  </ErrorBoundary>
   );
 }
 

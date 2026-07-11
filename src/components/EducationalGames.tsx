@@ -4,7 +4,8 @@ import {
   Gamepad2, Trophy, Award, Zap, Brain, Eye, Sparkles, Coins, Gem, Target, 
   Volume2, VolumeX, Shield, Play, Lock, AlertCircle, RefreshCw, User, 
   Flame, CheckCircle2, Star, Clock, UserCheck, UserPlus, Search, Sliders, 
-  Menu, X, HelpCircle, Dumbbell, Activity, Check, Share2, Compass, AlertTriangle
+  Menu, X, HelpCircle, Dumbbell, Activity, Check, Share2, Compass, AlertTriangle,
+  Heart, ArrowLeft, Lightbulb, EyeOff, Keyboard, Calendar, History
 } from "lucide-react";
 import { UserProfile } from "../types";
 
@@ -249,6 +250,17 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
   // Game List
   const GAMES_CATALOGUE: GameItem[] = [
     {
+      id: "geometry_challenge",
+      title: "Geometry Challenge",
+      category: "math",
+      desc: "Identify shapes, angles, areas, perimeters, volumes, and coordinate planes with beautiful interactive vector diagrams!",
+      icon: <span className="text-2xl">📐</span>,
+      color: "from-amber-500 to-orange-500",
+      bgLight: "bg-amber-50/60 dark:bg-amber-950/20",
+      borderCol: "border-amber-100 dark:border-amber-900/40",
+      skillsTrained: ["Geometry", "Spatial Reasoning", "Area & Volume"]
+    },
+    {
       id: "quick_calc",
       title: "Math Calculation Sprint",
       category: "math",
@@ -291,6 +303,28 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       bgLight: "bg-fuchsia-50/60 dark:bg-fuchsia-950/20",
       borderCol: "border-fuchsia-100 dark:border-fuchsia-900/40",
       skillsTrained: ["Scientific Formulas", "Algebraic Identities", "Chemical Notations"]
+    },
+    {
+      id: "pattern_memory",
+      title: "Pattern Memory Grid",
+      category: "memory",
+      desc: "Remember and repeat increasingly complex flashing visual patterns. Test your visual-spatial focus and accuracy!",
+      icon: <span className="text-2xl">🔲</span>,
+      color: "from-pink-500 to-purple-600",
+      bgLight: "bg-pink-50/60 dark:bg-pink-950/20",
+      borderCol: "border-pink-100 dark:border-pink-900/40",
+      skillsTrained: ["Visual-Spatial Recall", "Short-term Memory", "Sequence Encoding"]
+    },
+    {
+      id: "sequence_recall",
+      title: "Sequence Recall Master",
+      category: "memory",
+      desc: "Remember and repeat sequences of numbers, letters, colors, or mixed symbols. Adapts to your performance!",
+      icon: <span className="text-2xl">🔁</span>,
+      color: "from-fuchsia-500 to-indigo-600",
+      bgLight: "bg-fuchsia-50/60 dark:bg-fuchsia-950/20",
+      borderCol: "border-fuchsia-100 dark:border-fuchsia-900/40",
+      skillsTrained: ["Sequential Auditory Buffer", "Adaptive Logic Decoding", "Color Working Memory"]
     },
     {
       id: "speed_matrix",
@@ -993,6 +1027,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
 
                 <div className="space-y-2.5">
                   {[
+                    { id: "geometry_challenge", label: "Geometry Challenge (Visual Duel)", color: "hover:bg-amber-50 dark:hover:bg-amber-950/20 border-amber-100" },
                     { id: "quick_calc", label: "Arithmetic Rush (Math Duel)", color: "hover:bg-blue-50 dark:hover:bg-blue-950/20 border-blue-100" },
                     { id: "speed_ops", label: "Arithmetic Speed Sprint (Rapid Duel)", color: "hover:bg-rose-50 dark:hover:bg-rose-950/20 border-rose-100" },
                     { id: "memory_pairs", label: "Diagram Matrix Memory (Active Recall Duel)", color: "hover:bg-purple-50 dark:hover:bg-purple-950/20 border-purple-100" }
@@ -1428,7 +1463,18 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
 
             {/* Render Playable Games dynamically depending on ID */}
             <div className="flex-1 max-w-xl mx-auto w-full p-4 md:p-6 flex flex-col justify-center">
-              {/* MATH: Arithmetic Sprint or Fractions Matcher */}
+              {/* MATH: Arithmetic Sprint, Fractions Matcher or Geometry Challenge */}
+              {activeGameId === "geometry_challenge" && (
+                <GeometryChallengeGame 
+                  difficulty={difficulty}
+                  grade={profile.classGrade}
+                  onFinished={(score, max, acc) => handleGameFinished("geometry_challenge", score, max, acc)}
+                  opponentScore={isMultiplayerMatch ? opponentScore : undefined}
+                  opponentName={isMultiplayerMatch && matchedOpponent ? matchedOpponent.name : undefined}
+                  synthSound={synthSound}
+                />
+              )}
+
               {activeGameId === "quick_calc" && (
                 <MathCalculationSprintGame 
                   difficulty={difficulty}
@@ -1452,7 +1498,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                 />
               )}
 
-              {/* MEMORY: Matrix Pairs or Formula Match & Recall */}
+              {/* MEMORY: Matrix Pairs, Formula Recall, Pattern Memory, or Sequence Recall */}
               {activeGameId === "memory_pairs" && (
                 <MemoryMatrixPairsGame 
                   difficulty={difficulty}
@@ -1469,6 +1515,24 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                   opponentScore={isMultiplayerMatch ? opponentScore : undefined}
                   synthSound={synthSound}
                   useFormulas={true}
+                />
+              )}
+
+              {activeGameId === "pattern_memory" && (
+                <PatternMemoryGame 
+                  difficulty={difficulty}
+                  onFinished={(score, max, acc) => handleGameFinished("pattern_memory", score, max, acc)}
+                  opponentScore={isMultiplayerMatch ? opponentScore : undefined}
+                  synthSound={synthSound}
+                />
+              )}
+
+              {activeGameId === "sequence_recall" && (
+                <SequenceRecallGame 
+                  difficulty={difficulty}
+                  onFinished={(score, max, acc) => handleGameFinished("sequence_recall", score, max, acc)}
+                  opponentScore={isMultiplayerMatch ? opponentScore : undefined}
+                  synthSound={synthSound}
                 />
               )}
 
@@ -2981,3 +3045,2024 @@ function EyeBallTrackerGame({ difficulty, onFinished, opponentScore, synthSound 
     </div>
   );
 }
+
+// ==========================================
+// GAME 6: GEOMETRY CHALLENGE GAME
+// ==========================================
+interface GeometryChallengeProps {
+  difficulty: DifficultyLevel;
+  grade: string;
+  onFinished: (score: number, max: number, accuracy: number) => void;
+  opponentScore?: number;
+  opponentName?: string;
+  synthSound: (f: number, t?: OscillatorType, d?: number) => void;
+}
+
+function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, opponentName, synthSound }: GeometryChallengeProps) {
+  const gradeNum = parseInt(grade) || 8;
+
+  // Game flow states
+  const [mode, setMode] = useState<"select" | "learn" | "practice" | "quiz">("select");
+  const [currentStep, setCurrentStep] = useState(0); // 0 to 9 (10 questions)
+  const [score, setScore] = useState(0);
+  const [wrongAnswers, setWrongAnswers] = useState(0);
+  const [hintsUsed, setHintsUsed] = useState(0);
+  const [activeDiff, setActiveDiff] = useState<DifficultyLevel>(difficulty);
+
+  // Question State
+  const [currentQuestion, setCurrentQuestion] = useState<any>(null);
+  const [selectedOpt, setSelectedOpt] = useState<string | null>(null);
+  const [showExplanation, setShowExplanation] = useState(false);
+  const [showHint, setShowHint] = useState(false);
+  const [history, setHistory] = useState<string[]>([]);
+  
+  // Timer for Timed Quiz mode
+  const [timeLeft, setTimeLeft] = useState(20);
+  const [timerActive, setTimerActive] = useState(false);
+  const [gameFinished, setGameFinished] = useState(false);
+
+  // Adaptive Difficulty Trackers
+  const [correctStreak, setCorrectStreak] = useState(0);
+  const [incorrectStreak, setIncorrectStreak] = useState(0);
+
+  // Generate question
+  const loadNextQuestion = (stepIdx: number, diffLevel: DifficultyLevel) => {
+    setSelectedOpt(null);
+    setShowExplanation(false);
+    setShowHint(false);
+    
+    const q = generateGeometryQuestion(gradeNum, diffLevel, stepIdx, history);
+    setCurrentQuestion(q);
+    setHistory(prev => [...prev, q.questionText]);
+
+    if (mode === "quiz") {
+      setTimeLeft(20);
+      setTimerActive(true);
+    }
+  };
+
+  // Start Session after mode selection
+  const startSession = (selectedMode: "learn" | "practice" | "quiz") => {
+    setMode(selectedMode);
+    setCurrentStep(0);
+    setScore(0);
+    setWrongAnswers(0);
+    setHintsUsed(0);
+    setCorrectStreak(0);
+    setIncorrectStreak(0);
+    setGameFinished(false);
+    setHistory([]);
+
+    synthSound(600, "sine", 0.1);
+    setTimeout(() => synthSound(800, "sine", 0.15), 80);
+
+    // Initial load
+    const q = generateGeometryQuestion(gradeNum, difficulty, 0, []);
+    setCurrentQuestion(q);
+    setHistory([q.questionText]);
+
+    if (selectedMode === "quiz") {
+      setTimeLeft(20);
+      setTimerActive(true);
+    }
+  };
+
+  // Timer loop for timed quiz
+  useEffect(() => {
+    if (mode !== "quiz" || !timerActive || gameFinished || !currentQuestion) return;
+    const interval = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleSelectOption("__timeout__");
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [currentStep, mode, timerActive, gameFinished, currentQuestion]);
+
+  const handleSelectOption = (opt: string) => {
+    if (selectedOpt) return; // Prevent double selecting
+    setTimerActive(false);
+    setSelectedOpt(opt);
+    setShowExplanation(true);
+
+    const isCorrect = opt === currentQuestion?.correctAnswer;
+
+    if (isCorrect) {
+      // Calculate score value. In practice mode, hints decrease question points by 50%. In quiz mode, there's a 1.5x multiplier!
+      let points = 10;
+      if (mode === "practice" && showHint) {
+        points = 5;
+      } else if (mode === "quiz") {
+        points = 15;
+      }
+      setScore(prev => prev + points);
+      setCorrectStreak(prev => prev + 1);
+      setIncorrectStreak(0);
+      synthSound(880, "sine", 0.2);
+
+      // Adaptive difficulty logic (only in Practice mode)
+      if (mode === "practice") {
+        if (correctStreak + 1 >= 2) {
+          // Increase difficulty level
+          if (activeDiff === "easy") {
+            setActiveDiff("medium");
+            onFinished && synthSound(900, "sine", 0.1); // subtle level-up feedback sound
+          } else if (activeDiff === "medium") {
+            setActiveDiff("hard");
+          } else if (activeDiff === "hard") {
+            setActiveDiff("expert");
+          }
+          setCorrectStreak(0);
+        }
+      }
+    } else {
+      setWrongAnswers(prev => prev + 1);
+      setIncorrectStreak(prev => prev + 1);
+      setCorrectStreak(0);
+      synthSound(150, "sawtooth", 0.3);
+
+      // Adaptive difficulty logic
+      if (mode === "practice") {
+        if (incorrectStreak + 1 >= 2) {
+          // Decrease difficulty level
+          if (activeDiff === "expert") {
+            setActiveDiff("hard");
+          } else if (activeDiff === "hard") {
+            setActiveDiff("medium");
+          } else if (activeDiff === "medium") {
+            setActiveDiff("easy");
+          }
+          setIncorrectStreak(0);
+        }
+      }
+    }
+  };
+
+  const handleNext = () => {
+    if (currentStep >= 9) {
+      // Game Over
+      setGameFinished(true);
+      setTimerActive(false);
+      synthSound(900, "sine", 0.4);
+    } else {
+      const nextStep = currentStep + 1;
+      setCurrentStep(nextStep);
+      loadNextQuestion(nextStep, activeDiff);
+    }
+  };
+
+  const collectRewardsAndExit = () => {
+    const accuracy = Math.round(((10 - wrongAnswers) / 10) * 100);
+    // In quiz mode we payout higher, in Learn mode we give small baseline rewards
+    let finalScore = score;
+    if (mode === "learn") {
+      finalScore = 20; // baseline static score for full learn completion
+    }
+    onFinished(finalScore, 100, accuracy);
+  };
+
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-5 md:p-6 rounded-3xl shadow-sm space-y-6">
+      
+      {/* MODE SELECTOR SCREEN */}
+      {mode === "select" && (
+        <div className="space-y-6 py-4">
+          <div className="text-center space-y-2">
+            <span className="text-3xl">📐</span>
+            <h3 className="text-lg font-black text-slate-800 dark:text-slate-100">Geometry Challenge</h3>
+            <p className="text-xs text-slate-400 font-semibold max-w-sm mx-auto leading-relaxed">
+              Master geometric proofs, diagrams, area formulas, angles, coordinates and volume modules inspired by Board Exams & Textbook syllabi (Classes 8–12).
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Learn Mode */}
+            <button
+              onClick={() => startSession("learn")}
+              className="p-5 bg-emerald-50/40 dark:bg-emerald-950/10 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl text-left transition duration-150 flex flex-col justify-between h-44 cursor-pointer"
+            >
+              <div className="space-y-1.5">
+                <span className="bg-emerald-100 dark:bg-emerald-900 text-emerald-600 dark:text-emerald-400 font-black text-[9px] px-2 py-0.5 rounded uppercase tracking-wider">LEARN</span>
+                <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">Study Guide Mode</h4>
+                <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
+                  No timers, free hints, and detailed textbook solutions. Perfect for reviewing new syllabus items and building core concepts.
+                </p>
+              </div>
+              <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 flex items-center mt-3">Start learning →</span>
+            </button>
+
+            {/* Practice Mode */}
+            <button
+              onClick={() => startSession("practice")}
+              className="p-5 bg-indigo-50/40 dark:bg-indigo-950/10 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/30 rounded-2xl text-left transition duration-150 flex flex-col justify-between h-44 cursor-pointer"
+            >
+              <div className="space-y-1.5">
+                <span className="bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400 font-black text-[9px] px-2 py-0.5 rounded uppercase tracking-wider">PRACTICE</span>
+                <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">Adaptive Challenge</h4>
+                <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
+                  Our system scales difficulty dynamically based on your correct/incorrect streaks. Hints available but decrease points.
+                </p>
+              </div>
+              <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 flex items-center mt-3">Start practice →</span>
+            </button>
+
+            {/* Timed Quiz */}
+            <button
+              onClick={() => startSession("quiz")}
+              className="p-5 bg-rose-50/40 dark:bg-rose-950/10 hover:bg-rose-50 dark:hover:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 rounded-2xl text-left transition duration-150 flex flex-col justify-between h-44 cursor-pointer"
+            >
+              <div className="space-y-1.5">
+                <span className="bg-rose-100 dark:bg-rose-900 text-rose-600 dark:text-rose-400 font-black text-[9px] px-2 py-0.5 rounded uppercase tracking-wider">QUIZ</span>
+                <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">Timed Arena</h4>
+                <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
+                  Strict 20-second countdown timer per question! No hints allowed. Standard high score multiplier payouts for expert performance.
+                </p>
+              </div>
+              <span className="text-xs font-black text-rose-600 dark:text-rose-400 flex items-center mt-3">Start quiz (1.5x Multiplier) →</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* GAME ONGOING SCREEN */}
+      {mode !== "select" && !gameFinished && currentQuestion && (
+        <div className="space-y-5">
+          {/* Header Progress Bar */}
+          <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/40 px-4 py-2.5 rounded-2xl">
+            <div className="flex items-center space-x-2">
+              <span className="text-[10px] font-black uppercase text-indigo-500 bg-indigo-50 dark:bg-indigo-950/50 px-2 py-0.5 rounded">
+                Question {currentStep + 1} / 10
+              </span>
+              <span className="text-[10px] font-bold text-slate-400">
+                Grade {gradeNum} Syllabus
+              </span>
+            </div>
+
+            <div className="flex items-center space-x-4">
+              {mode === "quiz" && (
+                <div className="flex items-center space-x-1.5 text-rose-500 font-black text-xs animate-pulse">
+                  <Clock className="w-3.5 h-3.5" />
+                  <span>⏳ {timeLeft}s</span>
+                </div>
+              )}
+              {opponentName && (
+                <div className="text-right text-[10px]">
+                  <span className="text-slate-400 block font-semibold">OPPONENT SCORE</span>
+                  <span className="font-black text-purple-600">{(opponentScore || 0) * 10} Pts</span>
+                </div>
+              )}
+              <div className="text-right">
+                <span className="text-[9px] text-slate-400 block font-semibold">SCORE</span>
+                <span className="text-xs font-black text-amber-500">{score} Pts</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Dynamic Interactive SVG Vector Diagram */}
+          <div className="p-4 bg-slate-50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800/60 rounded-3xl flex items-center justify-center min-h-[160px]">
+            <GeometryDiagram shapeType={currentQuestion.diagramData.shapeType} params={currentQuestion.diagramData.params} />
+          </div>
+
+          {/* Question Text */}
+          <div className="space-y-1">
+            <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest block">
+              {currentQuestion.type} challenge ({activeDiff})
+            </span>
+            <p className="text-sm font-extrabold text-slate-800 dark:text-slate-100 leading-relaxed">
+              {currentQuestion.questionText}
+            </p>
+          </div>
+
+          {/* Hint trigger (Not available in Timed Quiz) */}
+          {mode !== "quiz" && (
+            <div>
+              {!showHint ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowHint(true);
+                    setHintsUsed(prev => prev + 1);
+                    synthSound(500, "sine", 0.08);
+                  }}
+                  className="text-[10px] font-bold text-indigo-500 hover:text-indigo-600 flex items-center space-x-1 border border-indigo-100 dark:border-indigo-900/30 px-3 py-1.5 rounded-xl bg-indigo-50/20 hover:bg-indigo-50/40 transition cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Use Hint {mode === "practice" && "(Scores 50% points)"}</span>
+                </button>
+              ) : (
+                <div className="p-3 bg-amber-50/40 dark:bg-amber-950/10 border border-amber-200/40 dark:border-amber-900/30 rounded-xl text-[10px] text-amber-800 dark:text-amber-300 font-semibold leading-relaxed">
+                  💡 <span className="font-extrabold">Formula/Concept Hint:</span> {currentQuestion.hint}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Options grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            {currentQuestion.options.map((opt: string) => {
+              const isSelected = selectedOpt === opt;
+              const isCorrectOpt = opt === currentQuestion.correctAnswer;
+              let btnClass = "bg-white dark:bg-slate-850 hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-150 dark:border-slate-800 text-slate-800 dark:text-slate-100";
+              
+              if (selectedOpt) {
+                if (isSelected) {
+                  btnClass = isCorrectOpt 
+                    ? "bg-emerald-500 text-white border-emerald-500" 
+                    : "bg-rose-500 text-white border-rose-500";
+                } else if (isCorrectOpt) {
+                  btnClass = "bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border-emerald-300";
+                } else {
+                  btnClass = "bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-850 opacity-40";
+                }
+              }
+
+              return (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => handleSelectOption(opt)}
+                  disabled={!!selectedOpt}
+                  className={`p-3.5 border rounded-2xl text-xs font-black transition duration-150 text-left flex items-center justify-between min-h-[48px] ${
+                    !selectedOpt ? "hover:border-indigo-400 active:scale-[0.98] cursor-pointer" : ""
+                  } ${btnClass}`}
+                >
+                  <span>{opt}</span>
+                  {selectedOpt && isCorrectOpt && <Check className="w-4 h-4 text-current shrink-0 ml-2" />}
+                  {selectedOpt && isSelected && !isCorrectOpt && <X className="w-4 h-4 text-current shrink-0 ml-2" />}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Step-by-Step Textbook Explanation Block */}
+          {showExplanation && (
+            <div className="space-y-4 pt-1 animate-fadeIn">
+              <div className="p-4 bg-indigo-50/40 dark:bg-indigo-950/15 border border-indigo-100/50 dark:border-indigo-900/30 rounded-2xl text-left space-y-2">
+                <div className="flex items-center space-x-2 text-indigo-700 dark:text-indigo-300">
+                  <CheckCircle2 className="w-4 h-4 shrink-0" />
+                  <span className="font-extrabold text-xs">Textbook Explanation:</span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-semibold font-sans">
+                  {selectedOpt === "__timeout__" && (
+                    <span className="text-rose-500 font-extrabold block mb-1">⏳ Time is Up!</span>
+                  )}
+                  {currentQuestion.explanation}
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleNext}
+                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black rounded-2xl shadow-md transition cursor-pointer flex items-center justify-center space-x-1"
+              >
+                <span>{currentStep >= 9 ? "Finish Challenge" : "Next Question"} →</span>
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* GAME FINISHED SCREEN */}
+      {gameFinished && (
+        <div className="text-center py-6 space-y-6 max-w-sm mx-auto">
+          <div className="w-20 h-20 bg-amber-50 dark:bg-amber-950/20 text-amber-500 rounded-full flex items-center justify-center mx-auto text-4xl shadow-inner border border-amber-100 dark:border-amber-900/30 animate-bounce">
+            🏆
+          </div>
+
+          <div className="space-y-2">
+            <h3 className="text-lg font-black text-slate-800 dark:text-slate-100">Challenge Completed!</h3>
+            <p className="text-xs text-slate-400 font-semibold leading-relaxed">
+              Fantastic work completing the Geometry training arena. Your accuracy stats and points have been saved offline and synchronized to your StudyMate ledger!
+            </p>
+          </div>
+
+          {/* Accuracy Stats Widget */}
+          <div className="grid grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
+            <div>
+              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Accuracy</span>
+              <span className="text-base font-black text-emerald-500 block mt-0.5">
+                {Math.round(((10 - wrongAnswers) / 10) * 100)}%
+              </span>
+            </div>
+            <div>
+              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Total Score</span>
+              <span className="text-base font-black text-amber-500 block mt-0.5">
+                {score} Pts
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={collectRewardsAndExit}
+            className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black rounded-2xl shadow-lg transition active:scale-[0.98] cursor-pointer"
+          >
+            Collect Board Rewards & Exit
+          </button>
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+// Helper: Vector Geometry Diagrams Drawing Engine
+function GeometryDiagram({ shapeType, params }: { shapeType: string; params: any }) {
+  const strokeColor = "rgb(99, 102, 241)"; // Indigo-500
+  const fillColor = "rgba(99, 102, 241, 0.05)";
+  const axisColor = "#94a3b8"; // Slate-400
+  const pointColor = "#f59e0b"; // Amber-500
+
+  switch (shapeType) {
+    case "parallelogram":
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[200px] mx-auto text-indigo-500">
+          <polygon points="40,100 160,100 180,30 60,30" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <line x1="40" y1="100" x2="60" y2="30" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3,3" />
+          <text x="35" y="65" className="text-[10px] fill-amber-500 font-extrabold font-mono">h</text>
+          <text x="100" y="115" className="text-[10px] fill-slate-500 font-extrabold font-mono">base</text>
+        </svg>
+      );
+    case "trapezoid":
+    case "trapezoid_dimensions": {
+      const a = params.a || "a";
+      const b = params.b || "b";
+      const h = params.h || "h";
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[200px] mx-auto text-indigo-500">
+          <polygon points="30,100 170,100 140,30 60,30" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <line x1="60" y1="30" x2="60" y2="100" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3,3" />
+          <rect x="60" y="92" width="8" height="8" fill="none" stroke="#f59e0b" strokeWidth="1" />
+          <text x="45" y="70" className="text-[10px] fill-amber-500 font-extrabold font-mono">h = {h}</text>
+          <text x="100" y="22" className="text-[10px] fill-slate-500 font-extrabold font-mono">a = {a}</text>
+          <text x="100" y="115" className="text-[10px] fill-slate-500 font-extrabold font-mono">b = {b}</text>
+        </svg>
+      );
+    }
+    case "rhombus":
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[200px] mx-auto text-indigo-500">
+          <polygon points="100,10 160,60 100,110 40,60" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <line x1="100" y1="10" x2="100" y2="110" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="2,2" />
+          <line x1="40" y1="60" x2="160" y2="60" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="2,2" />
+          <text x="105" y="45" className="text-[9px] fill-slate-400 font-bold font-mono">d1</text>
+          <text x="120" y="55" className="text-[9px] fill-slate-400 font-bold font-mono">d2</text>
+        </svg>
+      );
+    case "right_triangle":
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[180px] mx-auto text-indigo-500">
+          <polygon points="50,20 50,100 150,100" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <rect x="50" y="90" width="10" height="10" fill="none" stroke={strokeColor} strokeWidth="1.5" />
+          <text x="35" y="65" className="text-[10px] fill-slate-500 font-extrabold font-mono">h</text>
+          <text x="100" y="115" className="text-[10px] fill-slate-500 font-extrabold font-mono">b</text>
+          <text x="105" y="55" className="text-[9px] fill-slate-400 font-bold font-mono">hypotenuse</text>
+        </svg>
+      );
+    case "isosceles_triangle":
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[180px] mx-auto text-indigo-500">
+          <polygon points="100,20 50,100 150,100" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <line x1="71" y1="55" x2="79" y2="61" stroke="#f59e0b" strokeWidth="2" />
+          <line x1="121" y1="61" x2="129" y2="55" stroke="#f59e0b" strokeWidth="2" />
+          <text x="100" y="115" className="text-[10px] fill-slate-500 font-extrabold font-mono">base</text>
+        </svg>
+      );
+    case "cone":
+    case "cone_dimensions": {
+      const r = params.r || "r";
+      const h = params.h || "h";
+      return (
+        <svg viewBox="0 0 200 140" className="w-full max-w-[160px] mx-auto text-indigo-500">
+          <path d="M 50 100 A 50 15 0 1 0 150 100 A 50 15 0 1 0 50 100 Z" fill="none" stroke={strokeColor} strokeWidth="3" />
+          <line x1="50" y1="100" x2="100" y2="20" stroke={strokeColor} strokeWidth="3" strokeLinecap="round" />
+          <line x1="150" y1="100" x2="100" y2="20" stroke={strokeColor} strokeWidth="3" strokeLinecap="round" />
+          <line x1="100" y1="20" x2="100" y2="100" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3,3" />
+          <line x1="100" y1="100" x2="150" y2="100" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3,3" />
+          <text x="112" y="113" className="text-[10px] fill-amber-500 font-extrabold font-mono">r = {r}</text>
+          <text x="80" y="65" className="text-[10px] fill-amber-500 font-extrabold font-mono">h = {h}</text>
+        </svg>
+      );
+    }
+    case "cylinder":
+    case "cylinder_dimensions": {
+      const r = params.r || "r";
+      const h = params.h || "h";
+      return (
+        <svg viewBox="0 0 200 140" className="w-full max-w-[150px] mx-auto text-indigo-500">
+          <path d="M 60 110 A 40 12 0 1 0 140 110 A 40 12 0 1 0 60 110 Z" fill="none" stroke={strokeColor} strokeWidth="3" />
+          <path d="M 60 30 A 40 12 0 1 0 140 30 A 40 12 0 1 0 60 30 Z" fill="none" stroke={strokeColor} strokeWidth="3" />
+          <line x1="60" y1="30" x2="60" y2="110" stroke={strokeColor} strokeWidth="3" />
+          <line x1="140" y1="30" x2="140" y2="110" stroke={strokeColor} strokeWidth="3" />
+          <line x1="100" y1="30" x2="140" y2="30" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3,3" />
+          <text x="110" y="24" className="text-[10px] fill-amber-500 font-extrabold font-mono">r = {r}</text>
+          <text x="148" y="75" className="text-[10px] fill-amber-500 font-extrabold font-mono">h = {h}</text>
+        </svg>
+      );
+    }
+    case "sphere":
+    case "sphere_dimensions": {
+      const r = params.r || "r";
+      return (
+        <svg viewBox="0 0 200 140" className="w-full max-w-[140px] mx-auto text-indigo-500">
+          <circle cx="100" cy="70" r="50" fill={fillColor} stroke={strokeColor} strokeWidth="3" />
+          <path d="M 50 70 A 50 15 0 1 0 150 70 A 50 15 0 1 0 50 70 Z" fill="none" stroke="#94a3b8" strokeWidth="1.5" strokeDasharray="3,3" />
+          <line x1="100" y1="70" x2="150" y2="70" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3,3" />
+          <circle cx="100" cy="70" r="3" fill="#f59e0b" />
+          <text x="115" y="62" className="text-[10px] fill-amber-500 font-extrabold font-mono">r = {r}</text>
+        </svg>
+      );
+    }
+    case "hemisphere":
+      return (
+        <svg viewBox="0 0 200 140" className="w-full max-w-[140px] mx-auto text-indigo-500">
+          <path d="M 50 70 A 50 50 0 0 0 150 70 Z" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" />
+          <path d="M 50 70 A 50 15 0 1 0 150 70 A 50 15 0 1 0 50 70 Z" fill="none" stroke={strokeColor} strokeWidth="3" />
+          <line x1="100" y1="70" x2="150" y2="70" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3,3" />
+          <circle cx="100" cy="70" r="3" fill="#f59e0b" />
+          <text x="115" y="85" className="text-[10px] fill-amber-500 font-extrabold font-mono">r</text>
+        </svg>
+      );
+    case "triangle_angles": {
+      const a = params.a;
+      const b = params.b;
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[180px] mx-auto text-indigo-500">
+          <polygon points="100,20 40,100 160,100" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <text x="92" y="45" className="text-[10px] fill-slate-500 font-extrabold font-mono">A = {a}°</text>
+          <text x="45" y="93" className="text-[10px] fill-slate-500 font-extrabold font-mono">B = {b}°</text>
+          <text x="130" y="93" className="text-[11px] fill-amber-500 font-black font-mono">C = x°</text>
+        </svg>
+      );
+    }
+    case "linear_pair": {
+      const a = params.a;
+      return (
+        <svg viewBox="0 0 200 100" className="w-full max-w-[200px] mx-auto text-indigo-500">
+          <line x1="20" y1="80" x2="180" y2="80" stroke={strokeColor} strokeWidth="3" strokeLinecap="round" />
+          <line x1="100" y1="80" x2="140" y2="30" stroke={strokeColor} strokeWidth="3" strokeLinecap="round" />
+          <path d="M 115 75 A 15 15 0 0 0 100 80" fill="none" stroke="#f59e0b" strokeWidth="2" />
+          <text x="65" y="70" className="text-[10px] fill-slate-500 font-extrabold font-mono">{a}°</text>
+          <text x="115" y="65" className="text-[11px] fill-amber-500 font-black font-mono">x°</text>
+        </svg>
+      );
+    }
+    case "circle_tangent": {
+      const o = params.angleO;
+      return (
+        <svg viewBox="0 0 200 140" className="w-full max-w-[160px] mx-auto text-indigo-500">
+          <circle cx="90" cy="70" r="40" fill={fillColor} stroke={strokeColor} strokeWidth="2.5" />
+          <line x1="90" y1="70" x2="130" y2="70" stroke={strokeColor} strokeWidth="2.5" />
+          <line x1="130" y1="30" x2="130" y2="120" stroke="#f59e0b" strokeWidth="2.5" />
+          <line x1="90" y1="70" x2="130" y2="110" stroke={strokeColor} strokeWidth="2" />
+          <circle cx="90" cy="70" r="3" fill="#f59e0b" />
+          <text x="78" y="75" className="text-[9px] fill-slate-400 font-bold font-mono">O</text>
+          <text x="135" y="75" className="text-[9px] fill-slate-400 font-bold font-mono">P</text>
+          <text x="135" y="115" className="text-[9px] fill-slate-400 font-bold font-mono">T</text>
+          <text x="98" y="85" className="text-[9px] fill-slate-500 font-bold font-mono">{o}°</text>
+          <text x="120" y="105" className="text-[10px] fill-amber-500 font-black font-mono">x°</text>
+          <rect x="122" y="70" width="8" height="8" fill="none" stroke="#f59e0b" strokeWidth="1" />
+        </svg>
+      );
+    }
+    case "parallel_transversal": {
+      const l1 = params.label1;
+      const l2 = params.label2;
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[200px] mx-auto text-indigo-500">
+          <line x1="20" y1="40" x2="180" y2="40" stroke={strokeColor} strokeWidth="3" />
+          <line x1="20" y1="80" x2="180" y2="80" stroke={strokeColor} strokeWidth="3" />
+          <line x1="60" y1="110" x2="140" y2="10" stroke="#f59e0b" strokeWidth="2.5" />
+          <text x="105" y="55" className="text-[10px] fill-indigo-600 font-bold font-mono">({l1})°</text>
+          <text x="65" y="75" className="text-[10px] fill-amber-500 font-extrabold font-mono">({l2})°</text>
+        </svg>
+      );
+    }
+    case "triangle_dimensions": {
+      const b = params.b;
+      const h = params.h;
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[180px] mx-auto text-indigo-500">
+          <polygon points="100,20 40,100 160,100" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <line x1="100" y1="20" x2="100" y2="100" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3,3" />
+          <rect x="100" y="92" width="8" height="8" fill="none" stroke="#f59e0b" strokeWidth="1" />
+          <text x="105" y="60" className="text-[10px] fill-amber-500 font-extrabold font-mono">h = {h}</text>
+          <text x="85" y="115" className="text-[10px] fill-slate-500 font-extrabold font-mono">base = {b}</text>
+        </svg>
+      );
+    }
+    case "rectangle_dimensions": {
+      const l = params.l;
+      const w = params.w;
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[180px] mx-auto text-indigo-500">
+          <rect x="30" y="25" width="140" height="70" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+          <text x="85" y="18" className="text-[10px] fill-slate-500 font-extrabold font-mono">length = {l}</text>
+          <text x="173" y="65" className="text-[10px] fill-slate-500 font-extrabold font-mono">w = {w}</text>
+        </svg>
+      );
+    }
+    case "circle_sector": {
+      const r = params.r;
+      const theta = params.theta;
+      return (
+        <svg viewBox="0 0 200 140" className="w-full max-w-[150px] mx-auto text-indigo-500">
+          <circle cx="100" cy="70" r="50" fill="none" stroke="#e2e8f0" strokeWidth="2" />
+          <path d="M 100 70 L 150 70 A 50 50 0 0 0 125 27 Z" fill={fillColor} stroke={strokeColor} strokeWidth="3" />
+          <text x="110" y="55" className="text-[9px] fill-indigo-600 font-black font-mono">{theta}°</text>
+          <text x="120" y="83" className="text-[10px] fill-amber-500 font-extrabold font-mono">r = {r}</text>
+        </svg>
+      );
+    }
+    case "semicircle_dimensions": {
+      const r = params.r;
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[160px] mx-auto text-indigo-500">
+          <path d="M 50 80 A 50 50 0 0 1 150 80 Z" fill={fillColor} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" />
+          <line x1="50" y1="80" x2="150" y2="80" stroke={strokeColor} strokeWidth="3" />
+          <circle cx="100" cy="80" r="3.5" fill="#f59e0b" />
+          <line x1="100" y1="80" x2="150" y2="80" stroke="#f59e0b" strokeWidth="2" strokeDasharray="3,3" />
+          <text x="115" y="95" className="text-[10px] fill-amber-500 font-extrabold font-mono">r = {r}</text>
+        </svg>
+      );
+    }
+    case "cuboid_dimensions": {
+      const l = params.l;
+      const w = params.w;
+      const h = params.h;
+      return (
+        <svg viewBox="0 0 200 120" className="w-full max-w-[180px] mx-auto text-indigo-500">
+          <rect x="60" y="20" width="100" height="60" fill="none" stroke="#cbd5e1" strokeWidth="2" />
+          <rect x="40" y="40" width="100" height="60" fill={fillColor} stroke={strokeColor} strokeWidth="3" />
+          <line x1="40" y1="40" x2="60" y2="20" stroke={strokeColor} strokeWidth="2.5" />
+          <line x1="140" y1="40" x2="160" y2="20" stroke={strokeColor} strokeWidth="2.5" />
+          <line x1="40" y1="100" x2="60" y2="80" stroke={strokeColor} strokeWidth="2.5" />
+          <line x1="140" y1="100" x2="160" y2="80" stroke={strokeColor} strokeWidth="2.5" />
+          <text x="80" y="115" className="text-[9px] fill-slate-500 font-extrabold font-mono">L = {l}</text>
+          <text x="145" y="75" className="text-[9px] fill-slate-500 font-extrabold font-mono">H = {h}</text>
+          <text x="155" y="32" className="text-[9px] fill-amber-500 font-extrabold font-mono">W = {w}</text>
+        </svg>
+      );
+    }
+    case "cartesian_grid": {
+      const px = params.x;
+      const py = params.y;
+      const scaleX = (val: number) => 100 + val * 8;
+      const scaleY = (val: number) => 70 - val * 6;
+      const svgX = scaleX(px);
+      const svgY = scaleY(py);
+
+      return (
+        <svg viewBox="0 0 200 140" className="w-full max-w-[200px] mx-auto bg-slate-50 dark:bg-slate-950/40 rounded-xl border border-slate-100 dark:border-slate-800">
+          <line x1="10" y1="70" x2="190" y2="70" stroke={axisColor} strokeWidth="2" />
+          <line x1="100" y1="10" x2="100" y2="130" stroke={axisColor} strokeWidth="2" />
+          <line x1="140" y1="67" x2="140" y2="73" stroke={axisColor} strokeWidth="1.5" />
+          <line x1="60" y1="67" x2="60" y2="73" stroke={axisColor} strokeWidth="1.5" />
+          <line x1="97" y1="40" x2="103" y2="40" stroke={axisColor} strokeWidth="1.5" />
+          <line x1="97" y1="100" x2="103" y2="100" stroke={axisColor} strokeWidth="1.5" />
+          <circle cx={svgX} cy={svgY} r="5" fill={pointColor} className="animate-pulse" />
+          <text x={svgX + 8} y={svgY - 4} className="text-[10px] fill-amber-500 font-black font-mono">P({px},{py})</text>
+          <text x="180" y="65" className="text-[8px] fill-slate-400 font-black font-mono">X</text>
+          <text x="105" y="18" className="text-[8px] fill-slate-400 font-black font-mono">Y</text>
+        </svg>
+      );
+    }
+    case "cartesian_segment": {
+      const x1 = params.x1;
+      const y1 = params.y1;
+      const x2 = params.x2;
+      const y2 = params.y2;
+      const scaleX = (val: number) => 100 + val * 8;
+      const scaleY = (val: number) => 70 - val * 6;
+      const sx1 = scaleX(x1);
+      const sy1 = scaleY(y1);
+      const sx2 = scaleX(x2);
+      const sy2 = scaleY(y2);
+
+      return (
+        <svg viewBox="0 0 200 140" className="w-full max-w-[200px] mx-auto bg-slate-50 dark:bg-slate-950/40 rounded-xl border border-slate-100 dark:border-slate-800">
+          <line x1="10" y1="70" x2="190" y2="70" stroke={axisColor} strokeWidth="1.5" />
+          <line x1="100" y1="10" x2="100" y2="130" stroke={axisColor} strokeWidth="1.5" />
+          <line x1={sx1} y1={sy1} x2={sx2} y2={sy2} stroke={strokeColor} strokeWidth="3" strokeLinecap="round" />
+          <circle cx={sx1} cy={sy1} r="4.5" fill={pointColor} />
+          <circle cx={sx2} cy={sy2} r="4.5" fill={pointColor} />
+          <text x={sx1 + 6} y={sy1 - 4} className="text-[8px] fill-slate-500 font-bold font-mono">A({x1},{y1})</text>
+          <text x={sx2 + 6} y={sy2 - 4} className="text-[8px] fill-slate-500 font-bold font-mono">B({x2},{y2})</text>
+        </svg>
+      );
+    }
+    default:
+      return (
+        <div className="w-32 h-32 mx-auto flex items-center justify-center bg-indigo-50/20 rounded-full border border-indigo-100">
+          <span className="text-3xl">📐</span>
+        </div>
+      );
+  }
+}
+
+// Helper: Syllabi / Textbook Dynamic Question Generator (Classes 8-12)
+function generateGeometryQuestion(gradeNum: number, difficulty: DifficultyLevel, index: number, history: string[]): any {
+  const categories: ("shape" | "angle" | "area" | "perimeter" | "volume" | "coordinate")[] = [
+    "shape", "angle", "area", "perimeter", "volume", "coordinate"
+  ];
+  let type = categories[index % categories.length];
+
+  let questionText = "";
+  let options: string[] = [];
+  let correctAnswer = "";
+  let explanation = "";
+  let hint = "";
+  let diagramData: { shapeType: string; params: any } = { shapeType: "none", params: {} };
+
+  if (type === "shape") {
+    if (gradeNum < 10) {
+      const shapes_8_9 = [
+        { name: "Parallelogram", desc: "A quadrilateral with opposite sides parallel.", svg: "parallelogram" },
+        { name: "Trapezoid", desc: "A quadrilateral with exactly one pair of parallel sides.", svg: "trapezoid" },
+        { name: "Rhombus", desc: "A parallelogram with four equal sides.", svg: "rhombus" },
+        { name: "Right-Angled Triangle", desc: "A triangle with one angle of 90 degrees.", svg: "right_triangle" },
+        { name: "Isosceles Triangle", desc: "A triangle with at least two equal sides.", svg: "isosceles_triangle" }
+      ];
+      const item = shapes_8_9[Math.floor(Math.random() * shapes_8_9.length)];
+      questionText = `Identify the 2D shape shown in the diagram. It has: ${item.desc}`;
+      correctAnswer = item.name;
+      options = [item.name, ...shapes_8_9.filter(s => s.name !== item.name).slice(0, 3).map(s => s.name)].sort();
+      explanation = `The given shape is a ${item.name} because it has the following properties: ${item.desc}`;
+      hint = `Look at the parallel lines or equal sides indicated in the drawing.`;
+      diagramData = { shapeType: item.svg, params: {} };
+    } else {
+      const shapes_10_12 = [
+        { name: "Cone", desc: "A 3D solid that tapers smoothly from a flat circular base to an apex.", svg: "cone" },
+        { name: "Cylinder", desc: "A 3D solid with two parallel circular bases of equal size connected by a curved surface.", svg: "cylinder" },
+        { name: "Sphere", desc: "A perfectly round 3D geometrical object that is the surface of a round ball.", svg: "sphere" },
+        { name: "Hemisphere", desc: "Exactly half of a sphere, having a flat circular base and a curved dome.", svg: "hemisphere" }
+      ];
+      const item = shapes_10_12[Math.floor(Math.random() * shapes_10_12.length)];
+      questionText = `Identify the 3D solid geometry shown in the diagram. It has: ${item.desc}`;
+      correctAnswer = item.name;
+      options = [item.name, ...shapes_10_12.filter(s => s.name !== item.name).slice(0, 3).map(s => s.name)].sort();
+      explanation = `The 3D diagram represents a ${item.name}, defined as a ${item.desc.toLowerCase()}`;
+      hint = `This is a 3D solid shape. Notice the elliptical contours representing circular cross-sections.`;
+      diagramData = { shapeType: item.svg, params: { r: 40, h: 80 } };
+    }
+  } else if (type === "angle") {
+    if (gradeNum < 10) {
+      const angleSubtypes = ["triangle_sum", "linear_pair"];
+      const subtype = angleSubtypes[Math.floor(Math.random() * angleSubtypes.length)];
+      if (subtype === "triangle_sum") {
+        const a = Math.floor(Math.random() * 40) + 40;
+        const b = Math.floor(Math.random() * 40) + 40;
+        const c = 180 - a - b;
+        questionText = `In the triangle shown, angle A = ${a}° and angle B = ${b}°. Find the missing angle x (angle C).`;
+        correctAnswer = `${c}°`;
+        options = [`${c}°`, `${c + 15}°`, `${c - 10}°`, `${180 - c}°`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${c + options.length * 12}°`);
+        }
+        explanation = `The sum of interior angles in any triangle is always 180°. Therefore, x = 180° - (${a}° + ${b}°) = 180° - ${a + b}° = ${c}°.`;
+        hint = `Recall the Angle Sum Property of a triangle: A + B + C = 180°.`;
+        diagramData = { shapeType: "triangle_angles", params: { a, b, c } };
+      } else {
+        const a = Math.floor(Math.random() * 80) + 50;
+        const b = 180 - a;
+        questionText = `Find the value of the missing angle x which forms a linear pair on the straight line with the given angle of ${a}°.`;
+        correctAnswer = `${b}°`;
+        options = [`${b}°`, `${b + 20}°`, `${b - 15}°`, `${180 - b + 5}°`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${b + options.length * 10}°`);
+        }
+        explanation = `Angles on a straight line add up to 180° (Linear Pair Theorem). Thus, x = 180° - ${a}° = ${b}°.`;
+        hint = `Straight line angles are supplementary (sum = 180°).`;
+        diagramData = { shapeType: "linear_pair", params: { a, b } };
+      }
+    } else {
+      const angleSubtypes = ["circle_tangent", "parallel_algebra"];
+      const subtype = angleSubtypes[Math.floor(Math.random() * angleSubtypes.length)];
+      if (subtype === "circle_tangent") {
+        const angleO = Math.floor(Math.random() * 30) + 35;
+        const angleP = 90 - angleO;
+        questionText = `In the circle diagram, OP is a radius and PT is a tangent at point P. If angle OPT = 90° and angle POT = ${angleO}°, find angle PTO (x).`;
+        correctAnswer = `${angleP}°`;
+        options = [`${angleP}°`, `${angleP + 10}°`, `${angleP - 10}°`, `${90 - angleP}°`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${angleP + options.length * 5}°`);
+        }
+        explanation = `The radius is perpendicular to the tangent at the point of contact, making angle OPT = 90°. In right triangle OPT, the sum of acute angles is 90°. Hence, angle PTO = 90° - ${angleO}° = ${angleP}°.`;
+        hint = `Radius is perpendicular to the tangent line at the contact point. Use the acute angles of the right triangle.`;
+        diagramData = { shapeType: "circle_tangent", params: { angleO, angleP } };
+      } else {
+        const term1 = "3x + 10";
+        const term2 = "2x + 30";
+        questionText = `Two parallel lines are cut by a transversal. The alternate interior angles are given as (${term1})° and (${term2})°. Solve for x and find the angle value.`;
+        correctAnswer = "x = 20, Angle = 70°";
+        options = ["x = 20, Angle = 70°", "x = 15, Angle = 55°", "x = 25, Angle = 85°", "x = 10, Angle = 40°"];
+        explanation = `Alternate interior angles are equal when lines are parallel. Set up the equation: 3x + 10 = 2x + 30 => 3x - 2x = 30 - 10 => x = 20. Plugging x back in: 3(20) + 10 = 70°.`;
+        hint = `Since the lines are parallel, set the alternate interior angles equal to each other and solve for x.`;
+        diagramData = { shapeType: "parallel_transversal", params: { label1: term1, label2: term2 } };
+      }
+    }
+  } else if (type === "area") {
+    if (gradeNum < 10) {
+      const sub = ["trapezoid", "triangle", "rectangle"][Math.floor(Math.random() * 3)];
+      if (sub === "trapezoid") {
+        const a = Math.floor(Math.random() * 6) + 6;
+        const b = a + Math.floor(Math.random() * 4) + 4;
+        const h = Math.floor(Math.random() * 5) + 4;
+        const area = 0.5 * (a + b) * h;
+        questionText = `Calculate the area of the trapezoid with parallel bases a = ${a} cm, b = ${b} cm and height h = ${h} cm.`;
+        correctAnswer = `${area} cm²`;
+        options = [`${area} cm²`, `${area + 5} cm²`, `${area - 3} cm²`, `${(a + b) * h} cm²`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${area + options.length * 6} cm²`);
+        }
+        explanation = `The formula for the area of a trapezoid is A = 1/2 × (a + b) × h. Plugging in the values: A = 1/2 × (${a} + ${b}) × ${h} = 1/2 × ${a + b} × ${h} = ${area} cm².`;
+        hint = `Area of Trapezoid = 1/2 * (sum of parallel sides) * height.`;
+        diagramData = { shapeType: "trapezoid_dimensions", params: { a, b, h } };
+      } else if (sub === "triangle") {
+        const b = Math.floor(Math.random() * 8) + 8;
+        const h = Math.floor(Math.random() * 6) + 4;
+        const area = 0.5 * b * h;
+        questionText = `Find the area of the triangle with a base of ${b} cm and height of ${h} cm.`;
+        correctAnswer = `${area} cm²`;
+        options = [`${area} cm²`, `${b * h} cm²`, `${area + 4} cm²`, `${area - 2} cm²`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${area + options.length * 4} cm²`);
+        }
+        explanation = `The formula for the area of a triangle is A = 1/2 × base × height. Here, A = 1/2 × ${b} × ${h} = ${area} cm².`;
+        hint = `Area of Triangle = 1/2 * base * perpendicular height.`;
+        diagramData = { shapeType: "triangle_dimensions", params: { b, h } };
+      } else {
+        const l = Math.floor(Math.random() * 8) + 8;
+        const w = Math.floor(Math.random() * 5) + 3;
+        const area = l * w;
+        questionText = `Find the area of the rectangle with length = ${l} cm and width = ${w} cm.`;
+        correctAnswer = `${area} cm²`;
+        options = [`${area} cm²`, `${2 * (l + w)} cm²`, `${area + 10} cm²`, `${area - 6} cm²`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${area + options.length * 5} cm²`);
+        }
+        explanation = `The area of a rectangle is calculated as Area = length × width. Therefore, Area = ${l} × ${w} = ${area} cm².`;
+        hint = `Area of Rectangle = length * width.`;
+        diagramData = { shapeType: "rectangle_dimensions", params: { l, w } };
+      }
+    } else {
+      const sub = ["sector", "cylinder_surface"];
+      const chosen = sub[Math.floor(Math.random() * sub.length)];
+      if (chosen === "sector") {
+        const r = 6;
+        const theta = 60;
+        questionText = `Find the area of the sector of a circle of radius r = ${r} cm with a central angle of ${theta}°. (Take π = 3.14)`;
+        const area = parseFloat(((theta / 360) * 3.14 * r * r).toFixed(2));
+        correctAnswer = `${area} cm²`;
+        options = [`${area} cm²`, `${((theta / 360) * r * r).toFixed(2)} cm²`, `${(3.14 * r * r).toFixed(2)} cm²`, `${(area + 4.5).toFixed(2)} cm²`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${(area + options.length * 3.2).toFixed(2)} cm²`);
+        }
+        explanation = `The area of a sector is given by A = (θ/360) × π × r². Here, A = (${theta}/360) × 3.14 × ${r}² = 1/6 × 3.14 × 36 = 6 × 3.14 = ${area} cm².`;
+        hint = `Area of Sector = (θ / 360) * π * r² where θ is the angle in degrees.`;
+        diagramData = { shapeType: "circle_sector", params: { r, theta } };
+      } else {
+        const r = 7;
+        const h = 10;
+        questionText = `Calculate the curved surface area (CSA) of a solid cylinder having radius r = ${r} cm and height h = ${h} cm. (Take π = 22/7)`;
+        const csa = 2 * (22 / 7) * r * h;
+        correctAnswer = `${csa} cm²`;
+        options = [`${csa} cm²`, `${Math.round((22/7) * r * r * h)} cm²`, `${csa / 2} cm²`, `${csa + 80} cm²`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${csa + options.length * 50} cm²`);
+        }
+        explanation = `Curved Surface Area (CSA) of a cylinder = 2πrh. Plugging in the values: CSA = 2 × (22/7) × ${r} × ${h} = 2 × 22 × ${h} = ${csa} cm².`;
+        hint = `CSA of Cylinder = 2 * π * r * h.`;
+        diagramData = { shapeType: "cylinder_dimensions", params: { r, h } };
+      }
+    }
+  } else if (type === "perimeter") {
+    if (gradeNum < 10) {
+      const sub = Math.random() > 0.5 ? "rectangle" : "circle";
+      if (sub === "rectangle") {
+        const l = Math.floor(Math.random() * 10) + 10;
+        const w = Math.floor(Math.random() * 5) + 4;
+        const perimeter = 2 * (l + w);
+        questionText = `Find the perimeter of the rectangle with length = ${l} cm and width = ${w} cm.`;
+        correctAnswer = `${perimeter} cm`;
+        options = [`${perimeter} cm`, `${l * w} cm`, `${perimeter - 4} cm`, `${l + w} cm`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${perimeter + options.length * 6} cm`);
+        }
+        explanation = `Perimeter of a rectangle is equal to 2 × (length + width). Here, P = 2 × (${l} + ${w}) = 2 × ${l + w} = ${perimeter} cm.`;
+        hint = `Perimeter is the total boundary of the shape: P = 2 * (l + w).`;
+        diagramData = { shapeType: "rectangle_dimensions", params: { l, w } };
+      } else {
+        const r = Math.floor(Math.random() * 5) + 5;
+        const circPi = 2 * r;
+        questionText = `What is the exact circumference of a circle with radius r = ${r} cm? (Express in terms of π)`;
+        correctAnswer = `${circPi}π cm`;
+        options = [`${circPi}π cm`, `${r * r}π cm`, `${r}π cm`, `${2 * circPi}π cm`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${circPi + options.length * 4}π cm`);
+        }
+        explanation = `The circumference of a circle is calculated by the formula C = 2 × π × r. Since r = ${r} cm, C = 2 × π × ${r} = ${circPi}π cm.`;
+        hint = `Circumference formula is C = 2 * π * r. Keep 'π' as a symbol in your answer.`;
+        diagramData = { shapeType: "circle_radius", params: { r } };
+      }
+    } else {
+      const r = 7;
+      questionText = `Calculate the total perimeter of a semicircle with radius r = ${r} cm. (Take π = 22/7)`;
+      const perimeter = (22 / 7) * r + 2 * r;
+      correctAnswer = `${perimeter} cm`;
+      options = [`${perimeter} cm`, `22 cm`, `44 cm`, `29 cm`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+      while (options.length < 4) {
+        options.push(`${perimeter + options.length * 7} cm`);
+      }
+      explanation = `The perimeter of a semicircle includes the curved arc boundary (π × r) plus the straight diameter base (2 × r). Thus, P = πr + 2r = (22/7) × ${r} + 2 × ${r} = 22 + 14 = ${perimeter} cm.`;
+      hint = `Remember that the perimeter includes BOTH the curved arc boundary (π * r) AND the straight diameter (2 * r).`;
+      diagramData = { shapeType: "semicircle_dimensions", params: { r } };
+    }
+  } else if (type === "volume") {
+    if (gradeNum < 10) {
+      const l = Math.floor(Math.random() * 4) + 6;
+      const w = Math.floor(Math.random() * 3) + 3;
+      const h = Math.floor(Math.random() * 3) + 2;
+      const vol = l * w * h;
+      questionText = `Find the volume of a rectangular cuboid with dimensions: length = ${l} cm, width = ${w} cm, and height = ${h} cm.`;
+      correctAnswer = `${vol} cm³`;
+      options = [`${vol} cm³`, `${l * w + h} cm³`, `${2 * (l * w + w * h + h * l)} cm³`, `${vol + 12} cm³`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+      while (options.length < 4) {
+        options.push(`${vol + options.length * 15} cm³`);
+      }
+      explanation = `The volume of a cuboid is given by V = length × width × height. Here, V = ${l} × ${w} × ${h} = ${vol} cm³.`;
+      hint = `Volume of a 3D rectangular box (cuboid) is length * width * height.`;
+      diagramData = { shapeType: "cuboid_dimensions", params: { l, w, h } };
+    } else {
+      const sub = ["cone", "cylinder", "sphere"][Math.floor(Math.random() * 3)];
+      if (sub === "cone") {
+        const r = 3;
+        const h = 7;
+        questionText = `Find the volume of a right circular cone with radius r = ${r} cm and height h = ${h} cm. (Take π = 22/7)`;
+        const vol = Math.round((1 / 3) * (22 / 7) * r * r * h);
+        correctAnswer = `${vol} cm³`;
+        options = [`${vol} cm³`, `${vol * 3} cm³`, `${Math.round(vol * 1.5)} cm³`, `${vol - 12} cm³`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${vol + options.length * 10} cm³`);
+        }
+        explanation = `The volume of a cone is V = 1/3 × π × r² × h. Substituting values: V = 1/3 × (22/7) × ${r}² × ${h} = 1/3 × (22/7) × 9 × 7 = 3 × 22 = ${vol} cm³.`;
+        hint = `Volume of a Cone is exactly 1/3 of the volume of a cylinder: V = 1/3 * π * r² * h.`;
+        diagramData = { shapeType: "cone_dimensions", params: { r, h } };
+      } else if (sub === "cylinder") {
+        const r = 7;
+        const h = 5;
+        questionText = `Find the volume of a cylinder with radius r = ${r} cm and height h = ${h} cm. (Take π = 22/7)`;
+        const vol = (22 / 7) * r * r * h;
+        correctAnswer = `${vol} cm³`;
+        options = [`${vol} cm³`, `${vol / 3} cm³`, `${vol + 110} cm³`, `${vol - 70} cm³`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${vol + options.length * 50} cm³`);
+        }
+        explanation = `Volume of a cylinder is V = π × r² × h. Substituting values: V = (22/7) × ${r}² × ${h} = (22/7) × 49 × ${h} = 22 × 7 × 5 = ${vol} cm³.`;
+        hint = `Volume of Cylinder = base area * height = π * r² * h.`;
+        diagramData = { shapeType: "cylinder_dimensions", params: { r, h } };
+      } else {
+        const r = 3;
+        questionText = `Find the volume of a sphere with radius r = ${r} cm. (Take π = 3.14)`;
+        const vol = parseFloat(((4 / 3) * 3.14 * r * r * r).toFixed(2));
+        correctAnswer = `${vol} cm³`;
+        options = [`${vol} cm³`, `${(4 * 3.14 * r * r).toFixed(2)} cm³`, `${(vol / 2).toFixed(2)} cm³`, `${(vol + 20).toFixed(2)} cm³`].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+        while (options.length < 4) {
+          options.push(`${(vol + options.length * 15.6).toFixed(2)} cm³`);
+        }
+        explanation = `The volume of a sphere is V = 4/3 × π × r³. Plugging in values: V = 4/3 × 3.14 × ${r}³ = 4/3 × 3.14 × 27 = 36 × 3.14 = ${vol} cm³.`;
+        hint = `Volume of Sphere = 4/3 * π * r³.`;
+        diagramData = { shapeType: "sphere_dimensions", params: { r } };
+      }
+    }
+  } else if (type === "coordinate") {
+    if (gradeNum < 10) {
+      const x = (Math.random() > 0.5 ? 1 : -1) * (Math.floor(Math.random() * 8) + 2);
+      const y = (Math.random() > 0.5 ? 1 : -1) * (Math.floor(Math.random() * 8) + 2);
+      let quadrant = "";
+      if (x > 0 && y > 0) quadrant = "Quadrant I (+, +)";
+      else if (x < 0 && y > 0) quadrant = "Quadrant II (-, +)";
+      else if (x < 0 && y < 0) quadrant = "Quadrant III (-, -)";
+      else quadrant = "Quadrant IV (+, -)";
+
+      questionText = `In which quadrant does the coordinate point P(${x}, ${y}) lie?`;
+      correctAnswer = quadrant;
+      options = ["Quadrant I (+, +)", "Quadrant II (-, +)", "Quadrant III (-, -)", "Quadrant IV (+, -)"].sort();
+      explanation = `The coordinates are x = ${x} (${x > 0 ? "positive" : "negative"}) and y = ${y} (${y > 0 ? "positive" : "negative"}). This lies in the ${quadrant.split(" ")[0]} ${quadrant.split(" ")[1]}.`;
+      hint = `Recall the quadrant signs: QI (+,+), QII (-,+), QIII (-,-), QIV (+,-).`;
+      diagramData = { shapeType: "cartesian_grid", params: { x, y } };
+    } else {
+      const points = [
+        { p1: { x: 1, y: 2 }, p2: { x: 4, y: 6 }, dist: "5 units", exp: "√((4-1)² + (6-2)²) = √(3² + 4²) = √(9+16) = √25 = 5" },
+        { p1: { x: -1, y: -1 }, p2: { x: 2, y: 3 }, dist: "5 units", exp: "√((2 - -1)² + (3 - -1)²) = √(3² + 4²) = √25 = 5" },
+        { p1: { x: 0, y: 0 }, p2: { x: 6, y: 8 }, dist: "10 units", exp: "√((6-0)² + (8-0)²) = √(36+64) = √100 = 10" },
+        { p1: { x: 2, y: -3 }, p2: { x: -4, y: 5 }, dist: "10 units", exp: "√((-4-2)² + (5 - -3)²) = √((-6)² + 8²) = √(36+64) = √100 = 10" }
+      ];
+      const item = points[Math.floor(Math.random() * points.length)];
+      questionText = `Find the distance between the two coordinate points A(${item.p1.x}, ${item.p1.y}) and B(${item.p2.x}, ${item.p2.y}) on the Cartesian plane.`;
+      correctAnswer = item.dist;
+      options = [item.dist, "6 units", "8 units", "12 units", "√50 units"].filter((v, i, arr) => arr.indexOf(v) === i).slice(0, 4).sort();
+      while (options.length < 4) {
+        options.push(`${Math.floor(Math.random() * 5) + 3} units`);
+      }
+      explanation = `The distance formula between two points (x1, y1) and (x2, y2) is d = √((x2 - x1)² + (y2 - y1)²). Plugging in the coordinates: d = ${item.exp} = ${item.dist}.`;
+      hint = `Use the standard coordinate distance formula: d = √((x2-x1)² + (y2-y1)²).`;
+      diagramData = { shapeType: "cartesian_segment", params: { x1: item.p1.x, y1: item.p1.y, x2: item.p2.x, y2: item.p2.y } };
+    }
+  }
+
+  return {
+    type,
+    questionText,
+    options,
+    correctAnswer,
+    explanation,
+    hint,
+    diagramData
+  };
+}
+
+// ==========================================
+// GAME 11: PATTERN MEMORY GRID
+// ==========================================
+interface PatternMemoryProps {
+  difficulty: DifficultyLevel;
+  onFinished: (score: number, max: number, accuracy: number) => void;
+  opponentScore?: number;
+  synthSound: (f: number, t?: OscillatorType, d?: number) => void;
+}
+
+function PatternMemoryGame({ difficulty, onFinished, opponentScore, synthSound }: PatternMemoryProps) {
+  const getGridSize = () => {
+    if (difficulty === "easy") return 3; // 3x3
+    if (difficulty === "medium") return 4; // 4x4
+    if (difficulty === "hard") return 5; // 5x5
+    return 6; // expert 6x6
+  };
+
+  const getBasePatternLength = () => {
+    if (difficulty === "easy") return 3;
+    if (difficulty === "medium") return 4;
+    if (difficulty === "hard") return 5;
+    return 6; // expert
+  };
+
+  const gridSize = getGridSize();
+  const totalTiles = gridSize * gridSize;
+
+  const [pattern, setPattern] = useState<number[]>([]);
+  const [playerPattern, setPlayerPattern] = useState<number[]>([]);
+  const [round, setRound] = useState(1);
+  const [lives, setLives] = useState(3);
+  const [score, setScore] = useState(0);
+  const [combo, setCombo] = useState(0);
+  const [maxCombo, setMaxCombo] = useState(0);
+  const [isDisplaying, setIsDisplaying] = useState(false);
+  const [flashingTile, setFlashingTile] = useState<number | null>(null);
+  const [timer, setTimer] = useState(20);
+  const [hasUsedHint, setHasUsedHint] = useState(false);
+  const [gameState, setGameState] = useState<"start" | "ready" | "flashing" | "playing" | "incorrect" | "gameover" | "success">("start");
+  const [correctTaps, setCorrectTaps] = useState(0);
+  const [totalTaps, setTotalTaps] = useState(0);
+
+  // Stats / High score management
+  const [localHigh, setLocalHigh] = useState<number>(0);
+  useEffect(() => {
+    const saved = localStorage.getItem(`studymate_pm_highscore_${difficulty}`);
+    if (saved) setLocalHigh(parseInt(saved));
+  }, [difficulty]);
+
+  // Generate initial pattern
+  const generateNewPattern = (length: number) => {
+    const newPat: number[] = [];
+    for (let i = 0; i < length; i++) {
+      newPat.push(Math.floor(Math.random() * totalTiles));
+    }
+    return newPat;
+  };
+
+  // Start the game
+  const startGame = () => {
+    const startLen = getBasePatternLength();
+    const initPat = generateNewPattern(startLen);
+    setPattern(initPat);
+    setPlayerPattern([]);
+    setRound(1);
+    setLives(3);
+    setScore(0);
+    setCombo(0);
+    setMaxCombo(0);
+    setCorrectTaps(0);
+    setTotalTaps(0);
+    setGameState("ready");
+    synthSound(300, "sine", 0.1);
+  };
+
+  // Trigger flash animation for pattern
+  const playPattern = async (seq: number[]) => {
+    setIsDisplaying(true);
+    setGameState("flashing");
+    setPlayerPattern([]);
+    
+    // speed gets faster with round
+    const flashSpeed = Math.max(160, 600 - (round - 1) * 45);
+    const gapSpeed = flashSpeed / 2;
+
+    for (let i = 0; i < seq.length; i++) {
+      const tileIndex = seq[i];
+      // flash on
+      setFlashingTile(tileIndex);
+      synthSound(400 + (tileIndex % gridSize) * 80 + Math.floor(tileIndex / gridSize) * 40, "sine", flashSpeed / 1000 - 0.05);
+      await new Promise(resolve => setTimeout(resolve, flashSpeed));
+      
+      // flash off
+      setFlashingTile(null);
+      await new Promise(resolve => setTimeout(resolve, gapSpeed));
+    }
+
+    setIsDisplaying(false);
+    setGameState("playing");
+    setTimer(15 + round); // generous timer based on sequence length
+  };
+
+  // Replay pattern hint
+  const handleReplayHint = () => {
+    if (hasUsedHint || isDisplaying || gameState !== "playing") return;
+    setHasUsedHint(true);
+    playPattern(pattern);
+  };
+
+  // Timer Countdown Effect
+  useEffect(() => {
+    if (gameState !== "playing" || isDisplaying) return;
+    
+    const interval = setInterval(() => {
+      setTimer(prev => {
+        if (prev <= 1) {
+          // Time out! Counts as an error
+          handleMistake("timeout");
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [gameState, isDisplaying, pattern, round]);
+
+  const handleMistake = (type: "timeout" | "wrong") => {
+    synthSound(130, "sawtooth", 0.3);
+    setCombo(0);
+    setLives(prev => {
+      const nextLives = prev - 1;
+      if (nextLives <= 0) {
+        // Game Over!
+        setGameState("gameover");
+        const finalAcc = totalTaps > 0 ? Math.round((correctTaps / totalTaps) * 100) : 0;
+        // Save high score if beaten
+        if (score > localHigh) {
+          localStorage.setItem(`studymate_pm_highscore_${difficulty}`, String(score));
+          setLocalHigh(score);
+        }
+        setTimeout(() => {
+          onFinished(score, round, finalAcc);
+        }, 2200);
+      } else {
+        setGameState("incorrect");
+        setTimeout(() => {
+          setGameState("ready");
+        }, 1200);
+      }
+      return nextLives;
+    });
+  };
+
+  // When state is "ready", give player a brief countdown or start button
+  useEffect(() => {
+    if (gameState === "ready") {
+      const timeout = setTimeout(() => {
+        playPattern(pattern);
+      }, 1000);
+      return () => clearTimeout(timeout);
+    }
+  }, [gameState, pattern]);
+
+  const handleTileClick = (index: number) => {
+    if (isDisplaying || gameState !== "playing") return;
+
+    setTotalTaps(prev => prev + 1);
+    const expected = pattern[playerPattern.length];
+
+    if (index === expected) {
+      // Correct click
+      const newPlayerPat = [...playerPattern, index];
+      setPlayerPattern(newPlayerPat);
+      setCorrectTaps(prev => prev + 1);
+      
+      const newCombo = combo + 1;
+      setCombo(newCombo);
+      setMaxCombo(prev => Math.max(prev, newCombo));
+
+      // play note
+      synthSound(500 + playerPattern.length * 60, "sine", 0.08);
+
+      // Check if finished pattern
+      if (newPlayerPat.length === pattern.length) {
+        // Success Round!
+        setGameState("success");
+        const roundPoints = round * 15 + Math.floor(newCombo * 1.5);
+        setScore(prev => prev + roundPoints);
+        
+        synthSound(880, "sine", 0.15);
+        synthSound(1100, "sine", 0.15);
+
+        // Next round prep
+        setTimeout(() => {
+          setRound(r => r + 1);
+          setHasUsedHint(false); // reset hint for new round
+          
+          // add another step to pattern
+          setPattern(prev => [...prev, Math.floor(Math.random() * totalTiles)]);
+          setGameState("ready");
+        }, 1200);
+      }
+    } else {
+      // Mistake
+      handleMistake("wrong");
+    }
+  };
+
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-5 md:p-6 rounded-3xl shadow-sm text-center space-y-5">
+      {gameState === "start" && (
+        <div className="py-8 space-y-4">
+          <div className="w-16 h-16 bg-pink-100 dark:bg-pink-950/40 text-pink-500 rounded-2xl flex items-center justify-center mx-auto text-3xl animate-bounce">
+            🔲
+          </div>
+          <div>
+            <h4 className="text-xl font-black text-slate-800 dark:text-slate-100">Pattern Memory Grid</h4>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+              Watch the grid tiles light up, remember the exact sequence, and tap them in order. Each level adds one more step!
+            </p>
+          </div>
+          
+          <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl max-w-xs mx-auto text-left text-xs space-y-1.5 border border-slate-100 dark:border-slate-800">
+            <div className="flex justify-between">
+              <span className="text-slate-400 font-semibold">DIFFICULTY:</span>
+              <span className="font-black text-pink-500 uppercase">{difficulty}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400 font-semibold">GRID SCALE:</span>
+              <span className="font-bold">{gridSize}x{gridSize} ({totalTiles} tiles)</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-slate-400 font-semibold">HIGH SCORE:</span>
+              <span className="font-bold text-amber-500">{localHigh} Pts</span>
+            </div>
+          </div>
+
+          <button
+            onClick={startGame}
+            className="w-full max-w-xs py-3 px-6 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-black rounded-2xl shadow-md hover:opacity-90 active:scale-98 transition-all cursor-pointer flex items-center justify-center space-x-2"
+          >
+            <Play className="w-5 h-5 fill-current" />
+            <span>START RECALL</span>
+          </button>
+        </div>
+      )}
+
+      {gameState !== "start" && (
+        <div className="space-y-4">
+          {/* Top Status Indicators */}
+          <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl text-xs font-bold text-slate-500 border border-slate-100 dark:border-slate-800/20">
+            <div className="flex flex-col items-center justify-center">
+              <span className="text-[9px] text-slate-400">ROUND</span>
+              <span className="text-sm font-black text-slate-800 dark:text-slate-100">{round}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center border-x border-slate-200 dark:border-slate-800">
+              <span className="text-[9px] text-slate-400">LIVES</span>
+              <span className="text-sm tracking-wider font-semibold text-rose-500">
+                {"❤️".repeat(lives)}{"🖤".repeat(3 - lives)}
+              </span>
+            </div>
+            <div className="flex flex-col items-center justify-center">
+              <span className="text-[9px] text-slate-400">TIME</span>
+              <span className={`text-sm font-black transition-colors ${timer <= 4 ? "text-rose-500 animate-pulse" : "text-amber-500"}`}>
+                {gameState === "playing" ? `${timer}s` : "--"}
+              </span>
+            </div>
+          </div>
+
+          {/* Score & Combo */}
+          <div className="flex justify-between items-center px-2">
+            <div className="text-left">
+              <span className="text-[10px] text-slate-400 font-semibold block uppercase">SCORE</span>
+              <span className="text-lg font-black text-amber-500">{score} <span className="text-xs text-slate-400 font-semibold">Pts</span></span>
+            </div>
+            {combo > 0 && (
+              <motion.div 
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 text-xs font-black py-1 px-3 rounded-full flex items-center space-x-1 border border-purple-200 dark:border-purple-900/30 shadow-sm"
+              >
+                <Zap className="w-3.5 h-3.5 fill-current" />
+                <span>COMBO x{combo}</span>
+              </motion.div>
+            )}
+          </div>
+
+          {/* Main Visual Hint Overlay */}
+          <div className="h-6 flex items-center justify-center text-xs font-extrabold">
+            {gameState === "ready" && <span className="text-indigo-500 animate-pulse">Get ready...</span>}
+            {gameState === "flashing" && <span className="text-purple-600 dark:text-purple-400 animate-pulse flex items-center space-x-1.5"><span>🔮</span> <span>Watch pattern carefully...</span></span>}
+            {gameState === "playing" && <span className="text-emerald-500">Your turn! Repeat the pattern</span>}
+            {gameState === "incorrect" && <span className="text-rose-500 animate-bounce">❌ Oops! Incorrect step</span>}
+            {gameState === "success" && <span className="text-emerald-500 flex items-center space-x-1"><span>✨</span> <span>Excellent! Level Clear!</span></span>}
+            {gameState === "gameover" && <span className="text-rose-600 font-black tracking-widest uppercase">GAME OVER</span>}
+          </div>
+
+          {/* Grid Layout Container */}
+          <div 
+            className="grid mx-auto gap-2 bg-slate-50 dark:bg-slate-950/40 p-3 rounded-3xl border border-slate-100 dark:border-slate-800/40 max-w-[300px]"
+            style={{
+              gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))`
+            }}
+          >
+            {Array.from({ length: totalTiles }).map((_, idx) => {
+              const isFlashing = flashingTile === idx;
+              const isCorrectInput = playerPattern.includes(idx);
+              const isLastPressed = playerPattern[playerPattern.length - 1] === idx;
+
+              return (
+                <button
+                  key={idx}
+                  onClick={() => handleTileClick(idx)}
+                  disabled={gameState !== "playing" || isDisplaying}
+                  className={`
+                    aspect-square rounded-2xl transition-all duration-150 relative overflow-hidden select-none cursor-pointer border
+                    ${isFlashing 
+                      ? "bg-purple-500 border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.7)] scale-95" 
+                      : isCorrectInput && isLastPressed
+                        ? "bg-emerald-400 dark:bg-emerald-500/80 border-emerald-300 shadow-[0_0_10px_rgba(52,211,153,0.5)] scale-95"
+                        : "bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/80 active:scale-95 border-slate-100 dark:border-slate-800"
+                    }
+                  `}
+                  id={`pm-tile-${idx}`}
+                >
+                  <span className="absolute inset-0 flex items-center justify-center text-[10px] font-mono opacity-0 hover:opacity-10 dark:text-slate-400">
+                    {idx + 1}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Utility Action Buttons */}
+          <div className="flex space-x-3 max-w-[300px] mx-auto pt-2">
+            <button
+              onClick={handleReplayHint}
+              disabled={hasUsedHint || gameState !== "playing" || isDisplaying}
+              className={`flex-1 py-2 px-3 rounded-2xl font-bold text-xs flex items-center justify-center space-x-1 border shadow-sm transition-all cursor-pointer
+                ${hasUsedHint || gameState !== "playing" || isDisplaying
+                  ? "bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-400 cursor-not-allowed opacity-50"
+                  : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-purple-600 dark:text-purple-400"
+                }
+              `}
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Replay Hint {hasUsedHint ? "(0/1)" : "(1/1)"}</span>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==========================================
+// GAME 12: SEQUENCE RECALL MASTER
+// ==========================================
+interface SequenceRecallProps {
+  difficulty: DifficultyLevel;
+  onFinished: (score: number, max: number, accuracy: number) => void;
+  opponentScore?: number;
+  synthSound: (f: number, t?: OscillatorType, d?: number) => void;
+}
+
+type SequenceType = "numbers" | "letters" | "colors" | "mixed";
+type SequenceMode = "practice" | "timed" | "endless";
+
+function SequenceRecallGame({ difficulty, onFinished, opponentScore, synthSound }: SequenceRecallProps) {
+  const [seqType, setSeqType] = useState<SequenceType>("numbers");
+  const [seqMode, setSeqMode] = useState<SequenceMode>("endless");
+  const [gameState, setGameState] = useState<"menu" | "showing" | "inputting" | "feedback" | "gameover" | "win">("menu");
+  
+  const [level, setLevel] = useState(1);
+  const [sequence, setSequence] = useState<string[]>([]);
+  const [playerInput, setPlayerInput] = useState<string[]>([]);
+  const [lives, setLives] = useState(3);
+  const [score, setScore] = useState(0);
+  const [streak, setStreak] = useState(0);
+  const [longestStreak, setLongestStreak] = useState(0);
+  const [correctInputs, setCorrectInputs] = useState(0);
+  const [totalInputs, setTotalInputs] = useState(0);
+  const [isDisplaying, setIsDisplaying] = useState(false);
+  const [activeDisplayItem, setActiveDisplayItem] = useState<string | null>(null);
+
+  // Global game timer for Timed Mode, or item timer
+  const [globalTimer, setGlobalTimer] = useState(30);
+
+  // Local storage stats keys
+  const storageBestKey = `studymate_sr_best_${difficulty}`;
+  const storageStreakKey = `studymate_sr_streak_${difficulty}`;
+  const storageSessionKey = `studymate_sr_session_${difficulty}`;
+
+  const [bestLevel, setBestLevel] = useState<number>(() => {
+    return parseInt(localStorage.getItem(storageBestKey) || "1");
+  });
+  const [longestStreakGlobal, setLongestStreakGlobal] = useState<number>(() => {
+    return parseInt(localStorage.getItem(storageStreakKey) || "0");
+  });
+
+  const [hasSavedSession, setHasSavedSession] = useState(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem(storageSessionKey);
+    if (saved) {
+      setHasSavedSession(true);
+    }
+  }, [difficulty]);
+
+  // Color mappings
+  const colorMap: { [key: string]: { name: string; class: string; hex: string } } = {
+    "R": { name: "Red", class: "bg-rose-500 border-rose-400 shadow-rose-300", hex: "#ef4444" },
+    "B": { name: "Blue", class: "bg-blue-500 border-blue-400 shadow-blue-300", hex: "#3b82f6" },
+    "G": { name: "Green", class: "bg-emerald-500 border-emerald-400 shadow-emerald-300", hex: "#10b981" },
+    "Y": { name: "Yellow", class: "bg-amber-400 border-amber-300 shadow-amber-200", hex: "#fbbf24" },
+    "P": { name: "Purple", class: "bg-purple-500 border-purple-400 shadow-purple-300", hex: "#a855f7" },
+    "O": { name: "Orange", class: "bg-orange-500 border-orange-400 shadow-orange-300", hex: "#f97316" }
+  };
+
+  // Letters subset to keep UI extremely mobile clean (12 keys total)
+  const lettersPool = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
+  const numbersPool = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+  // Generate random sequence item
+  const getRandomItem = (type: SequenceType): string => {
+    if (type === "numbers") {
+      return numbersPool[Math.floor(Math.random() * numbersPool.length)];
+    } else if (type === "letters") {
+      return lettersPool[Math.floor(Math.random() * lettersPool.length)];
+    } else if (type === "colors") {
+      const keys = Object.keys(colorMap);
+      return keys[Math.floor(Math.random() * keys.length)];
+    } else {
+      // mixed mode
+      const combined = [...numbersPool, ...lettersPool];
+      return combined[Math.floor(Math.random() * combined.length)];
+    }
+  };
+
+  const saveCurrentSession = (currentLvl: number, currentScore: number) => {
+    const state = {
+      level: currentLvl,
+      score: currentScore,
+      seqType,
+      seqMode,
+      lives
+    };
+    localStorage.setItem(storageSessionKey, JSON.stringify(state));
+    setHasSavedSession(true);
+  };
+
+  const clearSavedSession = () => {
+    localStorage.removeItem(storageSessionKey);
+    setHasSavedSession(false);
+  };
+
+  const resumeLastSession = () => {
+    const saved = localStorage.getItem(storageSessionKey);
+    if (!saved) return;
+    try {
+      const state = JSON.parse(saved);
+      setSeqType(state.seqType);
+      setSeqMode(state.seqMode);
+      setLevel(state.level);
+      setScore(state.score);
+      setLives(state.lives);
+      setStreak(0);
+      setLongestStreak(0);
+      setCorrectInputs(0);
+      setTotalInputs(0);
+      setGameState("showing");
+      clearSavedSession();
+      startLevelSequence(state.level, state.seqType);
+    } catch (e) {
+      clearSavedSession();
+    }
+  };
+
+  const startNewGame = (mode: SequenceMode, type: SequenceType) => {
+    setSeqType(type);
+    setSeqMode(mode);
+    setLevel(1);
+    setScore(0);
+    setStreak(0);
+    setLongestStreak(0);
+    setCorrectInputs(0);
+    setTotalInputs(0);
+    setLives(mode === "practice" ? 999 : 3);
+    setGlobalTimer(30);
+    setGameState("showing");
+    clearSavedSession();
+    startLevelSequence(1, type);
+  };
+
+  const startLevelSequence = async (lvl: number, type: SequenceType) => {
+    setIsDisplaying(true);
+    setPlayerInput([]);
+    
+    // Calculate sequence length based on difficulty and level
+    const baseLength = difficulty === "easy" ? 3 : difficulty === "medium" ? 4 : difficulty === "hard" ? 5 : 6;
+    const length = baseLength + (lvl - 1);
+
+    const generated: string[] = [];
+    for (let i = 0; i < length; i++) {
+      generated.push(getRandomItem(type));
+    }
+    setSequence(generated);
+
+    // Adaptive display duration: gets faster at higher levels
+    const baseDuration = difficulty === "easy" ? 1800 : difficulty === "medium" ? 1400 : difficulty === "hard" ? 1000 : 700;
+    const displayDuration = Math.max(350, baseDuration - (lvl - 1) * 60);
+
+    // Flash items one-by-one to user
+    for (let i = 0; i < generated.length; i++) {
+      const item = generated[i];
+      setActiveDisplayItem(item);
+      
+      // play item sound
+      if (type === "colors") {
+        const toneIndex = Object.keys(colorMap).indexOf(item);
+        synthSound(400 + toneIndex * 60, "sine", displayDuration / 1000 - 0.05);
+      } else {
+        const code = item.charCodeAt(0);
+        synthSound(400 + (code % 15) * 40, "sine", displayDuration / 1000 - 0.05);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, displayDuration));
+      setActiveDisplayItem(null);
+      await new Promise(resolve => setTimeout(resolve, 200)); // gap
+    }
+
+    setIsDisplaying(false);
+    setGameState("inputting");
+  };
+
+  // Timed Mode Global Timer
+  useEffect(() => {
+    if (gameState !== "inputting" && gameState !== "showing") return;
+    if (seqMode !== "timed") return;
+
+    const interval = setInterval(() => {
+      setGlobalTimer(prev => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          handleGameOver();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [gameState, seqMode]);
+
+  const handleInput = (char: string) => {
+    if (isDisplaying || gameState !== "inputting") return;
+
+    setTotalInputs(prev => prev + 1);
+    const expected = sequence[playerInput.length];
+    const isCorrect = char === expected;
+
+    const nextInput = [...playerInput, char];
+    setPlayerInput(nextInput);
+
+    if (isCorrect) {
+      setCorrectInputs(prev => prev + 1);
+      const newStreak = streak + 1;
+      setStreak(newStreak);
+      setLongestStreak(prev => Math.max(prev, newStreak));
+      setLongestStreakGlobal(prev => {
+        const next = Math.max(prev, newStreak);
+        localStorage.setItem(storageStreakKey, String(next));
+        return next;
+      });
+
+      // tone
+      synthSound(500 + playerInput.length * 60, "sine", 0.08);
+
+      // Check if finished sequence
+      if (nextInput.length === sequence.length) {
+        setGameState("feedback");
+        
+        // Success
+        synthSound(880, "sine", 0.15);
+        
+        const levelScore = level * 20 + Math.floor(streak * 2);
+        setScore(prev => prev + levelScore);
+
+        // Update Level & Best level stats
+        const nextLevel = level + 1;
+        setBestLevel(prev => {
+          const nextBest = Math.max(prev, nextLevel);
+          localStorage.setItem(storageBestKey, String(nextBest));
+          return nextBest;
+        });
+
+        // Save progress for resume
+        saveCurrentSession(nextLevel, score + levelScore);
+
+        setTimeout(() => {
+          setLevel(nextLevel);
+          setGameState("showing");
+          startLevelSequence(nextLevel, seqType);
+        }, 1200);
+      }
+    } else {
+      // Incorrect Keystroke
+      synthSound(150, "sawtooth", 0.25);
+      setStreak(0);
+      setGameState("feedback");
+
+      if (seqMode === "endless" || seqMode === "timed") {
+        setLives(prev => {
+          const nextLives = prev - 1;
+          if (nextLives <= 0) {
+            handleGameOver();
+          } else {
+            // Let them retry a fresh sequence at the same level
+            setTimeout(() => {
+              setGameState("showing");
+              startLevelSequence(level, seqType);
+            }, 1505);
+          }
+          return nextLives;
+        });
+      } else {
+        // Practice Mode: Infinite retries
+        setTimeout(() => {
+          setGameState("showing");
+          startLevelSequence(level, seqType);
+        }, 1505);
+      }
+    }
+  };
+
+  const handleGameOver = () => {
+    setGameState("gameover");
+    clearSavedSession();
+    const finalAcc = totalInputs > 0 ? Math.round((correctInputs / totalInputs) * 100) : 100;
+    
+    setTimeout(() => {
+      onFinished(score, level, finalAcc);
+    }, 2200);
+  };
+
+  // Keyboard support! Matches Numbers or letters
+  useEffect(() => {
+    if (gameState !== "inputting") return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toUpperCase();
+      if (seqType === "numbers" && numbersPool.includes(key)) {
+        handleInput(key);
+      } else if (seqType === "letters" && lettersPool.includes(key)) {
+        handleInput(key);
+      } else if (seqType === "mixed" && [...numbersPool, ...lettersPool].includes(key)) {
+        handleInput(key);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [gameState, seqType, playerInput, sequence]);
+
+  return (
+    <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-5 md:p-6 rounded-3xl shadow-sm text-center space-y-5">
+      {gameState === "menu" && (
+        <div className="space-y-4">
+          <div className="w-16 h-16 bg-fuchsia-100 dark:bg-fuchsia-950/40 text-fuchsia-500 rounded-2xl flex items-center justify-center mx-auto text-3xl animate-pulse">
+            🔁
+          </div>
+          <div>
+            <h4 className="text-xl font-black text-slate-800 dark:text-slate-100">Sequence Recall Master</h4>
+            <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+              Remember and repeat numbers, letters, colors, or mixed symbols. The sequence length increases as you level up!
+            </p>
+          </div>
+
+          {/* Options Panels */}
+          <div className="space-y-3 pt-2">
+            <div className="space-y-1.5 text-left">
+              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide">1. Select Sequence Type</span>
+              <div className="grid grid-cols-2 gap-2">
+                {(["numbers", "letters", "colors", "mixed"] as SequenceType[]).map(t => (
+                  <button
+                    key={t}
+                    onClick={() => {
+                      setSeqType(t);
+                      synthSound(400, "sine", 0.05);
+                    }}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold capitalize transition-all cursor-pointer
+                      ${seqType === t 
+                        ? "bg-fuchsia-500 text-white border-fuchsia-400 shadow-sm" 
+                        : "bg-slate-50 dark:bg-slate-800/40 text-slate-600 dark:text-slate-300 border-slate-100 dark:border-slate-800 hover:bg-slate-100/50"
+                      }
+                    `}
+                  >
+                    {t === "colors" ? "🎨 Colors" : t === "numbers" ? "🔢 Numbers" : t === "letters" ? "🔤 Letters" : "🔀 Mixed Mode"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-1.5 text-left">
+              <span className="text-[10px] text-slate-400 font-extrabold uppercase tracking-wide">2. Select Game Mode</span>
+              <div className="grid grid-cols-3 gap-1.5">
+                {(["endless", "timed", "practice"] as SequenceMode[]).map(m => (
+                  <button
+                    key={m}
+                    onClick={() => {
+                      setSeqMode(m);
+                      synthSound(420, "sine", 0.05);
+                    }}
+                    className={`py-1.5 px-2 rounded-xl border text-[10px] font-black capitalize transition-all cursor-pointer
+                      ${seqMode === m 
+                        ? "bg-indigo-600 text-white border-indigo-500 shadow-sm" 
+                        : "bg-slate-50 dark:bg-slate-800/40 text-slate-600 dark:text-slate-300 border-slate-100 dark:border-slate-800 hover:bg-slate-100/50"
+                      }
+                    `}
+                  >
+                    {m === "endless" ? "❤️ Endless" : m === "timed" ? "⏱️ Timed (30s)" : "🧘 Practice"}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Leaderboard stats box */}
+          <div className="bg-slate-50 dark:bg-slate-800/50 p-3 rounded-2xl text-[11px] text-slate-500 space-y-1 border border-slate-100 dark:border-slate-800 flex justify-around text-center">
+            <div>
+              <span className="text-slate-400 block font-semibold">BEST LEVEL</span>
+              <span className="font-black text-slate-800 dark:text-slate-100 text-xs">Level {bestLevel}</span>
+            </div>
+            <div className="border-r border-slate-200 dark:border-slate-800 my-1" />
+            <div>
+              <span className="text-slate-400 block font-semibold">BEST STREAK</span>
+              <span className="font-black text-slate-800 dark:text-slate-100 text-xs">{longestStreakGlobal} Keys</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col space-y-2 pt-2">
+            <button
+              onClick={() => startNewGame(seqMode, seqType)}
+              className="w-full py-3 bg-gradient-to-r from-fuchsia-500 to-indigo-600 text-white font-black rounded-2xl shadow-md hover:opacity-95 active:scale-98 transition-all cursor-pointer flex items-center justify-center space-x-2"
+            >
+              <Play className="w-5 h-5 fill-current" />
+              <span>START NEW SESSION</span>
+            </button>
+
+            {hasSavedSession && (
+              <button
+                onClick={resumeLastSession}
+                className="w-full py-2.5 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-900/40 font-extrabold rounded-2xl hover:bg-emerald-100/50 transition-all cursor-pointer flex items-center justify-center space-x-1.5"
+              >
+                <RefreshCw className="w-4 h-4 animate-spin-slow" />
+                <span>RESUME LAST SESSION (Level {JSON.parse(localStorage.getItem(storageSessionKey) || "{}").level || 1})</span>
+              </button>
+            )}
+          </div>
+
+          {/* Daily Missions */}
+          <div className="text-left bg-indigo-50/40 dark:bg-indigo-950/15 p-3 rounded-2xl border border-indigo-100/50 dark:border-indigo-900/30">
+            <div className="flex items-center space-x-1 text-xs text-indigo-600 dark:text-indigo-400 font-extrabold pb-1.5">
+              <Award className="w-4 h-4" />
+              <span>DAILY MISSIONS</span>
+            </div>
+            <div className="space-y-1.5 text-[10px] text-slate-500">
+              <div className="flex items-center justify-between">
+                <span>• Match 10 colors in Colors mode</span>
+                <span className="font-bold text-emerald-500">{bestLevel >= 3 ? "100% Correct ✅" : "In Progress"}</span>
+              </div>
+              <div className="flex items-center justify-between border-t border-indigo-100/30 dark:border-indigo-900/10 pt-1">
+                <span>• Achieve a 5-step sequence in Timed Mode</span>
+                <span className="font-bold text-indigo-500">{longestStreakGlobal >= 5 ? "Matched! ✅" : "Try Timed mode"}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gameState !== "menu" && (
+        <div className="space-y-4">
+          {/* Top Info Header */}
+          <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl text-xs font-bold text-slate-500 border border-slate-100 dark:border-slate-800/20">
+            <div className="flex flex-col items-center justify-center">
+              <span className="text-[9px] text-slate-400">LEVEL</span>
+              <span className="text-sm font-black text-slate-800 dark:text-slate-100">{level}</span>
+            </div>
+            <div className="flex flex-col items-center justify-center border-x border-slate-200 dark:border-slate-800">
+              <span className="text-[9px] text-slate-400">LIVES</span>
+              <span className="text-sm tracking-wider font-semibold text-rose-500">
+                {seqMode === "practice" ? "🧘 ∞" : `${"❤️".repeat(lives)}${"🖤".repeat(3 - lives)}`}
+              </span>
+            </div>
+            <div className="flex flex-col items-center justify-center">
+              <span className="text-[9px] text-slate-400">
+                {seqMode === "timed" ? "GLOBAL TIMER" : "STREAK"}
+              </span>
+              <span className={`text-sm font-black transition-colors ${seqMode === "timed" && globalTimer <= 6 ? "text-rose-500 animate-pulse" : "text-slate-800 dark:text-slate-200"}`}>
+                {seqMode === "timed" ? `${globalTimer}s` : `🔥 ${streak}`}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex justify-between items-center px-1">
+            <div className="text-left">
+              <span className="text-[10px] text-slate-400 font-semibold block uppercase">SCORE</span>
+              <span className="text-sm font-black text-amber-500">{score} Pts</span>
+            </div>
+            <div className="text-right">
+              <span className="text-[10px] text-slate-400 font-semibold block uppercase">ACCURACY</span>
+              <span className="text-sm font-black text-emerald-500">
+                {totalInputs > 0 ? `${Math.round((correctInputs / totalInputs) * 100)}%` : "100%"}
+              </span>
+            </div>
+          </div>
+
+          {/* Main Display Screen */}
+          <div className="h-28 bg-slate-50 dark:bg-slate-950/40 border border-slate-100 dark:border-slate-800 rounded-3xl flex flex-col items-center justify-center relative p-3">
+            {gameState === "showing" && (
+              <div className="space-y-2">
+                <span className="text-[10px] text-indigo-500 font-extrabold uppercase tracking-widest animate-pulse">MEMORIZE THIS</span>
+                <div className="h-14 flex items-center justify-center">
+                  {activeDisplayItem ? (
+                    seqType === "colors" ? (
+                      <motion.div
+                        initial={{ scale: 0.3, rotate: -20 }}
+                        animate={{ scale: 1, rotate: 0 }}
+                        className={`w-14 h-14 rounded-full border-3 shadow-md flex items-center justify-center ${colorMap[activeDisplayItem]?.class}`}
+                      >
+                        <span className="text-white font-black text-xs">{colorMap[activeDisplayItem]?.name[0]}</span>
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        initial={{ scale: 0.3, y: 15 }}
+                        animate={{ scale: 1, y: 0 }}
+                        className="text-4xl font-black text-indigo-600 dark:text-indigo-400 font-mono tracking-widest"
+                      >
+                        {activeDisplayItem}
+                      </motion.div>
+                    )
+                  ) : (
+                    <span className="text-xs text-slate-400">Loading item...</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {gameState === "inputting" && (
+              <div className="space-y-3 w-full px-4">
+                <span className="text-[9px] text-slate-400 font-extrabold uppercase tracking-widest">REPEAT THE SEQUENCE</span>
+                <div className="flex justify-center items-center gap-1.5 flex-wrap">
+                  {sequence.map((_, idx) => {
+                    const entered = playerInput[idx];
+                    const isActive = playerInput.length === idx;
+                    
+                    return (
+                      <div
+                        key={idx}
+                        className={`w-8 h-8 rounded-xl border flex items-center justify-center text-xs font-black font-mono transition-all
+                          ${isActive 
+                            ? "border-fuchsia-400 bg-fuchsia-50/50 dark:bg-fuchsia-950/20 scale-105 animate-pulse" 
+                            : entered 
+                              ? seqType === "colors" 
+                                ? `${colorMap[entered]?.class} text-white`
+                                : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100"
+                              : "border-slate-200 dark:border-slate-850 bg-slate-100/50 dark:bg-slate-900/30 text-slate-300"
+                          }
+                        `}
+                      >
+                        {entered ? (seqType === "colors" ? colorMap[entered]?.name[0] : entered) : "?"}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {gameState === "feedback" && (
+              <div className="flex flex-col items-center justify-center space-y-2 animate-bounce">
+                {streak > 0 ? (
+                  <>
+                    <span className="text-emerald-500 text-3xl">✨</span>
+                    <span className="text-sm font-black text-emerald-500">CORRECT ANSWER!</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-rose-500 text-3xl">❌</span>
+                    <span className="text-sm font-black text-rose-500">MISTAKE! RETRYING...</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            {gameState === "gameover" && (
+              <div className="flex flex-col items-center justify-center space-y-1">
+                <span className="text-rose-600 text-xl font-black tracking-widest uppercase">GAME OVER</span>
+                <span className="text-[10px] text-slate-400 font-semibold">Final score: {score} Pts • Accuracy: {totalInputs > 0 ? Math.round((correctInputs / totalInputs) * 100) : 100}%</span>
+              </div>
+            )}
+          </div>
+
+          {/* Keypads */}
+          {gameState === "inputting" && (
+            <div className="space-y-2">
+              {seqType === "colors" && (
+                <div className="grid grid-cols-3 gap-2.5 max-w-[240px] mx-auto">
+                  {Object.keys(colorMap).map(k => (
+                    <button
+                      key={k}
+                      onClick={() => handleInput(k)}
+                      className={`h-11 rounded-2xl border-2 flex flex-col items-center justify-center text-[10px] font-black text-white hover:opacity-90 active:scale-95 transition-all cursor-pointer shadow-sm ${colorMap[k]?.class}`}
+                    >
+                      <span className="text-xs uppercase">{colorMap[k]?.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {seqType === "numbers" && (
+                <div className="grid grid-cols-5 gap-1.5 max-w-[280px] mx-auto">
+                  {numbersPool.map(n => (
+                    <button
+                      key={n}
+                      onClick={() => handleInput(n)}
+                      className="h-10 rounded-xl bg-white dark:bg-slate-800 border border-slate-150 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750 font-black text-sm active:scale-95 transition-all cursor-pointer text-slate-800 dark:text-slate-100"
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {seqType === "letters" && (
+                <div className="grid grid-cols-4 gap-1.5 max-w-[280px] mx-auto">
+                  {lettersPool.map(l => (
+                    <button
+                      key={l}
+                      onClick={() => handleInput(l)}
+                      className="h-10 rounded-xl bg-white dark:bg-slate-800 border border-slate-150 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750 font-black text-sm active:scale-95 transition-all cursor-pointer text-slate-800 dark:text-slate-100"
+                    >
+                      {l}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {seqType === "mixed" && (
+                <div className="grid grid-cols-4 gap-1.5 max-w-[280px] mx-auto">
+                  {/* Select 12 items (6 numbers + 6 letters) */}
+                  {["1", "2", "3", "A", "4", "5", "6", "B", "C", "D", "E", "F"].map(item => (
+                    <button
+                      key={item}
+                      onClick={() => handleInput(item)}
+                      className="h-9 rounded-xl bg-white dark:bg-slate-800 border border-slate-150 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-750 font-black text-xs active:scale-95 transition-all cursor-pointer text-slate-800 dark:text-slate-100"
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Reset / Quit button */}
+          <div className="pt-2 flex justify-center">
+            <button
+              onClick={() => setGameState("menu")}
+              className="py-1.5 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-[10px] font-bold text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-all cursor-pointer"
+            >
+              Quit to Menu
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
