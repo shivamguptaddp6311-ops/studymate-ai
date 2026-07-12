@@ -250,10 +250,19 @@ export default function Planner({
   const handleAIScheduleRequest = async () => {
     setLoadingAI(true);
     setSyncStatus("saving");
+
+    const timeoutLimit = Number(localStorage.getItem("studymate_ai_timeout")) || 30000;
+    const controller = new AbortController();
+
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, timeoutLimit);
+
     try {
       const response = await fetch("/api/gemini/suggest-schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({
           name: profile.fullName,
           grade: profile.classGrade,
@@ -262,10 +271,16 @@ export default function Planner({
           preferredTime: profile.preferredStudyTime,
           favSubjects: profile.favoriteSubjects,
           weakSubjects: profile.weakSubjects,
-          provider: localStorage.getItem("studymate_ai_provider") || "auto"
+          provider: localStorage.getItem("studymate_ai_provider") || "auto",
+          timeoutMs: timeoutLimit
         })
       });
 
+      clearTimeout(timeoutId);
+
+      if (response.status === 504) {
+        throw new Error("The AI partner timed out. Please try choosing a faster provider, or increase the timeout limit in Settings.");
+      }
       if (!response.ok) {
         throw new Error("Failed to load suggested schedule.");
       }
@@ -301,8 +316,13 @@ export default function Planner({
         setSyncStatus("synced");
       }
     } catch (err: any) {
+      clearTimeout(timeoutId);
       console.error(err);
-      triggerNotification("AI Suggester Failed", err.message || "Could not retrieve automated recommendations.", "info");
+      if (err.name === "AbortError" || controller.signal.aborted) {
+        triggerNotification("AI Suggester Timeout", "The AI partner took too long to respond. You can increase the timeout limit in Settings.", "info");
+      } else {
+        triggerNotification("AI Suggester Failed", err.message || "Could not retrieve automated recommendations.", "info");
+      }
       setSyncStatus("synced");
     } finally {
       setLoadingAI(false);

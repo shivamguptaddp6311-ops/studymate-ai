@@ -3,6 +3,9 @@ import { getFirestore, Firestore, WriteBatch } from "firebase-admin/firestore";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 // Interfaces from server.ts for strict type safety
 export interface ChatMessage {
@@ -73,6 +76,16 @@ export interface SyncData {
   updatedAt?: string;
 }
 
+export interface AIRequestLog {
+  id: string;
+  provider: string;
+  endpoint: string;
+  responseTimeMs: number;
+  success: boolean;
+  error?: string | null;
+  timestamp: string;
+}
+
 let db: Firestore;
 
 // Gracefully read configuration and initialize Firebase Admin SDK
@@ -118,23 +131,52 @@ export async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 10
 // Database Encryption/Decryption fallback helper for migrating legacy data
 const DB_KEY = process.env.DB_ENCRYPTION_KEY;
 
+if (!DB_KEY || DB_KEY.length < 16) {
+  console.error("CRITICAL CONFIG ERROR: DB_ENCRYPTION_KEY environment variable is missing, empty, or too short (must be at least 16 characters).");
+  process.exit(1);
+}
+
 function decryptData(text: string): string {
-  try {
-    if (!text.includes(":") || !DB_KEY) {
-      return text;
-    }
+  if (!text || typeof text !== "string") {
+    throw new Error("Invalid cipher input");
+  }
+  
+  // Try AES-256-GCM first (starts with "v2:")
+  if (text.startsWith("v2:")) {
     const parts = text.split(":");
-    const iv = Buffer.from(parts[0], "hex");
-    const encryptedText = parts[1];
-    const key = crypto.createHash("sha256").update(DB_KEY).digest();
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-    let decrypted = decipher.update(encryptedText, "hex", "utf8");
+    if (parts.length !== 4) {
+      throw new Error("Malformed AES-256-GCM payload structure.");
+    }
+    const iv = Buffer.from(parts[1], "hex");
+    const authTag = Buffer.from(parts[2], "hex");
+    const ciphertext = parts[3];
+    
+    const key = crypto.createHash("sha256").update(DB_KEY!).digest();
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    
+    let decrypted = decipher.update(ciphertext, "hex", "utf8");
     decrypted += decipher.final("utf8");
     return decrypted;
-  } catch (err) {
-    console.error("[Firebase] Decryption fallback error during migration:", err);
-    return text;
   }
+  
+  // Try AES-256-CBC legacy fallback (contains ':' and has 32-char hex IV)
+  if (text.includes(":")) {
+    const parts = text.split(":");
+    if (parts.length === 2 && parts[0].length === 32) {
+      const iv = Buffer.from(parts[0], "hex");
+      const ciphertext = parts[1];
+      
+      const key = crypto.createHash("sha256").update(DB_KEY!).digest();
+      const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+      
+      let decrypted = decipher.update(ciphertext, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    }
+  }
+  
+  throw new Error("Data format is invalid or not securely encrypted.");
 }
 
 // ----------------------------------------------------
@@ -150,47 +192,31 @@ let fallbackCache: {
   reports: ChatReport[];
   adminLogs: AdminLog[];
   syncData: { [email: string]: SyncData };
+  aiRequestLogs: AIRequestLog[];
 } = {
   users: {},
   messages: [],
   reports: [],
   adminLogs: [],
-  syncData: {}
+  syncData: {},
+  aiRequestLogs: []
 };
 
 // Encrypt/decrypt for fallback database file
 function localEncrypt(text: string): string {
-  try {
-    if (!DB_KEY) return text;
-    const key = crypto.createHash("sha256").update(DB_KEY).digest();
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-    let encrypted = cipher.update(text, "utf8", "hex");
-    encrypted += cipher.final("hex");
-    return iv.toString("hex") + ":" + encrypted;
-  } catch (err) {
-    console.error("[Fallback] Encryption error:", err);
-    return text;
-  }
+  const key = crypto.createHash("sha256").update(DB_KEY!).digest();
+  const iv = crypto.randomBytes(12); // standard 12-byte IV for GCM
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  
+  const authTag = cipher.getAuthTag().toString("hex");
+  return `v2:${iv.toString("hex")}:${authTag}:${encrypted}`;
 }
 
 function localDecrypt(text: string): string {
-  try {
-    if (!text.includes(":") || !DB_KEY) {
-      return text;
-    }
-    const parts = text.split(":");
-    const iv = Buffer.from(parts[0], "hex");
-    const encryptedText = parts[1];
-    const key = crypto.createHash("sha256").update(DB_KEY).digest();
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-    let decrypted = decipher.update(encryptedText, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
-  } catch (err) {
-    console.error("[Fallback] Decryption error during read:", err);
-    return text;
-  }
+  return decryptData(text);
 }
 
 function loadFallbackDB() {
@@ -644,6 +670,46 @@ export const firebaseDB = {
     await this.deleteSyncData(emailNorm);
     await this.deleteMessagesByEmail(emailNorm);
     await this.deleteReportsByEmail(emailNorm);
+  },
+
+  // --- AI METRICS ---
+  async saveAIRequestLog(log: AIRequestLog): Promise<void> {
+    if (!fallbackCache.aiRequestLogs) fallbackCache.aiRequestLogs = [];
+    fallbackCache.aiRequestLogs.push(log);
+    if (fallbackCache.aiRequestLogs.length > 1000) {
+      fallbackCache.aiRequestLogs = fallbackCache.aiRequestLogs.slice(-1000);
+    }
+    saveFallbackDB();
+
+    if (useLocalFallback) return;
+    try {
+      await withRetry(async () => {
+        await db.collection("aiRequestLogs").doc(log.id).set(log);
+      });
+    } catch (err: any) {
+      console.warn(`[Firebase] saveAIRequestLog failed, switching to local DB fallback. Error:`, err.message || err);
+      useLocalFallback = true;
+    }
+  },
+
+  async getAIRequestLogs(): Promise<AIRequestLog[]> {
+    if (useLocalFallback) {
+      return [...(fallbackCache.aiRequestLogs || [])].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    }
+    try {
+      return await withRetry(async () => {
+        const snapshot = await db.collection("aiRequestLogs").orderBy("timestamp", "desc").limit(500).get();
+        const list: AIRequestLog[] = [];
+        snapshot.forEach(doc => {
+          list.push(doc.data() as AIRequestLog);
+        });
+        return list;
+      });
+    } catch (err: any) {
+      console.warn(`[Firebase] getAIRequestLogs failed, switching to local DB fallback. Error:`, err.message || err);
+      useLocalFallback = true;
+      return [...(fallbackCache.aiRequestLogs || [])].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    }
   }
 };
 

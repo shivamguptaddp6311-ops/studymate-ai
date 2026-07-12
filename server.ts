@@ -42,7 +42,7 @@ let dbCache: ChatDB = {
 
 // --- Cryptography Keys and Secrets ---
 const JWT_SECRET = process.env.JWT_SECRET;
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "fallback_secure_refresh_key_studymate_7d_xyz";
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
 const DB_KEY = process.env.DB_ENCRYPTION_KEY;
 
 // Validate environment variables on boot
@@ -61,37 +61,64 @@ if (!DB_KEY || DB_KEY.length < 16) {
 
 // --- Database Encryption at Rest Helpers ---
 function encryptData(text: string): string {
-  try {
-    const key = crypto.createHash("sha256").update(DB_KEY!).digest();
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-    let encrypted = cipher.update(text, "utf8", "hex");
-    encrypted += cipher.final("hex");
-    return iv.toString("hex") + ":" + encrypted;
-  } catch (err) {
-    console.error("[Security] Encryption error:", err);
-    return text;
+  if (!DB_KEY) {
+    throw new Error("DB_ENCRYPTION_KEY environment variable is missing");
   }
+  const key = crypto.createHash("sha256").update(DB_KEY).digest();
+  const iv = crypto.randomBytes(12); // Standard 12-byte IV for GCM
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  
+  let encrypted = cipher.update(text, "utf8", "hex");
+  encrypted += cipher.final("hex");
+  
+  const authTag = cipher.getAuthTag().toString("hex");
+  return `v2:${iv.toString("hex")}:${authTag}:${encrypted}`;
 }
 
 function decryptData(text: string): string {
-  try {
-    if (!text.includes(":")) {
-      // Legacy unencrypted file
-      return text;
-    }
+  if (!DB_KEY) {
+    throw new Error("DB_ENCRYPTION_KEY environment variable is missing");
+  }
+  if (!text || typeof text !== "string") {
+    throw new Error("Invalid cipher input");
+  }
+  
+  // Try AES-256-GCM first (starts with "v2:")
+  if (text.startsWith("v2:")) {
     const parts = text.split(":");
-    const iv = Buffer.from(parts[0], "hex");
-    const encryptedText = parts[1];
-    const key = crypto.createHash("sha256").update(DB_KEY!).digest();
-    const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-    let decrypted = decipher.update(encryptedText, "hex", "utf8");
+    if (parts.length !== 4) {
+      throw new Error("Malformed AES-256-GCM payload structure.");
+    }
+    const iv = Buffer.from(parts[1], "hex");
+    const authTag = Buffer.from(parts[2], "hex");
+    const ciphertext = parts[3];
+    
+    const key = crypto.createHash("sha256").update(DB_KEY).digest();
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    
+    let decrypted = decipher.update(ciphertext, "hex", "utf8");
     decrypted += decipher.final("utf8");
     return decrypted;
-  } catch (err) {
-    console.error("[Security] Decryption error:", err);
-    return text;
   }
+  
+  // Try AES-256-CBC legacy fallback (contains ':' and has 32-char hex IV)
+  if (text.includes(":")) {
+    const parts = text.split(":");
+    if (parts.length === 2 && parts[0].length === 32) {
+      const iv = Buffer.from(parts[0], "hex");
+      const ciphertext = parts[1];
+      
+      const key = crypto.createHash("sha256").update(DB_KEY).digest();
+      const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
+      
+      let decrypted = decipher.update(ciphertext, "hex", "utf8");
+      decrypted += decipher.final("utf8");
+      return decrypted;
+    }
+  }
+  
+  throw new Error("Data format is invalid or not securely encrypted.");
 }
 
 // --- Password Hashing with PBKDF2 ---
@@ -121,24 +148,53 @@ function createRefreshToken(payload: { email: string }): string {
   const exp = Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60); // 7 days long-lived expiry
   const body = Buffer.from(JSON.stringify({ ...payload, exp })).toString("base64url");
   const signatureInput = `${header}.${body}`;
-  const signature = crypto.createHmac("sha256", JWT_REFRESH_SECRET).update(signatureInput).digest("base64url");
+  const signature = crypto.createHmac("sha256", JWT_REFRESH_SECRET!).update(signatureInput).digest("base64url");
   return `${signatureInput}.${signature}`;
 }
 
 function verifyAccessToken(token: string): { email: string; isAdmin: boolean } | null {
   try {
+    if (!token || typeof token !== "string") return null;
     const parts = token.split(".");
     if (parts.length !== 3) return null;
-    const [header, body, signature] = parts;
-    const signatureInput = `${header}.${body}`;
-    const expectedSignature = crypto.createHmac("sha256", JWT_SECRET!).update(signatureInput).digest("base64url");
-    if (signature !== expectedSignature) return null;
     
-    const decodedBody = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-    if (decodedBody.exp && decodedBody.exp < Math.floor(Date.now() / 1000)) {
+    const [headerB64, bodyB64, signatureB64] = parts;
+    
+    // 1. Validate Header
+    const headerStr = Buffer.from(headerB64, "base64url").toString("utf8");
+    const header = JSON.parse(headerStr);
+    if (header.alg !== "HS256" || header.typ !== "JWT") {
+      return null;
+    }
+    
+    // 2. Validate Signature securely using timingSafeEqual
+    const signatureInput = `${headerB64}.${bodyB64}`;
+    const expectedSignatureBuffer = crypto.createHmac("sha256", JWT_SECRET!).update(signatureInput).digest();
+    const receivedSignatureBuffer = Buffer.from(signatureB64, "base64url");
+    
+    if (expectedSignatureBuffer.length !== receivedSignatureBuffer.length) {
+      return null;
+    }
+    if (!crypto.timingSafeEqual(expectedSignatureBuffer, receivedSignatureBuffer)) {
+      return null;
+    }
+    
+    // 3. Validate Body and Expiry
+    const bodyStr = Buffer.from(bodyB64, "base64url").toString("utf8");
+    const body = JSON.parse(bodyStr);
+    
+    if (typeof body.email !== "string" || !body.email || typeof body.exp !== "number") {
+      return null;
+    }
+    
+    if (body.exp < Math.floor(Date.now() / 1000)) {
       return null; // Token has expired
     }
-    return decodedBody;
+    
+    return {
+      email: body.email,
+      isAdmin: !!body.isAdmin
+    };
   } catch (err) {
     return null;
   }
@@ -146,18 +202,46 @@ function verifyAccessToken(token: string): { email: string; isAdmin: boolean } |
 
 function verifyRefreshToken(token: string): { email: string } | null {
   try {
+    if (!token || typeof token !== "string") return null;
     const parts = token.split(".");
     if (parts.length !== 3) return null;
-    const [header, body, signature] = parts;
-    const signatureInput = `${header}.${body}`;
-    const expectedSignature = crypto.createHmac("sha256", JWT_REFRESH_SECRET).update(signatureInput).digest("base64url");
-    if (signature !== expectedSignature) return null;
     
-    const decodedBody = JSON.parse(Buffer.from(body, "base64url").toString("utf8"));
-    if (decodedBody.exp && decodedBody.exp < Math.floor(Date.now() / 1000)) {
+    const [headerB64, bodyB64, signatureB64] = parts;
+    
+    // 1. Validate Header
+    const headerStr = Buffer.from(headerB64, "base64url").toString("utf8");
+    const header = JSON.parse(headerStr);
+    if (header.alg !== "HS256" || header.typ !== "JWT") {
+      return null;
+    }
+    
+    // 2. Validate Signature securely using timingSafeEqual
+    const signatureInput = `${headerB64}.${bodyB64}`;
+    const expectedSignatureBuffer = crypto.createHmac("sha256", JWT_REFRESH_SECRET!).update(signatureInput).digest();
+    const receivedSignatureBuffer = Buffer.from(signatureB64, "base64url");
+    
+    if (expectedSignatureBuffer.length !== receivedSignatureBuffer.length) {
+      return null;
+    }
+    if (!crypto.timingSafeEqual(expectedSignatureBuffer, receivedSignatureBuffer)) {
+      return null;
+    }
+    
+    // 3. Validate Body and Expiry
+    const bodyStr = Buffer.from(bodyB64, "base64url").toString("utf8");
+    const body = JSON.parse(bodyStr);
+    
+    if (typeof body.email !== "string" || !body.email || typeof body.exp !== "number") {
+      return null;
+    }
+    
+    if (body.exp < Math.floor(Date.now() / 1000)) {
       return null; // Token has expired
     }
-    return decodedBody;
+    
+    return {
+      email: body.email
+    };
   } catch (err) {
     return null;
   }
@@ -168,6 +252,7 @@ function verifyToken(token: string): { email: string; isAdmin: boolean } | null 
   return verifyAccessToken(token);
 }
 
+// Backward compatibility delegators
 function createToken(payload: { email: string; isAdmin: boolean }): string {
   return createAccessToken(payload);
 }
@@ -343,6 +428,56 @@ app.get("/api/ai/providers", (req, res) => {
     res.json(providers);
   } catch (err: any) {
     res.status(500).json({ error: "Failed to fetch providers." });
+  }
+});
+
+// Get AI request logs and metrics
+app.get("/api/ai/metrics", async (req, res) => {
+  try {
+    const logs = await firebaseDB.getAIRequestLogs();
+    
+    // Compute stats
+    const total = logs.length;
+    const successes = logs.filter(l => l.success).length;
+    const successRate = total > 0 ? Math.round((successes / total) * 100) : 100;
+    
+    const responseTimes = logs.filter(l => l.success).map(l => l.responseTimeMs);
+    const avgResponseTime = responseTimes.length > 0
+      ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
+      : 0;
+      
+    // Provider breakdowns
+    const providerStats: Record<string, { total: number; success: number; avgTime: number; sumTime: number }> = {};
+    logs.forEach(l => {
+      const p = l.provider || "unknown";
+      if (!providerStats[p]) {
+        providerStats[p] = { total: 0, success: 0, avgTime: 0, sumTime: 0 };
+      }
+      providerStats[p].total++;
+      if (l.success) {
+        providerStats[p].success++;
+        providerStats[p].sumTime += l.responseTimeMs;
+      }
+    });
+    
+    Object.keys(providerStats).forEach(p => {
+      const stat = providerStats[p];
+      const successfulRequests = stat.success;
+      stat.avgTime = successfulRequests > 0 ? Math.round(stat.sumTime / successfulRequests) : 0;
+    });
+
+    res.json({
+      summary: {
+        totalRequests: total,
+        successRate,
+        avgResponseTime
+      },
+      providerStats,
+      recentLogs: logs.slice(0, 100) // Return top 100 recent logs
+    });
+  } catch (err: any) {
+    console.error("Failed to get AI metrics:", err);
+    res.status(500).json({ error: "Failed to retrieve AI performance metrics." });
   }
 });
 
@@ -607,8 +742,13 @@ app.post("/api/auth/delete-account", requireAuth, async (req, res) => {
 
 // 1. AI Solver Route - Multi-modal OCR & Step-by-Step Question Solver
 app.post("/api/gemini/solve", requireAuth, async (req, res) => {
+  const controller = new AbortController();
+  req.on("close", () => {
+    controller.abort();
+  });
+
   try {
-    const { prompt, image, subject, grade, favSubjects, weakSubjects, explainBriefly, provider = "auto" } = req.body;
+    const { prompt, image, subject, grade, favSubjects, weakSubjects, explainBriefly, provider = "auto", timeoutMs } = req.body;
 
     // Prepare core prompt instructions
     const systemInstruction = `You are StudyMate AI, an advanced expert academic tutor and general-knowledge companion, as powerful and unrestricted as Gemini or ChatGPT.
@@ -692,7 +832,9 @@ JSON schema to match:
       systemInstruction,
       image,
       preferredProvider: provider as AIProvider,
-      responseSchema
+      responseSchema,
+      timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+      signal: controller.signal
     });
 
     const responseText = response.text;
@@ -703,6 +845,14 @@ JSON schema to match:
     const parsedResult = parseJsonResponse(responseText);
     res.json(parsedResult);
   } catch (error: any) {
+    if (error.message?.includes("timed out")) {
+      console.warn("AI solver timeout:", error.message);
+      return res.status(504).json({ error: error.message });
+    }
+    if (error.message?.includes("cancelled") || controller.signal.aborted) {
+      console.warn("AI solver request cancelled by user.");
+      return res.status(499).json({ error: "Request was cancelled." });
+    }
     console.error("AI solver error:", error);
     res.status(500).json({ error: "Failed to solve the question. Please try again." });
   }
@@ -710,8 +860,13 @@ JSON schema to match:
 
 // 2. Interactive Tutor Chat - Follow-up and conversation
 app.post("/api/gemini/chat", requireAuth, async (req, res) => {
+  const controller = new AbortController();
+  req.on("close", () => {
+    controller.abort();
+  });
+
   try {
-    const { message, history, image, provider = "auto" } = req.body;
+    const { message, history, image, provider = "auto", timeoutMs } = req.body;
 
     // Reconstruct conversation history to clean AIMessage format
     // history format: Array<{ role: 'user' | 'model', message: string }>
@@ -792,11 +947,21 @@ Response Style:
       messages,
       systemInstruction,
       image,
-      preferredProvider: provider as AIProvider
+      preferredProvider: provider as AIProvider,
+      timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+      signal: controller.signal
     });
 
     res.json({ reply: response.text });
   } catch (error: any) {
+    if (error.message?.includes("timed out")) {
+      console.warn("AI chat timeout:", error.message);
+      return res.status(504).json({ error: error.message });
+    }
+    if (error.message?.includes("cancelled") || controller.signal.aborted) {
+      console.warn("AI chat request cancelled by user.");
+      return res.status(499).json({ error: "Request was cancelled." });
+    }
     console.error("AI chat error:", error);
     res.status(500).json({ error: "Failed to chat with AI Assistant." });
   }
@@ -804,8 +969,13 @@ Response Style:
 
 // 2.5. Dynamic CBSE Chapter Material Generator (Textbook details on-demand)
 app.post("/api/gemini/generate-chapter-materials", requireAuth, async (req, res) => {
+  const controller = new AbortController();
+  req.on("close", () => {
+    controller.abort();
+  });
+
   try {
-    const { grade, subject, chapterNumber, chapterTitle, provider = "auto" } = req.body;
+    const { grade, subject, chapterNumber, chapterTitle, provider = "auto", timeoutMs } = req.body;
 
     const prompt = `You are StudyMate AI, the ultimate expert academic tutor for the CBSE/NCERT curriculum.
 Generate highly detailed, comprehensive study materials for:
@@ -871,11 +1041,21 @@ Respond strictly in JSON format matching this schema:
     const response = await executeAIRequest({
       messages: [{ role: "user", content: prompt }],
       preferredProvider: provider as AIProvider,
-      responseSchema
+      responseSchema,
+      timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+      signal: controller.signal
     });
 
     res.json(parseJsonResponse(response.text || "{}"));
   } catch (error: any) {
+    if (error.message?.includes("timed out")) {
+      console.warn("AI materials timeout:", error.message);
+      return res.status(504).json({ error: error.message });
+    }
+    if (error.message?.includes("cancelled") || controller.signal.aborted) {
+      console.warn("AI materials request cancelled by user.");
+      return res.status(499).json({ error: "Request was cancelled." });
+    }
     console.error("AI material generator error:", error);
     res.status(500).json({ error: "Failed to generate study materials." });
   }
@@ -883,8 +1063,13 @@ Respond strictly in JSON format matching this schema:
 
 // 3. AI Study Planner Generator
 app.post("/api/gemini/suggest-schedule", requireAuth, async (req, res) => {
+  const controller = new AbortController();
+  req.on("close", () => {
+    controller.abort();
+  });
+
   try {
-    const { name, grade, targetExam, dailyGoalHours, preferredTime, favSubjects, weakSubjects, provider = "auto" } = req.body;
+    const { name, grade, targetExam, dailyGoalHours, preferredTime, favSubjects, weakSubjects, provider = "auto", timeoutMs } = req.body;
 
     const prompt = `Generate a highly personalized study planner and timetable for a student named ${name}.
 Details:
@@ -957,11 +1142,21 @@ The response should be JSON structured strictly like this:
     const response = await executeAIRequest({
       messages: [{ role: "user", content: prompt }],
       preferredProvider: provider as AIProvider,
-      responseSchema
+      responseSchema,
+      timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+      signal: controller.signal
     });
 
     res.json(parseJsonResponse(response.text || "{}"));
   } catch (error: any) {
+    if (error.message?.includes("timed out")) {
+      console.warn("AI schedule timeout:", error.message);
+      return res.status(504).json({ error: error.message });
+    }
+    if (error.message?.includes("cancelled") || controller.signal.aborted) {
+      console.warn("AI schedule request cancelled by user.");
+      return res.status(499).json({ error: "Request was cancelled." });
+    }
     console.error("AI schedule error:", error);
     res.status(500).json({ error: "Failed to generate study plan." });
   }

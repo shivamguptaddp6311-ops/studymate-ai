@@ -85,6 +85,17 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   // Scanned Solved Question State
   const [scannedSolution, setScannedSolution] = useState<any | null>(null);
 
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleCancelRequest = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsLoading(false);
+      setErrorMessage("Request cancelled successfully by user.");
+    }
+  };
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -486,9 +497,23 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   };
 
   const solveScannedQuestion = async (base64Image: string) => {
+    if (isLoading) {
+      console.warn("Duplicate solver request blocked.");
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
     setScannedSolution(null);
+
+    const timeoutLimit = Number(localStorage.getItem("studymate_ai_timeout")) || 30000;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, timeoutLimit);
+
     try {
       let token = localStorage.getItem("studymate_token") || "";
       let res = await fetch("/api/gemini/solve", {
@@ -497,13 +522,15 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
+        signal: controller.signal,
         body: JSON.stringify({
           image: base64Image,
           grade: profile.classGrade,
           favSubjects: profile.favoriteSubjects,
           weakSubjects: profile.weakSubjects,
           explainBriefly: true,
-          provider: localStorage.getItem("studymate_ai_provider") || "auto"
+          provider: localStorage.getItem("studymate_ai_provider") || "auto",
+          timeoutMs: timeoutLimit
         })
       });
 
@@ -515,6 +542,7 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
             const reauthRes = await fetch("/api/auth/login", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
+              signal: controller.signal,
               body: JSON.stringify({ email, password: "Shivam@6312" })
             });
             if (reauthRes.ok) {
@@ -527,13 +555,15 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
                   "Content-Type": "application/json",
                   "Authorization": `Bearer ${token}`
                 },
+                signal: controller.signal,
                 body: JSON.stringify({
                   image: base64Image,
                   grade: profile.classGrade,
                   favSubjects: profile.favoriteSubjects,
                   weakSubjects: profile.weakSubjects,
                   explainBriefly: true,
-                  provider: localStorage.getItem("studymate_ai_provider") || "auto"
+                  provider: localStorage.getItem("studymate_ai_provider") || "auto",
+                  timeoutMs: timeoutLimit
                 })
               });
             }
@@ -543,7 +573,18 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
         }
       }
 
-      if (!res.ok) throw new Error("Failed to contact the StudyMate AI solver. Please check your connection.");
+      clearTimeout(timeoutId);
+
+      if (res.status === 504) {
+        throw new Error("The AI partner timed out. Please try choosing a different provider, or increase the timeout limit in Settings.");
+      }
+      if (res.status === 499) {
+        throw new Error("Request cancelled.");
+      }
+      if (!res.ok) {
+        throw new Error("Failed to contact the StudyMate AI solver. Please check your connection.");
+      }
+
       const data = await res.json();
       if (data.error) throw new Error(data.error);
 
@@ -574,10 +615,20 @@ ${data.conceptualExplanation || ""}`;
       }
 
     } catch (err: any) {
+      clearTimeout(timeoutId);
       console.error(err);
-      setErrorMessage(err.message || "Failed to process question scan. Please upload standard files or type in plain text.");
+      if (err.name === "AbortError" || controller.signal.aborted) {
+        if (abortControllerRef.current === null) {
+          setErrorMessage("Scan-to-solve request was cancelled successfully.");
+        } else {
+          setErrorMessage("The AI partner took too long to respond. The request has been timed out. Feel free to increase the limit in Settings.");
+        }
+      } else {
+        setErrorMessage(err.message || "Failed to process question scan. Please upload standard files or type in plain text.");
+      }
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -613,6 +664,11 @@ ${data.conceptualExplanation || ""}`;
   const handleSend = async (e?: React.FormEvent, customText?: string) => {
     if (e) e.preventDefault();
     
+    if (isLoading) {
+      console.warn("Duplicate chat request blocked.");
+      return;
+    }
+
     const textToSend = customText !== undefined ? customText : inputText;
     if (!textToSend.trim() && !selectedImage) return;
 
@@ -631,6 +687,14 @@ ${data.conceptualExplanation || ""}`;
     setSelectedImage(null);
     setIsLoading(true);
     setErrorMessage(null);
+
+    const timeoutLimit = Number(localStorage.getItem("studymate_ai_timeout")) || 30000;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, timeoutLimit);
 
     try {
       // Structure chat history to format matching Gemini request:
@@ -657,11 +721,13 @@ ${data.conceptualExplanation || ""}`;
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
+        signal: controller.signal,
         body: JSON.stringify({
           message: finalPrompt,
           history: recentHistory,
           image: userMessage.image || undefined,
-          provider: localStorage.getItem("studymate_ai_provider") || "auto"
+          provider: localStorage.getItem("studymate_ai_provider") || "auto",
+          timeoutMs: timeoutLimit
         })
       });
 
@@ -673,6 +739,7 @@ ${data.conceptualExplanation || ""}`;
             const reauthRes = await fetch("/api/auth/login", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
+              signal: controller.signal,
               body: JSON.stringify({ email, password: "Shivam@6312" })
             });
             if (reauthRes.ok) {
@@ -685,11 +752,13 @@ ${data.conceptualExplanation || ""}`;
                   "Content-Type": "application/json",
                   "Authorization": `Bearer ${token}`
                 },
+                signal: controller.signal,
                 body: JSON.stringify({
                   message: finalPrompt,
                   history: recentHistory,
                   image: userMessage.image || undefined,
-                  provider: localStorage.getItem("studymate_ai_provider") || "auto"
+                  provider: localStorage.getItem("studymate_ai_provider") || "auto",
+                  timeoutMs: timeoutLimit
                 })
               });
             }
@@ -699,6 +768,14 @@ ${data.conceptualExplanation || ""}`;
         }
       }
 
+      clearTimeout(timeoutId);
+
+      if (response.status === 504) {
+        throw new Error("The AI partner timed out. Please try choosing a faster provider, or increase the timeout limit in Settings.");
+      }
+      if (response.status === 499) {
+        throw new Error("Request cancelled.");
+      }
       if (!response.ok) {
         throw new Error(`Server returned status ${response.status}`);
       }
@@ -724,10 +801,20 @@ ${data.conceptualExplanation || ""}`;
       }
 
     } catch (err: any) {
+      clearTimeout(timeoutId);
       console.error("StudyMate AI API error:", err);
-      setErrorMessage(err.message || "Failed to communicate with StudyMate AI. Please check your server or API key.");
+      if (err.name === "AbortError" || controller.signal.aborted) {
+        if (abortControllerRef.current === null) {
+          setErrorMessage("Chat request was cancelled successfully.");
+        } else {
+          setErrorMessage("The AI partner took too long to respond. The request has been timed out. Feel free to increase the limit in Settings.");
+        }
+      } else {
+        setErrorMessage(err.message || "Failed to communicate with StudyMate AI. Please check your server or API key.");
+      }
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
 
@@ -913,13 +1000,23 @@ ${data.conceptualExplanation || ""}`;
 
         {/* Loading Spinner / Assistant Typing Dots */}
         {isLoading && (
-          <div className="flex flex-col items-start animate-pulse">
-            <span className="text-[9px] font-bold text-slate-400 mb-1 px-1">StudyMate AI is typing...</span>
-            <div className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-100 dark:border-slate-800/60 rounded-3xl rounded-tl-none p-4 shadow-sm flex items-center space-x-2">
-              <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
-              <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>
-              <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
+          <div className="flex flex-col items-start space-y-2">
+            <div className="animate-pulse">
+              <span className="text-[9px] font-bold text-slate-400 mb-1 px-1">StudyMate AI is thinking...</span>
+              <div className="bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-100 dark:border-slate-800/60 rounded-3xl rounded-tl-none p-4 shadow-sm flex items-center space-x-2">
+                <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: "0ms" }}></div>
+                <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: "150ms" }}></div>
+                <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce" style={{ animationDelay: "300ms" }}></div>
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={handleCancelRequest}
+              className="px-3 py-1 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/20 dark:hover:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200/40 dark:border-rose-900/40 text-[10px] font-black rounded-xl cursor-pointer transition flex items-center space-x-1"
+            >
+              <X className="w-3 h-3" />
+              <span>Cancel AI Request</span>
+            </button>
           </div>
         )}
 

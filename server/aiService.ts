@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import crypto from "crypto";
+import { firebaseDB } from "./firebase";
 
 dotenv.config();
 
@@ -87,35 +88,83 @@ function convertMessagesToAnthropicFormat(messages: AIMessage[]) {
   return formatted;
 }
 
-// Timeout promise wrapper
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+const DEFAULT_TIMEOUT_MS = Number(process.env.AI_REQUEST_TIMEOUT_MS) || 30000;
+
+// Upgraded Timeout & AbortSignal promise wrapper
+function withTimeoutAndSignal<T>(
+  promiseFactory: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  errorMessage: string,
+  externalSignal?: AbortSignal
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(errorMessage)), timeoutMs);
-    promise
+    const controller = new AbortController();
+    const signal = controller.signal;
+
+    // Fast-path abort
+    if (externalSignal?.aborted) {
+      return reject(new Error("Request was cancelled by user."));
+    }
+
+    const onExternalAbort = () => {
+      controller.abort();
+      clearTimeout(timer);
+      reject(new Error("Request was cancelled by user."));
+    };
+
+    if (externalSignal) {
+      externalSignal.addEventListener("abort", onExternalAbort);
+    }
+
+    const timer = setTimeout(() => {
+      controller.abort();
+      if (externalSignal) {
+        externalSignal.removeEventListener("abort", onExternalAbort);
+      }
+      reject(new Error(errorMessage));
+    }, timeoutMs);
+
+    promiseFactory(signal)
       .then(res => {
         clearTimeout(timer);
+        if (externalSignal) {
+          externalSignal.removeEventListener("abort", onExternalAbort);
+        }
         resolve(res);
       })
       .catch(err => {
         clearTimeout(timer);
+        if (externalSignal) {
+          externalSignal.removeEventListener("abort", onExternalAbort);
+        }
         reject(err);
       });
   });
 }
 
-// Exponential backoff retry utility
+// Exponential backoff retry utility respecting AbortSignal
 async function retryWithBackoff<T>(
   operation: () => Promise<T>,
   retries = 3,
   delay = 1000,
-  onRetry?: (error: any, attempt: number) => void
+  onRetry?: (error: any, attempt: number) => void,
+  externalSignal?: AbortSignal
 ): Promise<T> {
   let lastError: any;
   for (let attempt = 1; attempt <= retries; attempt++) {
+    if (externalSignal?.aborted) {
+      throw new Error("Request was cancelled by user.");
+    }
     try {
       return await operation();
     } catch (error: any) {
       lastError = error;
+      
+      // If aborted, do not retry
+      if (error?.name === "AbortError" || error?.message?.includes("cancelled") || externalSignal?.aborted) {
+        throw error;
+      }
+
       const is429 =
         error?.status === 429 ||
         error?.message?.includes("429") ||
@@ -129,7 +178,25 @@ async function retryWithBackoff<T>(
       }
       if (onRetry) onRetry(error, attempt);
       const actualDelay = is429 ? delay * 3 * attempt : delay * attempt;
-      await new Promise(resolve => setTimeout(resolve, actualDelay));
+      
+      // Sleep while checking for external signal abort
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          if (externalSignal) {
+            externalSignal.removeEventListener("abort", onAbortDuringSleep);
+          }
+          resolve();
+        }, actualDelay);
+
+        function onAbortDuringSleep() {
+          clearTimeout(timeout);
+          reject(new Error("Request was cancelled by user."));
+        }
+
+        if (externalSignal) {
+          externalSignal.addEventListener("abort", onAbortDuringSleep, { once: true });
+        }
+      });
     }
   }
   throw lastError;
@@ -171,8 +238,10 @@ export async function executeAIRequest(options: {
   preferredProvider?: AIProvider;
   responseSchema?: any; // optional Gemini-specific schema
   temperature?: number;
+  timeoutMs?: number; // Configurable timeout limit
+  signal?: AbortSignal; // Allow external AbortSignal to cancel
 }): Promise<AIResponse> {
-  const { messages, systemInstruction, image, preferredProvider = "auto", responseSchema } = options;
+  const { messages, systemInstruction, image, preferredProvider = "auto", responseSchema, timeoutMs, signal } = options;
 
   // Create unique cache key for lookup
   const cacheKeyInput = JSON.stringify({
@@ -228,62 +297,99 @@ export async function executeAIRequest(options: {
   const isPdf = !!image && (image.startsWith("data:application/pdf") || image.includes("pdf"));
 
   let lastError: any = null;
+  let success = false;
+  let finalResult: AIResponse | null = null;
+  const startTime = Date.now();
+  let providerUsed: AIProvider = preferredProvider;
 
-  for (const provider of providersToTry) {
-    try {
-      // Validate support for document/PDF format
-      if (isPdf && ["openai", "groq", "anthropic"].includes(provider)) {
-        console.warn(`[AIService] Skipping provider ${provider} because PDF document input is only natively supported by Gemini/OpenRouter.`);
-        continue;
+  try {
+    for (const provider of providersToTry) {
+      if (signal?.aborted) {
+        throw new Error("Request was cancelled by user.");
       }
+      try {
+        // Validate support for document/PDF format
+        if (isPdf && ["openai", "groq", "anthropic"].includes(provider)) {
+          console.warn(`[AIService] Skipping provider ${provider} because PDF document input is only natively supported by Gemini/OpenRouter.`);
+          continue;
+        }
 
-      console.log(`[AIService] Attempting request using provider: ${provider}`);
-      let resultText = "";
+        console.log(`[AIService] Attempting request using provider: ${provider}`);
+        let resultText = "";
+        providerUsed = provider;
 
-      // Append active provider context
-      let activeSystemInstruction = systemInstruction || "";
-      const providerContext = `\n\n[Active AI Engine Context: You are currently running on the "${provider}" provider backend. If the user asks which AI provider, model, engine, or backend you are currently using, you MUST truthfully tell them that you are currently using ${provider}.]`;
-      if (activeSystemInstruction) {
-        activeSystemInstruction += providerContext;
-      } else {
-        activeSystemInstruction = providerContext;
+        // Append active provider context
+        let activeSystemInstruction = systemInstruction || "";
+        const providerContext = `\n\n[Active AI Engine Context: You are currently running on the "${provider}" provider backend. If the user asks which AI provider, model, engine, or backend you are currently using, you MUST truthfully tell them that you are currently using ${provider}.]`;
+        if (activeSystemInstruction) {
+          activeSystemInstruction += providerContext;
+        } else {
+          activeSystemInstruction = providerContext;
+        }
+
+        if (provider === "gemini") {
+          resultText = await callGemini(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+        } else if (provider === "openai") {
+          resultText = await callOpenAI(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+        } else if (provider === "groq") {
+          resultText = await callGroq(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+        } else if (provider === "openrouter") {
+          resultText = await callOpenRouter(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+        } else if (provider === "anthropic") {
+          resultText = await callAnthropic(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+        }
+
+        if (!resultText || resultText.trim() === "") {
+          throw new Error(`Provider ${provider} returned an empty or invalid response.`);
+        }
+
+        console.log(`[AIService] Successfully received response from provider: ${provider}`);
+        
+        // Save in cache
+        responseCache.set(cacheKey, {
+          text: resultText,
+          providerUsed: provider,
+          timestamp: Date.now()
+        });
+        
+        success = true;
+        finalResult = {
+          text: resultText,
+          providerUsed: provider
+        };
+        break;
+      } catch (err: any) {
+        console.warn(`[AIService] Provider ${provider} failed:`, err.message || err);
+        lastError = err;
+        
+        // Propagate immediate aborts
+        if (err?.name === "AbortError" || err?.message?.includes("cancelled") || signal?.aborted) {
+          throw err;
+        }
       }
-
-      if (provider === "gemini") {
-        resultText = await callGemini(messages, activeSystemInstruction, image, responseSchema);
-      } else if (provider === "openai") {
-        resultText = await callOpenAI(messages, activeSystemInstruction, image, responseSchema);
-      } else if (provider === "groq") {
-        resultText = await callGroq(messages, activeSystemInstruction, image, responseSchema);
-      } else if (provider === "openrouter") {
-        resultText = await callOpenRouter(messages, activeSystemInstruction, image, responseSchema);
-      } else if (provider === "anthropic") {
-        resultText = await callAnthropic(messages, activeSystemInstruction, image, responseSchema);
-      }
-
-      if (!resultText || resultText.trim() === "") {
-        throw new Error(`Provider ${provider} returned an empty or invalid response.`);
-      }
-
-      console.log(`[AIService] Successfully received response from provider: ${provider}`);
-      
-      // Save in cache
-      responseCache.set(cacheKey, {
-        text: resultText,
-        providerUsed: provider,
-        timestamp: Date.now()
-      });
-      return {
-        text: resultText,
-        providerUsed: provider
-      };
-    } catch (err: any) {
-      console.warn(`[AIService] Provider ${provider} failed:`, err.message || err);
-      lastError = err;
     }
-  }
 
-  throw new Error(`All configured AI Providers failed. Last error: ${lastError?.message || lastError}`);
+    if (finalResult) {
+      return finalResult;
+    }
+    throw new Error(`All configured AI Providers failed. Last error: ${lastError?.message || lastError}`);
+  } catch (err: any) {
+    lastError = err;
+    throw err;
+  } finally {
+    const responseTimeMs = Date.now() - startTime;
+    // Log details of request
+    const errorMsg = success ? null : (lastError?.message || String(lastError));
+    firebaseDB.saveAIRequestLog({
+      id: `ailog-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+      provider: providerUsed,
+      endpoint: messages.length > 1 ? "chat" : "solve",
+      responseTimeMs,
+      success,
+      error: errorMsg,
+      timestamp: new Date().toISOString()
+    }).catch(e => console.error("[AIService] Failed to write AI request metrics log:", e));
+  }
 }
 
 // ----------------------------------------------------
@@ -294,7 +400,9 @@ async function callGemini(
   messages: AIMessage[],
   systemInstruction?: string,
   image?: string,
-  responseSchema?: any
+  responseSchema?: any,
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<string> {
   const gemini = getGeminiClient();
   if (!gemini) throw new Error("Gemini API key is not configured");
@@ -342,23 +450,31 @@ async function callGemini(
 
   const executeCall = async (modelName: string): Promise<string> => {
     return await retryWithBackoff(async () => {
-      const responsePromise = gemini.models.generateContent({
-        model: modelName,
-        contents,
-        config
-      });
-
-      const res = await withTimeout(
-        responsePromise,
-        30000,
-        `Gemini API request timed out after 30 seconds for model: ${modelName}`
+      return await withTimeoutAndSignal(
+        async (mergedSignal) => {
+          const response = await gemini.models.generateContent({
+            model: modelName,
+            contents,
+            config: {
+              ...config,
+              httpOptions: {
+                headers: {
+                  "User-Agent": "aistudio-build",
+                },
+                signal: mergedSignal
+              }
+            }
+          });
+          if (response.text) return response.text;
+          throw new Error("Empty text response received from Gemini SDK.");
+        },
+        timeoutMs || DEFAULT_TIMEOUT_MS,
+        `Gemini API request timed out after ${Math.round((timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} seconds for model: ${modelName}`,
+        signal
       );
-
-      if (res.text) return res.text;
-      throw new Error("Empty text response received from Gemini SDK.");
     }, 3, 1000, (err, attempt) => {
       console.warn(`[AIService] Gemini attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
-    });
+    }, signal);
   };
 
   try {
@@ -381,7 +497,9 @@ async function callOpenAI(
   messages: AIMessage[],
   systemInstruction?: string,
   image?: string,
-  responseSchema?: any
+  responseSchema?: any,
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OpenAI API key is not configured");
@@ -420,38 +538,42 @@ async function callOpenAI(
   }
 
   return await retryWithBackoff(async () => {
-    const fetchPromise = fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
+    return await withTimeoutAndSignal(
+      async (mergedSignal) => {
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(body),
+          signal: mergedSignal
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`OpenAI API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "";
       },
-      body: JSON.stringify(body)
-    });
-
-    const response = await withTimeout(
-      fetchPromise,
-      30000,
-      "OpenAI API request timed out after 30 seconds."
+      timeoutMs || DEFAULT_TIMEOUT_MS,
+      `OpenAI API request timed out after ${Math.round((timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} seconds.`,
+      signal
     );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`OpenAI API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || "";
   }, 3, 1000, (err, attempt) => {
     console.warn(`[AIService] OpenAI attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
-  });
+  }, signal);
 }
 
 async function callGroq(
   messages: AIMessage[],
   systemInstruction?: string,
   image?: string,
-  responseSchema?: any
+  responseSchema?: any,
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<string> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("Groq API key is not configured");
@@ -491,38 +613,42 @@ async function callGroq(
   }
 
   return await retryWithBackoff(async () => {
-    const fetchPromise = fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
+    return await withTimeoutAndSignal(
+      async (mergedSignal) => {
+        const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(body),
+          signal: mergedSignal
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`Groq API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "";
       },
-      body: JSON.stringify(body)
-    });
-
-    const response = await withTimeout(
-      fetchPromise,
-      30000,
-      "Groq API request timed out after 30 seconds."
+      timeoutMs || DEFAULT_TIMEOUT_MS,
+      `Groq API request timed out after ${Math.round((timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} seconds.`,
+      signal
     );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`Groq API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || "";
   }, 3, 1000, (err, attempt) => {
     console.warn(`[AIService] Groq attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
-  });
+  }, signal);
 }
 
 async function callOpenRouter(
   messages: AIMessage[],
   systemInstruction?: string,
   image?: string,
-  responseSchema?: any
+  responseSchema?: any,
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OpenRouter API key is not configured");
@@ -563,40 +689,44 @@ async function callOpenRouter(
   }
 
   return await retryWithBackoff(async () => {
-    const fetchPromise = fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://studymate-ai.com",
-        "X-Title": "StudyMate AI"
+    return await withTimeoutAndSignal(
+      async (mergedSignal) => {
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`,
+            "HTTP-Referer": "https://studymate-ai.com",
+            "X-Title": "StudyMate AI"
+          },
+          body: JSON.stringify(body),
+          signal: mergedSignal
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`OpenRouter API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "";
       },
-      body: JSON.stringify(body)
-    });
-
-    const response = await withTimeout(
-      fetchPromise,
-      30000,
-      "OpenRouter API request timed out after 30 seconds."
+      timeoutMs || DEFAULT_TIMEOUT_MS,
+      `OpenRouter API request timed out after ${Math.round((timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} seconds.`,
+      signal
     );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`OpenRouter API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return data.choices?.[0]?.message?.content || "";
   }, 3, 1000, (err, attempt) => {
     console.warn(`[AIService] OpenRouter attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
-  });
+  }, signal);
 }
 
 async function callAnthropic(
   messages: AIMessage[],
   systemInstruction?: string,
   image?: string,
-  responseSchema?: any
+  responseSchema?: any,
+  timeoutMs?: number,
+  signal?: AbortSignal
 ): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Anthropic API key is not configured");
@@ -652,30 +782,32 @@ async function callAnthropic(
   }
 
   return await retryWithBackoff(async () => {
-    const fetchPromise = fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01"
+    return await withTimeoutAndSignal(
+      async (mergedSignal) => {
+        const response = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": apiKey,
+            "anthropic-version": "2023-06-01"
+          },
+          body: JSON.stringify(body),
+          signal: mergedSignal
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`Anthropic API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+        }
+
+        const data = await response.json();
+        return data.content?.[0]?.text || "";
       },
-      body: JSON.stringify(body)
-    });
-
-    const response = await withTimeout(
-      fetchPromise,
-      30000,
-      "Anthropic API request timed out after 30 seconds."
+      timeoutMs || DEFAULT_TIMEOUT_MS,
+      `Anthropic API request timed out after ${Math.round((timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} seconds.`,
+      signal
     );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`Anthropic API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
-    }
-
-    const data = await response.json();
-    return data.content?.[0]?.text || "";
   }, 3, 1000, (err, attempt) => {
     console.warn(`[AIService] Anthropic attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
-  });
+  }, signal);
 }
