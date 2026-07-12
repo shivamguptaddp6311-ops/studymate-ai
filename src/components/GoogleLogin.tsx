@@ -25,7 +25,7 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
             setAccountExists(data.exists);
           }
         } catch (e) {
-          console.error("Failed to check email existence", e);
+          console.warn("Failed to check email existence", e);
         }
       }, 400);
       return () => clearTimeout(delayDebounce);

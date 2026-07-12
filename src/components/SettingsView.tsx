@@ -44,26 +44,44 @@ export default function SettingsView({
   const fetchMetrics = () => {
     setLoadingMetrics(true);
     fetch("/api/ai/metrics")
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          throw new TypeError("Expected JSON response from server");
+        }
+        return res.json();
+      })
       .then((data) => {
         setMetrics(data);
         setLoadingMetrics(false);
       })
       .catch((err) => {
-        console.error("Error fetching AI metrics:", err);
+        console.warn("Error fetching AI metrics:", err);
         setLoadingMetrics(false);
       });
   };
 
   useEffect(() => {
     fetch("/api/ai/providers")
-      .then((res) => res.json())
+      .then((res) => {
+        if (!res.ok) {
+          throw new Error(`HTTP error! status: ${res.status}`);
+        }
+        const contentType = res.headers.get("content-type");
+        if (!contentType || !contentType.includes("application/json")) {
+          throw new TypeError("Expected JSON response from server");
+        }
+        return res.json();
+      })
       .then((data) => {
         if (data) {
           setProviderStatuses(data);
         }
       })
-      .catch((err) => console.error("Error fetching providers:", err));
+      .catch((err) => console.warn("Error fetching providers:", err));
 
     fetchMetrics();
     const interval = setInterval(fetchMetrics, 15000);

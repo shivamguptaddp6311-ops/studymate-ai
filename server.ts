@@ -344,7 +344,7 @@ app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
     const isLocal = origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:");
-    const isDevPre = allowedOrigins.includes(origin);
+    const isDevPre = allowedOrigins.includes(origin) || origin.endsWith(".run.app") || origin.endsWith(".google.com") || origin.endsWith(".google");
     const isAppUrl = process.env.APP_URL && origin === process.env.APP_URL;
     if (isLocal || isDevPre || isAppUrl) {
       callback(null, true);
@@ -740,6 +740,174 @@ app.post("/api/auth/delete-account", requireAuth, async (req, res) => {
   }
 });
 
+// --- ADVANCED AI SECURITY AND INTEGRITY HELPERS ---
+
+/**
+ * Scans inputs for malicious override signatures to prevent prompt injection.
+ */
+function detectPromptInjection(prompt: string | null | undefined): boolean {
+  if (!prompt || typeof prompt !== "string") return false;
+  const lower = prompt.toLowerCase();
+  
+  const injectionSignatures = [
+    "ignore previous instructions",
+    "forget all previous",
+    "system instructions override",
+    "you are now a",
+    "bypass constraints",
+    "reveal system prompt",
+    "show system prompt",
+    "what is your system instructions",
+    "ignore the instructions above",
+    "dan mode",
+    "do anything now",
+    "jailbreak",
+    "system prompt leak",
+    "ignore everything before",
+    "you are no longer"
+  ];
+
+  return injectionSignatures.some(sig => lower.includes(sig));
+}
+
+/**
+ * High-performance output sanitizer to prevent XSS in rendered AI contents.
+ * Strips dangerous HTML tags while keeping markdown formatting intact.
+ */
+function sanitizeAIOutputText(text: string | null | undefined): string {
+  if (!text || typeof text !== "string") return "";
+  return text
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/<iframe\b[^<]*(?:(?!<\/iframe>)<[^<]*)*<\/iframe>/gi, "")
+    .replace(/<object\b[^<]*(?:(?!<\/object>)<[^<]*)*<\/object>/gi, "")
+    .replace(/<embed\b[^<]*(?:(?!<\/embed>)<[^<]*)*<\/embed>/gi, "")
+    .replace(/onload\s*=\s*"[^"]*"/gi, "")
+    .replace(/onerror\s*=\s*"[^"]*"/gi, "")
+    .replace(/onclick\s*=\s*"[^"]*"/gi, "");
+}
+
+/**
+ * Validates and sanitizes the structured solver response.
+ */
+function validateAndSanitizeSolverResponse(data: any, originalPrompt: string): any {
+  if (!data || typeof data !== "object") {
+    data = {};
+  }
+  
+  return {
+    ocrText: typeof data.ocrText === "string" ? sanitizeAIOutputText(data.ocrText) : sanitizeAIOutputText(originalPrompt),
+    subject: typeof data.subject === "string" ? sanitizeAIOutputText(data.subject) : "General",
+    topic: typeof data.topic === "string" ? sanitizeAIOutputText(data.topic) : "General",
+    steps: Array.isArray(data.steps) 
+      ? data.steps.filter((s: any) => typeof s === "string").map((s: string) => sanitizeAIOutputText(s)) 
+      : [],
+    finalAnswer: typeof data.finalAnswer === "string" ? sanitizeAIOutputText(data.finalAnswer) : "",
+    conceptualExplanation: typeof data.conceptualExplanation === "string" ? sanitizeAIOutputText(data.conceptualExplanation) : "",
+    tips: Array.isArray(data.tips) 
+      ? data.tips.filter((t: any) => typeof t === "string").map((t: string) => sanitizeAIOutputText(t)) 
+      : [],
+    practiceQuestions: Array.isArray(data.practiceQuestions) 
+      ? data.practiceQuestions.filter((q: any) => typeof q === "string").map((q: string) => sanitizeAIOutputText(q)) 
+      : []
+  };
+}
+
+/**
+ * Validates and sanitizes the suggested study planner schedule response.
+ */
+function validateAndSanitizeSuggestScheduleResponse(data: any): any {
+  if (!data || typeof data !== "object") {
+    data = {};
+  }
+  
+  const studyTips = Array.isArray(data.studyTips) 
+    ? data.studyTips.filter((t: any) => typeof t === "string").map((t: string) => sanitizeAIOutputText(t)) 
+    : ["Stay consistent", "Practice active recall", "Use the Pomodoro technique"];
+    
+  const weeklyTheme = typeof data.weeklyTheme === "string" ? sanitizeAIOutputText(data.weeklyTheme) : "Personalized Academic Focus";
+  
+  const suggestedTimeAllocation = Array.isArray(data.suggestedTimeAllocation)
+    ? data.suggestedTimeAllocation.filter((item: any) => item && typeof item === "object").map((item: any) => ({
+        subject: typeof item.subject === "string" ? sanitizeAIOutputText(item.subject) : "General Study",
+        hoursPerWeek: typeof item.hoursPerWeek === "number" && !isNaN(item.hoursPerWeek) ? Math.min(168, Math.max(0, item.hoursPerWeek)) : 4,
+        reason: typeof item.reason === "string" ? sanitizeAIOutputText(item.reason) : "Focused skill building"
+      }))
+    : [];
+    
+  const timetable = Array.isArray(data.timetable)
+    ? data.timetable.filter((dayItem: any) => dayItem && typeof dayItem === "object").map((dayItem: any) => ({
+        day: typeof dayItem.day === "string" ? sanitizeAIOutputText(dayItem.day) : "Monday",
+        sessions: Array.isArray(dayItem.sessions) 
+          ? dayItem.sessions.filter((session: any) => session && typeof session === "object").map((session: any) => ({
+              time: typeof session.time === "string" ? sanitizeAIOutputText(session.time) : "04:00 PM - 05:00 PM",
+              subject: typeof session.subject === "string" ? sanitizeAIOutputText(session.subject) : "General Study",
+              topic: typeof session.topic === "string" ? sanitizeAIOutputText(session.topic) : "Concept review"
+            }))
+          : []
+      }))
+    : [];
+    
+  return {
+    studyTips,
+    weeklyTheme,
+    suggestedTimeAllocation,
+    timetable
+  };
+}
+
+/**
+ * Validates and sanitizes the generated textbook materials response.
+ */
+function validateAndSanitizeChapterMaterialsResponse(data: any): any {
+  if (!data || typeof data !== "object") {
+    data = {};
+  }
+  
+  return {
+    longNotes: Array.isArray(data.longNotes) 
+      ? data.longNotes.filter((n: any) => typeof n === "string").map((n: string) => sanitizeAIOutputText(n)) 
+      : [],
+    shortNotes: Array.isArray(data.shortNotes) 
+      ? data.shortNotes.filter((n: any) => typeof n === "string").map((n: string) => sanitizeAIOutputText(n)) 
+      : [],
+    formulas: Array.isArray(data.formulas) 
+      ? data.formulas.filter((f: any) => typeof f === "string").map((f: string) => sanitizeAIOutputText(f)) 
+      : [],
+    pyqs: Array.isArray(data.pyqs)
+      ? data.pyqs.filter((q: any) => q && typeof q === "object").map((q: any) => ({
+          question: typeof q.question === "string" ? sanitizeAIOutputText(q.question) : "Solved Exam Question",
+          answer: typeof q.answer === "string" ? sanitizeAIOutputText(q.answer) : "No solution provided",
+          year: typeof q.year === "string" ? sanitizeAIOutputText(q.year) : "Recent Board"
+        }))
+      : [],
+    practiceQuestions: Array.isArray(data.practiceQuestions) 
+      ? data.practiceQuestions.filter((q: any) => typeof q === "string").map((q: string) => sanitizeAIOutputText(q)) 
+      : []
+  };
+}
+
+// In-memory active request tracking map for server-side deduplication
+const activeRequests = new Map<string, Promise<any>>();
+
+/**
+ * Enforces serial processing of heavy AI requests per user per feature.
+ */
+async function withDuplicatePrevention<T>(key: string, promiseFactory: () => Promise<T>): Promise<T> {
+  if (activeRequests.has(key)) {
+    console.warn(`[Deduplication] Blocked duplicate request on key: ${key}`);
+    throw new Error("A request for this action is currently in progress. Please wait.");
+  }
+  
+  const promise = promiseFactory();
+  activeRequests.set(key, promise);
+  
+  try {
+    return await promise;
+  } finally {
+    activeRequests.delete(key);
+  }
+}
+
 // 1. AI Solver Route - Multi-modal OCR & Step-by-Step Question Solver
 app.post("/api/gemini/solve", requireAuth, async (req, res) => {
   const controller = new AbortController();
@@ -750,8 +918,28 @@ app.post("/api/gemini/solve", requireAuth, async (req, res) => {
   try {
     const { prompt, image, subject, grade, favSubjects, weakSubjects, explainBriefly, provider = "auto", timeoutMs } = req.body;
 
-    // Prepare core prompt instructions
-    const systemInstruction = `You are StudyMate AI, an advanced expert academic tutor and general-knowledge companion, as powerful and unrestricted as Gemini or ChatGPT.
+    // Validate request inputs
+    if (prompt && typeof prompt !== "string") {
+      return res.status(400).json({ error: "Invalid prompt format." });
+    }
+    if (prompt && prompt.length > 50000) {
+      return res.status(400).json({ error: "Prompt is too long. Maximum characters is 50,000." });
+    }
+    if (image && (typeof image !== "string" || image.length > 25 * 1024 * 1024)) {
+      return res.status(400).json({ error: "Invalid image format or image size exceeds 25MB." });
+    }
+
+    // Prompt injection check
+    if (detectPromptInjection(prompt)) {
+      return res.status(400).json({ error: "Potential prompt injection attempt detected. Please revise your query to align with guidelines." });
+    }
+
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    const lockKey = `${emailNorm}:${req.path}`;
+
+    const parsedResult = await withDuplicatePrevention(lockKey, async () => {
+      // Prepare core prompt instructions
+      const systemInstruction = `You are StudyMate AI, an advanced expert academic tutor and general-knowledge companion, as powerful and unrestricted as Gemini or ChatGPT.
 Your task is to analyze the provided image, handwritten notes, or question. You are capable of answering any type of question, academic or otherwise.
 CRITICAL: Always respond and explain in the exact language used by the user or detected in the image/text (e.g., if the user asks in Hindi, solve and explain in Hindi; if in English, in English, etc.).
 If an image is provided, first perform OCR to extract the question text accurately.
@@ -786,63 +974,66 @@ JSON schema to match:
   ]
 }`;
 
-    let userPrompt = prompt || "Solve this academic question or scan this page.";
-    if (explainBriefly) {
-      userPrompt += `\n- **CRITICAL FORMAT RULE**: The user requested a BRIEF, HIGHLY CONCISE EXPLANATION. Minimize extra introductory words, keep steps and conceptual explanations short, focused, and straight-to-the-point. Summarize formulas and solutions into quick-reading lists.`;
-    }
-    if (grade || favSubjects || weakSubjects) {
-      userPrompt += `\n\nStudent Profile Context to customize explanation depth and style:`;
-      if (grade) userPrompt += `\n- Class Grade Level: ${grade}`;
-      if (favSubjects && Array.isArray(favSubjects) && favSubjects.length > 0) {
-        userPrompt += `\n- Favorite/Strong Subjects: ${favSubjects.join(", ")}`;
+      let userPrompt = prompt || "Solve this academic question or scan this page.";
+      if (explainBriefly) {
+        userPrompt += `\n- **CRITICAL FORMAT RULE**: The user requested a BRIEF, HIGHLY CONCISE EXPLANATION. Minimize extra introductory words, keep steps and conceptual explanations short, focused, and straight-to-the-point. Summarize formulas and solutions into quick-reading lists.`;
       }
-      if (weakSubjects && Array.isArray(weakSubjects) && weakSubjects.length > 0) {
-        userPrompt += `\n- Weak Subjects (Explain terms extra clearly and provide step-by-step encouragement): ${weakSubjects.join(", ")}`;
-      }
-    }
-    
-    const messages = [{ role: "user" as const, content: userPrompt }];
-
-    const responseSchema = {
-      type: Type.OBJECT,
-      properties: {
-        ocrText: { type: Type.STRING },
-        subject: { type: Type.STRING },
-        topic: { type: Type.STRING },
-        steps: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
-        },
-        finalAnswer: { type: Type.STRING },
-        conceptualExplanation: { type: Type.STRING },
-        tips: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
-        },
-        practiceQuestions: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
+      if (grade || favSubjects || weakSubjects) {
+        userPrompt += `\n\nStudent Profile Context to customize explanation depth and style:`;
+        if (grade) userPrompt += `\n- Class Grade Level: ${grade}`;
+        if (favSubjects && Array.isArray(favSubjects) && favSubjects.length > 0) {
+          userPrompt += `\n- Favorite/Strong Subjects: ${favSubjects.join(", ")}`;
         }
-      },
-      required: ["ocrText", "subject", "topic", "steps", "finalAnswer", "conceptualExplanation", "tips", "practiceQuestions"]
-    };
+        if (weakSubjects && Array.isArray(weakSubjects) && weakSubjects.length > 0) {
+          userPrompt += `\n- Weak Subjects (Explain terms extra clearly and provide step-by-step encouragement): ${weakSubjects.join(", ")}`;
+        }
+      }
+      
+      const messages = [{ role: "user" as const, content: userPrompt }];
 
-    const response = await executeAIRequest({
-      messages,
-      systemInstruction,
-      image,
-      preferredProvider: provider as AIProvider,
-      responseSchema,
-      timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
-      signal: controller.signal
+      const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+          ocrText: { type: Type.STRING },
+          subject: { type: Type.STRING },
+          topic: { type: Type.STRING },
+          steps: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          finalAnswer: { type: Type.STRING },
+          conceptualExplanation: { type: Type.STRING },
+          tips: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          practiceQuestions: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          }
+        },
+        required: ["ocrText", "subject", "topic", "steps", "finalAnswer", "conceptualExplanation", "tips", "practiceQuestions"]
+      };
+
+      const response = await executeAIRequest({
+        messages,
+        systemInstruction,
+        image,
+        preferredProvider: provider as AIProvider,
+        responseSchema,
+        timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+        signal: controller.signal
+      });
+
+      const responseText = response.text;
+      if (!responseText) {
+        throw new Error("No response received from AI model.");
+      }
+
+      const rawParsed = parseJsonResponse(responseText);
+      return validateAndSanitizeSolverResponse(rawParsed, userPrompt);
     });
 
-    const responseText = response.text;
-    if (!responseText) {
-      throw new Error("No response received from AI model.");
-    }
-
-    const parsedResult = parseJsonResponse(responseText);
     res.json(parsedResult);
   } catch (error: any) {
     if (error.message?.includes("timed out")) {
@@ -852,6 +1043,9 @@ JSON schema to match:
     if (error.message?.includes("cancelled") || controller.signal.aborted) {
       console.warn("AI solver request cancelled by user.");
       return res.status(499).json({ error: "Request was cancelled." });
+    }
+    if (error.message?.includes("in progress")) {
+      return res.status(409).json({ error: error.message });
     }
     console.error("AI solver error:", error);
     res.status(500).json({ error: "Failed to solve the question. Please try again." });
@@ -868,26 +1062,46 @@ app.post("/api/gemini/chat", requireAuth, async (req, res) => {
   try {
     const { message, history, image, provider = "auto", timeoutMs } = req.body;
 
-    // Reconstruct conversation history to clean AIMessage format
-    // history format: Array<{ role: 'user' | 'model', message: string }>
-    const messages: AIMessage[] = [];
-    if (history && Array.isArray(history)) {
-      history.forEach((h: any) => {
-        if (h.message && h.message.trim()) {
-          messages.push({
-            role: h.role === "user" ? "user" : "model",
-            content: h.message
-          });
-        }
-      });
+    // Validate request inputs
+    if (message && typeof message !== "string") {
+      return res.status(400).json({ error: "Invalid message format." });
+    }
+    if (message && message.length > 15000) {
+      return res.status(400).json({ error: "Message exceeds maximum allowed character limit of 15,000." });
     }
 
-    messages.push({
-      role: "user",
-      content: message || "Hello StudyMate AI"
-    });
+    // Prompt injection check
+    if (detectPromptInjection(message)) {
+      return res.status(400).json({ error: "Potential prompt injection attempt detected. Please refine your message." });
+    }
 
-    const systemInstruction = `You are StudyMate AI, the trusted AI assistant for learning, work, creativity, coding, writing, research, productivity, and everyday conversations on the StudyMate platform.
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    const lockKey = `${emailNorm}:${req.path}`;
+
+    const chatReply = await withDuplicatePrevention(lockKey, async () => {
+      // Reconstruct conversation history to clean AIMessage format with active context trimming
+      const messages: AIMessage[] = [];
+      if (history && Array.isArray(history)) {
+        // Limit context memory to the last 8 messages (4 user, 4 AI turns)
+        const trimmedHistory = history.slice(-8);
+        trimmedHistory.forEach((h: any) => {
+          if (h.message && h.message.trim()) {
+            // Trim individual historical message length to prevent token bloat
+            const content = h.message.length > 3000 ? h.message.substring(0, 3000) + "..." : h.message;
+            messages.push({
+              role: h.role === "user" ? "user" : "model",
+              content: content
+            });
+          }
+        });
+      }
+
+      messages.push({
+        role: "user",
+        content: message || "Hello StudyMate AI"
+      });
+
+      const systemInstruction = `You are StudyMate AI, the trusted AI assistant for learning, work, creativity, coding, writing, research, productivity, and everyday conversations on the StudyMate platform.
 
 Identity:
 - Name: StudyMate AI
@@ -941,18 +1155,21 @@ Response Style:
   2. Brief step-by-step Explanation (bullet points).
   3. Simple example or quick tip.
   4. Ask whether the user wants more details.
-- Avoid unnecessary repetition and be structured, brief, and honest.`;
+  - Avoid unnecessary repetition and be structured, brief, and honest.`;
 
-    const response = await executeAIRequest({
-      messages,
-      systemInstruction,
-      image,
-      preferredProvider: provider as AIProvider,
-      timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
-      signal: controller.signal
+      const response = await executeAIRequest({
+        messages,
+        systemInstruction,
+        image,
+        preferredProvider: provider as AIProvider,
+        timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+        signal: controller.signal
+      });
+
+      return { reply: sanitizeAIOutputText(response.text) };
     });
 
-    res.json({ reply: response.text });
+    res.json(chatReply);
   } catch (error: any) {
     if (error.message?.includes("timed out")) {
       console.warn("AI chat timeout:", error.message);
@@ -961,6 +1178,9 @@ Response Style:
     if (error.message?.includes("cancelled") || controller.signal.aborted) {
       console.warn("AI chat request cancelled by user.");
       return res.status(499).json({ error: "Request was cancelled." });
+    }
+    if (error.message?.includes("in progress")) {
+      return res.status(409).json({ error: error.message });
     }
     console.error("AI chat error:", error);
     res.status(500).json({ error: "Failed to chat with AI Assistant." });
@@ -977,7 +1197,21 @@ app.post("/api/gemini/generate-chapter-materials", requireAuth, async (req, res)
   try {
     const { grade, subject, chapterNumber, chapterTitle, provider = "auto", timeoutMs } = req.body;
 
-    const prompt = `You are StudyMate AI, the ultimate expert academic tutor for the CBSE/NCERT curriculum.
+    // Validate request inputs
+    if (chapterTitle && typeof chapterTitle !== "string") {
+      return res.status(400).json({ error: "Invalid chapterTitle format." });
+    }
+
+    // Prompt injection check
+    if (detectPromptInjection(chapterTitle)) {
+      return res.status(400).json({ error: "Potential prompt injection attempt detected. Please refine the chapter details." });
+    }
+
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    const lockKey = `${emailNorm}:${req.path}`;
+
+    const parsedResult = await withDuplicatePrevention(lockKey, async () => {
+      const prompt = `You are StudyMate AI, the ultimate expert academic tutor for the CBSE/NCERT curriculum.
 Generate highly detailed, comprehensive study materials for:
 - Grade: ${grade}
 - Subject: ${subject}
@@ -1003,50 +1237,54 @@ Respond strictly in JSON format matching this schema:
   "practiceQuestions": ["challenge question 1...", "challenge question 2..."]
 }`;
 
-    const responseSchema = {
-      type: Type.OBJECT,
-      properties: {
-        longNotes: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
-        },
-        shortNotes: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
-        },
-        formulas: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
-        },
-        pyqs: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              question: { type: Type.STRING },
-              answer: { type: Type.STRING },
-              year: { type: Type.STRING }
-            },
-            required: ["question", "answer", "year"]
+      const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+          longNotes: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          shortNotes: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          formulas: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          pyqs: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                question: { type: Type.STRING },
+                answer: { type: Type.STRING },
+                year: { type: Type.STRING }
+              },
+              required: ["question", "answer", "year"]
+            }
+          },
+          practiceQuestions: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
           }
         },
-        practiceQuestions: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
-        }
-      },
-      required: ["longNotes", "shortNotes", "formulas", "pyqs", "practiceQuestions"]
-    };
+        required: ["longNotes", "shortNotes", "formulas", "pyqs", "practiceQuestions"]
+      };
 
-    const response = await executeAIRequest({
-      messages: [{ role: "user", content: prompt }],
-      preferredProvider: provider as AIProvider,
-      responseSchema,
-      timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
-      signal: controller.signal
+      const response = await executeAIRequest({
+        messages: [{ role: "user", content: prompt }],
+        preferredProvider: provider as AIProvider,
+        responseSchema,
+        timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+        signal: controller.signal
+      });
+
+      const rawParsed = parseJsonResponse(response.text || "{}");
+      return validateAndSanitizeChapterMaterialsResponse(rawParsed);
     });
 
-    res.json(parseJsonResponse(response.text || "{}"));
+    res.json(parsedResult);
   } catch (error: any) {
     if (error.message?.includes("timed out")) {
       console.warn("AI materials timeout:", error.message);
@@ -1055,6 +1293,9 @@ Respond strictly in JSON format matching this schema:
     if (error.message?.includes("cancelled") || controller.signal.aborted) {
       console.warn("AI materials request cancelled by user.");
       return res.status(499).json({ error: "Request was cancelled." });
+    }
+    if (error.message?.includes("in progress")) {
+      return res.status(409).json({ error: error.message });
     }
     console.error("AI material generator error:", error);
     res.status(500).json({ error: "Failed to generate study materials." });
@@ -1071,7 +1312,24 @@ app.post("/api/gemini/suggest-schedule", requireAuth, async (req, res) => {
   try {
     const { name, grade, targetExam, dailyGoalHours, preferredTime, favSubjects, weakSubjects, provider = "auto", timeoutMs } = req.body;
 
-    const prompt = `Generate a highly personalized study planner and timetable for a student named ${name}.
+    // Validate request inputs
+    if (name && typeof name !== "string") {
+      return res.status(400).json({ error: "Invalid student name format." });
+    }
+    if (targetExam && typeof targetExam !== "string") {
+      return res.status(400).json({ error: "Invalid target exam format." });
+    }
+
+    // Prompt injection check
+    if (detectPromptInjection(name) || detectPromptInjection(targetExam)) {
+      return res.status(400).json({ error: "Potential prompt injection attempt detected. Please revise your profile names." });
+    }
+
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    const lockKey = `${emailNorm}:${req.path}`;
+
+    const parsedResult = await withDuplicatePrevention(lockKey, async () => {
+      const prompt = `Generate a highly personalized study planner and timetable for a student named ${name}.
 Details:
 - Class/Grade: ${grade}
 - Preparing for Target Exam: ${targetExam}
@@ -1093,61 +1351,65 @@ The response should be JSON structured strictly like this:
   ]
 }`;
 
-    const responseSchema = {
-      type: Type.OBJECT,
-      properties: {
-        studyTips: {
-          type: Type.ARRAY,
-          items: { type: Type.STRING }
-        },
-        weeklyTheme: { type: Type.STRING },
-        suggestedTimeAllocation: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              subject: { type: Type.STRING },
-              hoursPerWeek: { type: Type.INTEGER },
-              reason: { type: Type.STRING }
-            },
-            required: ["subject", "hoursPerWeek", "reason"]
-          }
-        },
-        timetable: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              day: { type: Type.STRING },
-              sessions: {
-                type: Type.ARRAY,
-                items: {
-                  type: Type.OBJECT,
-                  properties: {
-                    time: { type: Type.STRING },
-                    subject: { type: Type.STRING },
-                    topic: { type: Type.STRING }
-                  },
-                  required: ["time", "subject", "topic"]
+      const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+          studyTips: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          weeklyTheme: { type: Type.STRING },
+          suggestedTimeAllocation: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                subject: { type: Type.STRING },
+                hoursPerWeek: { type: Type.INTEGER },
+                reason: { type: Type.STRING }
+              },
+              required: ["subject", "hoursPerWeek", "reason"]
+            }
+          },
+          timetable: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                day: { type: Type.STRING },
+                sessions: {
+                  type: Type.ARRAY,
+                  items: {
+                    type: Type.OBJECT,
+                    properties: {
+                      time: { type: Type.STRING },
+                      subject: { type: Type.STRING },
+                      topic: { type: Type.STRING }
+                    },
+                    required: ["time", "subject", "topic"]
+                  }
                 }
-              }
-            },
-            required: ["day", "sessions"]
+              },
+              required: ["day", "sessions"]
+            }
           }
-        }
-      },
-      required: ["studyTips", "weeklyTheme", "suggestedTimeAllocation", "timetable"]
-    };
+        },
+        required: ["studyTips", "weeklyTheme", "suggestedTimeAllocation", "timetable"]
+      };
 
-    const response = await executeAIRequest({
-      messages: [{ role: "user", content: prompt }],
-      preferredProvider: provider as AIProvider,
-      responseSchema,
-      timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
-      signal: controller.signal
+      const response = await executeAIRequest({
+        messages: [{ role: "user", content: prompt }],
+        preferredProvider: provider as AIProvider,
+        responseSchema,
+        timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+        signal: controller.signal
+      });
+
+      const rawParsed = parseJsonResponse(response.text || "{}");
+      return validateAndSanitizeSuggestScheduleResponse(rawParsed);
     });
 
-    res.json(parseJsonResponse(response.text || "{}"));
+    res.json(parsedResult);
   } catch (error: any) {
     if (error.message?.includes("timed out")) {
       console.warn("AI schedule timeout:", error.message);
@@ -1156,6 +1418,9 @@ The response should be JSON structured strictly like this:
     if (error.message?.includes("cancelled") || controller.signal.aborted) {
       console.warn("AI schedule request cancelled by user.");
       return res.status(499).json({ error: "Request was cancelled." });
+    }
+    if (error.message?.includes("in progress")) {
+      return res.status(409).json({ error: error.message });
     }
     console.error("AI schedule error:", error);
     res.status(500).json({ error: "Failed to generate study plan." });

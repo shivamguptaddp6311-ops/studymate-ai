@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, Task, Alarm, TimetableItem, Habit, Badge, AppNotification, DailyActivity } from "./types";
 import ErrorBoundary from "./components/ErrorBoundary";
@@ -6,7 +6,7 @@ import {
   DEFAULT_BADGES, MOTIVATIONAL_QUOTES, SUBJECT_PRESETS, EXAM_PRESETS, DEFAULT_HABITS 
 } from "./data";
 
-// Import custom screen modules
+// Import custom screen modules eagerly for critical path
 import GoogleLogin from "./components/GoogleLogin";
 import Onboarding from "./components/Onboarding";
 import WelcomeWalkthrough from "./components/WelcomeWalkthrough";
@@ -15,15 +15,28 @@ import Tasks from "./components/Tasks";
 import Alarms, { startRingtonePlayback, stopRingtonePlayback } from "./components/Alarms";
 import Planner from "./components/Planner";
 import Habits from "./components/Habits";
-import CalendarView from "./components/CalendarView";
 import Pomodoro from "./components/Pomodoro";
-import Analytics from "./components/Analytics";
-import SyllabusTest from "./components/SyllabusTest";
-import StudyMateAI from "./components/StudyMateAI";
-import EducationalGames from "./components/EducationalGames";
-import ProfileView from "./components/ProfileView";
-import SettingsView from "./components/SettingsView";
-import CommunityChat from "./components/CommunityChat";
+
+// Lazily load heavier secondary pages for optimum bundle chunking
+const CalendarView = lazy(() => import("./components/CalendarView"));
+const Analytics = lazy(() => import("./components/Analytics"));
+const SyllabusTest = lazy(() => import("./components/SyllabusTest"));
+const StudyMateAI = lazy(() => import("./components/StudyMateAI"));
+const EducationalGames = lazy(() => import("./components/EducationalGames"));
+const ProfileView = lazy(() => import("./components/ProfileView"));
+const SettingsView = lazy(() => import("./components/SettingsView"));
+const CommunityChat = lazy(() => import("./components/CommunityChat"));
+
+// Visual loading shimmer skeleton for lazy chunks
+const LoadingTabPlaceholder = () => (
+  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-pulse min-h-[400px]">
+    <div className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-950 flex items-center justify-center mb-4">
+      <RefreshCw className="w-6 h-6 text-indigo-600 animate-spin" />
+    </div>
+    <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">Loading Feature Module</h3>
+    <p className="text-xs text-slate-400 mt-1">Optimizing performance with dynamic bundle splitting...</p>
+  </div>
+);
 
 // Icons for navigation rails
 import { 
@@ -366,7 +379,7 @@ export default function App() {
         handleLogout();
       }
     } catch (e) {
-      console.error("Token refresh communication failed:", e);
+      console.warn("Token refresh communication failed:", e);
     }
     return null;
   };
@@ -1521,11 +1534,13 @@ export default function App() {
         )}
 
         {currentTab === "calendar" && (
-          <CalendarView 
-            tasks={tasks}
-            timetable={timetable}
-            profile={profile}
-          />
+          <Suspense fallback={<LoadingTabPlaceholder />}>
+            <CalendarView 
+              tasks={tasks}
+              timetable={timetable}
+              profile={profile}
+            />
+          </Suspense>
         )}
 
         {currentTab === "pomodoro" && (
@@ -1539,68 +1554,82 @@ export default function App() {
         )}
 
         {currentTab === "assessment" && (
-          <SyllabusTest 
-            profile={profile}
-            onAwardXP={handleAwardXP}
-            onAddNotification={handleAddNotification}
-          />
+          <Suspense fallback={<LoadingTabPlaceholder />}>
+            <SyllabusTest 
+              profile={profile}
+              onAwardXP={handleAwardXP}
+              onAddNotification={handleAddNotification}
+            />
+          </Suspense>
         )}
 
         {currentTab === "analytics" && (
-          <Analytics 
-            profile={profile}
-            tasks={tasks}
-            habits={habits}
-            badges={badges}
-          />
+          <Suspense fallback={<LoadingTabPlaceholder />}>
+            <Analytics 
+              profile={profile}
+              tasks={tasks}
+              habits={habits}
+              badges={badges}
+            />
+          </Suspense>
         )}
 
         {currentTab === "profile" && (
-          <ProfileView 
-            profile={profile}
-            badges={badges}
-            onUpdateProfile={handleUpdateProfile}
-            onResetApp={handleResetApp}
-          />
+          <Suspense fallback={<LoadingTabPlaceholder />}>
+            <ProfileView 
+              profile={profile}
+              badges={badges}
+              onUpdateProfile={handleUpdateProfile}
+              onResetApp={handleResetApp}
+            />
+          </Suspense>
         )}
 
         {currentTab === "games" && (
-          <EducationalGames 
-            profile={profile}
-            onAwardXP={handleAwardXP}
-            onAddNotification={handleAddNotification}
-          />
+          <Suspense fallback={<LoadingTabPlaceholder />}>
+            <EducationalGames 
+              profile={profile}
+              onAwardXP={handleAwardXP}
+              onAddNotification={handleAddNotification}
+            />
+          </Suspense>
         )}
 
         {currentTab === "assistant" && (
-          <StudyMateAI 
-            profile={profile}
-            onAwardXP={handleAwardXP}
-            onAddNotification={handleAddNotification}
-            isFullScreen={aiFullScreen}
-            onToggleFullScreen={toggleAiFullScreen}
-          />
+          <Suspense fallback={<LoadingTabPlaceholder />}>
+            <StudyMateAI 
+              profile={profile}
+              onAwardXP={handleAwardXP}
+              onAddNotification={handleAddNotification}
+              isFullScreen={aiFullScreen}
+              onToggleFullScreen={toggleAiFullScreen}
+            />
+          </Suspense>
         )}
 
         {currentTab === "chat" && (
-          <CommunityChat
-            profile={profile}
-            onAwardXP={handleAwardXP}
-            handleAddNotification={handleAddNotification}
-            isFullScreen={chatFullScreen}
-            onToggleFullScreen={toggleChatFullScreen}
-          />
+          <Suspense fallback={<LoadingTabPlaceholder />}>
+            <CommunityChat
+              profile={profile}
+              onAwardXP={handleAwardXP}
+              handleAddNotification={handleAddNotification}
+              isFullScreen={chatFullScreen}
+              onToggleFullScreen={toggleChatFullScreen}
+            />
+          </Suspense>
         )}
 
         {currentTab === "settings" && (
-          <SettingsView 
-            darkMode={darkMode}
-            onToggleDarkMode={handleToggleDarkMode}
-            profile={profile}
-            syncStatus={syncStatus}
-            onTriggerSync={handleTriggerSync}
-            onDeleteAccount={handleDeleteAccount}
-          />
+          <Suspense fallback={<LoadingTabPlaceholder />}>
+            <SettingsView 
+              darkMode={darkMode}
+              onToggleDarkMode={handleToggleDarkMode}
+              profile={profile}
+              syncStatus={syncStatus}
+              onTriggerSync={handleTriggerSync}
+              onDeleteAccount={handleDeleteAccount}
+            />
+          </Suspense>
         )}
 
       </main>

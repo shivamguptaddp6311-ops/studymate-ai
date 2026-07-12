@@ -317,7 +317,7 @@ export default function Planner({
       }
     } catch (err: any) {
       clearTimeout(timeoutId);
-      console.error(err);
+      console.warn(err);
       if (err.name === "AbortError" || controller.signal.aborted) {
         triggerNotification("AI Suggester Timeout", "The AI partner took too long to respond. You can increase the timeout limit in Settings.", "info");
       } else {

@@ -66,7 +66,7 @@ export default function Tasks({ tasks, profile, onAddTask, onToggleTask, onDelet
           triggerToastNotification("🔔 Homework reminders successfully activated!");
         }
       } catch (e) {
-        console.error("Notification permission request error:", e);
+        console.warn("Notification permission request error:", e);
         // Sandbox fallback
         setNotificationPermission("granted");
         triggerToastNotification("🔔 Homework reminders successfully activated!");
@@ -95,7 +95,7 @@ export default function Tasks({ tasks, profile, onAddTask, onToggleTask, onDelet
           icon: "https://cdn-icons-png.flaticon.com/512/2232/2232688.png"
         });
       } catch (e) {
-        console.error(e);
+        console.warn(e);
       }
     }
 

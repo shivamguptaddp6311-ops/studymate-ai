@@ -211,7 +211,7 @@ export default function CommunityChat({
         setMessages(data);
       }
     } catch (error) {
-      console.error("Failed to load chat history:", error);
+      console.warn("Failed to load chat history:", error);
     } finally {
       setLoadingHistory(false);
     }
@@ -233,7 +233,7 @@ export default function CommunityChat({
         setAdminStats(data);
       }
     } catch (error) {
-      console.error("Failed to load admin logs/reports:", error);
+      console.warn("Failed to load admin logs/reports:", error);
     } finally {
       setLoadingAdmin(false);
     }
@@ -379,12 +379,12 @@ export default function CommunityChat({
             break;
         }
       } catch (err) {
-        console.error("SSE parsing failure:", err);
+        console.warn("SSE parsing failure:", err);
       }
     };
 
     sse.onerror = (err) => {
-      console.error("SSE stream error, automatic fallback reconnect triggered...", err);
+      console.warn("SSE stream error, automatic fallback reconnect triggered...", err);
     };
 
     return () => {
@@ -506,7 +506,7 @@ export default function CommunityChat({
         }
       }
     } catch (err) {
-      console.error("Failed to send message:", err);
+      console.warn("Failed to send message:", err);
       setInputText(textToSend);
       handleAddNotification("⚠️ Network Issue", "Please verify your active network and try again.", "alert");
     } finally {
@@ -550,7 +550,7 @@ export default function CommunityChat({
         alert(data.error || "Failed to file report.");
       }
     } catch (err) {
-      console.error("Report submit error:", err);
+      console.warn("Report submit error:", err);
     } finally {
       setIsSubmittingReport(false);
     }
@@ -622,7 +622,7 @@ export default function CommunityChat({
         alert(d.error || "Action rejected by server.");
       }
     } catch (error) {
-      console.error("Admin trigger error:", error);
+      console.warn("Admin trigger error:", error);
     }
   };
 

@@ -9,6 +9,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile } from "../types";
+import { checkImageQuality, compressImage, enhanceImageForOCR } from "../utils/imageOptimizer";
 
 interface StudyMateAIProps {
   profile: UserProfile;
@@ -25,6 +26,42 @@ interface ChatMessage {
   image?: string; // Base64 string for reference
   timestamp: Date;
 }
+
+interface ChatMessageBubbleProps {
+  msg: ChatMessage;
+}
+
+const ChatMessageBubble = React.memo(function ChatMessageBubble({ msg }: ChatMessageBubbleProps) {
+  return (
+    <div className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
+      {/* Sender Label */}
+      <span className="text-[9px] font-bold text-slate-400 mb-1 px-1">
+        {msg.role === "user" ? "You" : "StudyMate AI"} • {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+      </span>
+
+      {/* Bubble */}
+      <div
+        className={`max-w-[85%] md:max-w-[75%] rounded-3xl p-4 md:p-5 shadow-sm text-sm leading-relaxed transition duration-150 ${
+          msg.role === "user"
+            ? "bg-indigo-600 text-white rounded-tr-none font-medium"
+            : "bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-tl-none border border-slate-100 dark:border-slate-800/60"
+        }`}
+      >
+        {/* Optional attached image inside bubble */}
+        {msg.image && (
+          <div className="mb-3 max-w-sm rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-inner">
+            <img src={msg.image} alt="User Uploaded Attached File" className="w-full h-auto max-h-[220px] object-cover" />
+          </div>
+        )}
+
+        {/* Text content rendered using Markdown */}
+        <div className={`prose dark:prose-invert max-w-none text-xs md:text-sm ${msg.role === "user" ? "text-white prose-headings:text-white prose-p:text-white prose-strong:text-white" : "text-slate-800 dark:text-slate-200"}`}>
+          <ReactMarkdown>{msg.text}</ReactMarkdown>
+        </div>
+      </div>
+    </div>
+  );
+});
 
 export default function StudyMateAI({ 
   profile, 
@@ -64,6 +101,7 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
   const [isLoading, setIsLoading] = useState(false);
   const [usePersonalization, setUsePersonalization] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [qualityWarning, setQualityWarning] = useState<string | null>(null);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   // Live Camera Scanner & Hand Cropping tool states
@@ -164,16 +202,37 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
     setCameraActive(false);
   };
 
-  const capturePhoto = () => {
+  const capturePhoto = async () => {
     if (videoRef.current) {
       const canvas = document.createElement("canvas");
-      canvas.width = videoRef.current.videoWidth || 640;
-      canvas.height = videoRef.current.videoHeight || 480;
+      canvas.width = videoRef.current.videoWidth || 1280;
+      canvas.height = videoRef.current.videoHeight || 720;
       const ctx = canvas.getContext("2d");
       if (ctx) {
         ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-        const dataUrl = canvas.toDataURL("image/png");
-        setCropSourceImage(dataUrl);
+        
+        // Quality check before compressing
+        const quality = checkImageQuality(canvas);
+        if (quality.warning) {
+          setQualityWarning(quality.warning);
+          if (onAddNotification) {
+            onAddNotification("Image Quality Warning", quality.warning, "info");
+          }
+        } else {
+          setQualityWarning(null);
+        }
+
+        let rawDataUrl = canvas.toDataURL("image/jpeg", 0.95);
+        try {
+          // Auto-contrast stretch the capture
+          rawDataUrl = await enhanceImageForOCR(rawDataUrl);
+          // High performance downscale & compression to optimize Gemini tokens
+          const compressed = await compressImage(rawDataUrl, 1024, 0.78);
+          setCropSourceImage(compressed);
+        } catch (err) {
+          console.error("Camera preprocessing error, using raw image stream:", err);
+          setCropSourceImage(rawDataUrl);
+        }
         setCropBox({ x: 15, y: 15, width: 70, height: 70 });
         stopCamera();
       }
@@ -486,7 +545,7 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = "high";
         ctx.drawImage(img, sx, sy, sWidth, sHeight, 0, 0, sWidth, sHeight);
-        const croppedDataUrl = canvas.toDataURL("image/png");
+        const croppedDataUrl = canvas.toDataURL("image/jpeg", 0.82);
         
         setSelectedImage(croppedDataUrl);
         setCropSourceImage(null);
@@ -568,7 +627,7 @@ How can I help you today? I can teach you Class 1-12 subjects, solve math equati
               });
             }
           } catch (e) {
-            console.error("Silent solve reauth failed:", e);
+            console.warn("Silent solve reauth failed:", e);
           }
         }
       }
@@ -643,15 +702,45 @@ ${data.conceptualExplanation || ""}`;
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 4 * 1024 * 1024) {
-        setErrorMessage("Image is too large. Please select an image smaller than 4MB.");
+      if (file.size > 16 * 1024 * 1024) {
+        setErrorMessage("Image is too large. Please select an image smaller than 16MB.");
         return;
       }
       const reader = new FileReader();
       reader.onloadend = () => {
-        setCropSourceImage(reader.result as string);
-        setCropBox({ x: 15, y: 15, width: 70, height: 70 });
-        setErrorMessage(null);
+        const rawSrc = reader.result as string;
+        
+        // Assess quality using an offscreen Image element
+        const img = new Image();
+        img.onload = async () => {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(img, 0, 0);
+            const quality = checkImageQuality(canvas);
+            if (quality.warning) {
+              setQualityWarning(quality.warning);
+              if (onAddNotification) {
+                onAddNotification("Image Quality Warning", quality.warning, "info");
+              }
+            } else {
+              setQualityWarning(null);
+            }
+          }
+          
+          try {
+            // Apply client-side downscale compression
+            const compressed = await compressImage(rawSrc, 1024, 0.78);
+            setCropSourceImage(compressed);
+          } catch (err) {
+            setCropSourceImage(rawSrc);
+          }
+          setCropBox({ x: 15, y: 15, width: 70, height: 70 });
+          setErrorMessage(null);
+        };
+        img.src = rawSrc;
       };
       reader.readAsDataURL(file);
     }
@@ -763,7 +852,7 @@ ${data.conceptualExplanation || ""}`;
               });
             }
           } catch (e) {
-            console.error("Silent chat reauth failed:", e);
+            console.warn("Silent chat reauth failed:", e);
           }
         }
       }
@@ -802,7 +891,7 @@ ${data.conceptualExplanation || ""}`;
 
     } catch (err: any) {
       clearTimeout(timeoutId);
-      console.error("StudyMate AI API error:", err);
+      console.warn("StudyMate AI API error:", err);
       if (err.name === "AbortError" || controller.signal.aborted) {
         if (abortControllerRef.current === null) {
           setErrorMessage("Chat request was cancelled successfully.");
@@ -964,38 +1053,7 @@ ${data.conceptualExplanation || ""}`;
         className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 bg-slate-50/50 dark:bg-slate-900/10"
       >
         {messages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}
-          >
-            {/* Sender Label */}
-            <span className="text-[9px] font-bold text-slate-400 mb-1 px-1">
-              {msg.role === "user" ? "You" : "StudyMate AI"} • {msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-
-            {/* Bubble */}
-            <div
-              className={`max-w-[85%] md:max-w-[75%] rounded-3xl p-4 md:p-5 shadow-sm text-sm leading-relaxed transition duration-150 ${
-                msg.role === "user"
-                  ? "bg-indigo-600 text-white rounded-tr-none font-medium"
-                  : "bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 rounded-tl-none border border-slate-100 dark:border-slate-800/60"
-              }`}
-            >
-              {/* Optional attached image inside bubble */}
-              {msg.image && (
-                <div className="mb-3 max-w-sm rounded-xl overflow-hidden border border-black/10 dark:border-white/10 shadow-inner">
-                  <img src={msg.image} alt="User Uploaded Attached File" className="w-full h-auto max-h-[220px] object-cover" />
-                </div>
-              )}
-
-              {/* Text content rendered using Markdown */}
-              <div className={`prose dark:prose-invert max-w-none text-xs md:text-sm ${msg.role === "user" ? "text-white prose-headings:text-white prose-p:text-white prose-strong:text-white" : "text-slate-800 dark:text-slate-200"}`}>
-                <ReactMarkdown>{msg.text}</ReactMarkdown>
-              </div>
-
-
-            </div>
-          </div>
+          <ChatMessageBubble key={msg.id} msg={msg} />
         ))}
 
         {/* Loading Spinner / Assistant Typing Dots */}
@@ -1017,6 +1075,22 @@ ${data.conceptualExplanation || ""}`;
               <X className="w-3 h-3" />
               <span>Cancel AI Request</span>
             </button>
+          </div>
+        )}
+
+        {qualityWarning && (
+          <div className="p-4 bg-amber-50 dark:bg-amber-950/10 border border-amber-200/50 dark:border-amber-900/30 rounded-2xl flex items-start space-x-3 text-amber-600 dark:text-amber-400 text-xs">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-extrabold block">Image Quality Notice</span>
+              <span className="block mt-0.5 opacity-95">{qualityWarning}</span>
+              <button 
+                onClick={() => setQualityWarning(null)}
+                className="mt-2 font-black underline cursor-pointer hover:opacity-80 block"
+              >
+                Dismiss Notice
+              </button>
+            </div>
           </div>
         )}
 

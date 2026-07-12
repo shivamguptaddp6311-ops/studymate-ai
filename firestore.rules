@@ -1,0 +1,140 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // 1. Global Default-Deny Catch-All (Safety Net)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // STANDALONE HELPER FUNCTIONS
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isOwnerEmail(email) {
+      return isSignedIn() && request.auth.token.email.lower() == email.lower();
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // VALIDATION BLUEPRINTS
+    function isValidUser(data) {
+      return data.email is string && data.email.size() > 0 && data.email.size() <= 256 &&
+             data.username is string && data.username.size() >= 2 && data.username.size() <= 50 &&
+             data.avatar is string && data.avatar.size() > 0 && data.avatar.size() <= 100 &&
+             data.level is int && data.level >= 1 && data.level <= 1000;
+    }
+
+    function isValidMessage(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.userEmail is string && data.userEmail.size() > 0 && data.userEmail.size() <= 256 &&
+             data.username is string && data.username.size() >= 2 && data.username.size() <= 50 &&
+             data.text is string && data.text.size() > 0 && data.text.size() <= 10000 &&
+             data.timestamp is string && data.timestamp.size() > 0;
+    }
+
+    function isValidReport(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.messageId is string && data.messageId.size() > 0 && data.messageId.size() <= 128 &&
+             data.messageAuthor is string && data.messageAuthor.size() > 0 && data.messageAuthor.size() <= 256 &&
+             data.reportedBy is string && data.reportedBy.size() > 0 && data.reportedBy.size() <= 256 &&
+             data.reason is string && data.reason.size() > 0 && data.reason.size() <= 256 &&
+             data.timestamp is string && data.timestamp.size() > 0 &&
+             data.status is string && (data.status == "pending" || data.status == "reviewed");
+    }
+
+    function isValidAdminLog(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.adminEmail is string && data.adminEmail.size() > 0 && data.adminEmail.size() <= 256 &&
+             data.action is string && data.action.size() > 0 && data.action.size() <= 256 &&
+             data.details is string && data.details.size() > 0 && data.details.size() <= 5000 &&
+             data.timestamp is string && data.timestamp.size() > 0;
+    }
+
+    function isValidSyncData(data) {
+      return data.updatedAt is string && data.updatedAt.size() > 0 && data.updatedAt.size() <= 128;
+    }
+
+    function isValidAIRequestLog(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.provider is string && data.provider.size() > 0 && data.provider.size() <= 128 &&
+             data.endpoint is string && data.endpoint.size() > 0 && data.endpoint.size() <= 256 &&
+             data.responseTimeMs is int && data.responseTimeMs >= 0 &&
+             data.success is bool &&
+             data.timestamp is string && data.timestamp.size() > 0;
+    }
+
+    // 2. Users Collection
+    match /users/{email} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn() && resource.data.email.lower() == request.auth.token.email.lower();
+      allow create: if isSignedIn() && isOwnerEmail(email) && isValidUser(incoming());
+      allow update: if isSignedIn() && isOwnerEmail(email) && isValidUser(incoming()) &&
+                    incoming().email == existing().email &&
+                    incoming().joinDate == existing().joinDate;
+      allow delete: if isSignedIn() && isOwnerEmail(email);
+    }
+
+    // 3. Messages Collection
+    match /messages/{messageId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(messageId) && isValidMessage(incoming()) &&
+                    incoming().userEmail.lower() == request.auth.token.email.lower();
+      allow update: if isSignedIn() && isValidId(messageId) && isValidMessage(incoming()) &&
+                    (incoming().userEmail.lower() == request.auth.token.email.lower() || 
+                     incoming().diff(existing()).affectedKeys().hasOnly(['reportsCount', 'isDeleted', 'deletedBy']));
+      allow delete: if isSignedIn() && existing().userEmail.lower() == request.auth.token.email.lower();
+    }
+
+    // 4. Reports Collection
+    match /reports/{reportId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(reportId) && isValidReport(incoming()) &&
+                    incoming().reportedBy.lower() == request.auth.token.email.lower();
+      allow update: if isSignedIn() && isValidId(reportId) && isValidReport(incoming()) &&
+                    incoming().diff(existing()).affectedKeys().hasOnly(['status', 'actionTaken', 'reviewedAt']);
+      allow delete: if false; // Reports should be immutable and not deleted directly by standard users
+    }
+
+    // 5. Admin Logs Collection
+    match /adminLogs/{logId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(logId) && isValidAdminLog(incoming()) &&
+                    incoming().adminEmail.lower() == request.auth.token.email.lower();
+      allow update, delete: if false; // Admin logs are append-only write-once
+    }
+
+    // 6. Sync Data Collection
+    match /syncData/{email} {
+      allow get: if isSignedIn() && isOwnerEmail(email);
+      allow create, update: if isSignedIn() && isOwnerEmail(email) && isValidSyncData(incoming());
+      allow delete: if isSignedIn() && isOwnerEmail(email);
+    }
+
+    // 7. AI Request Logs Collection
+    match /aiRequestLogs/{logId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isValidId(logId) && isValidAIRequestLog(incoming());
+      allow update, delete: if false; // AI request telemetry is append-only write-once
+    }
+  }
+}

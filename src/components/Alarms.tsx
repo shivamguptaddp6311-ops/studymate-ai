@@ -31,7 +31,7 @@ export function requestSpeakerAccess() {
     setTimeout(() => playTone(783.99, 0.3), 300); // G5
     return true;
   } catch (e) {
-    console.error("Failed to request speaker access:", e);
+    console.warn("Failed to request speaker access:", e);
     return false;
   }
 }
@@ -56,7 +56,7 @@ function playTone(freq: number, duration: number) {
     osc.start();
     osc.stop(ctx.currentTime + duration);
   } catch (e) {
-    console.error(e);
+    console.warn(e);
   }
 }
 
@@ -92,7 +92,7 @@ export function startRingtonePlayback(ringtoneName: string) {
     triggerBeat();
     ringToneInterval = setInterval(triggerBeat, 1800);
   } catch (e) {
-    console.error("Ringtone error:", e);
+    console.warn("Ringtone error:", e);
   }
 }
 
