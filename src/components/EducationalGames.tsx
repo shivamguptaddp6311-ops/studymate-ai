@@ -49,6 +49,9 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
   const [selectedCategory, setSelectedCategory] = useState<GameCategory>("all");
   const [difficulty, setDifficulty] = useState<DifficultyLevel>("medium");
   const [textSize, setTextSize] = useState<"normal" | "large" | "xlarge">("normal");
+  const [mathGrade, setMathGrade] = useState<string>(() => {
+    return localStorage.getItem(`studymate_games_${emailPrefix}_math_grade`) || profile.classGrade || "Class 8";
+  });
 
   // Player Economy & Progression (Persisted via LocalStorage)
   const [coins, setCoins] = useState<number>(() => {
@@ -186,8 +189,18 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
     localStorage.setItem(`studymate_games_${emailPrefix}_selected_avatar`, selectedAvatar);
     localStorage.setItem(`studymate_games_${emailPrefix}_unlocked_frames`, JSON.stringify(unlockedFrames));
     localStorage.setItem(`studymate_games_${emailPrefix}_selected_frame`, selectedFrame);
+    localStorage.setItem(`studymate_games_${emailPrefix}_math_grade`, mathGrade);
     localStorage.setItem("studymate_games_audio_muted", String(isMuted));
-  }, [coins, gems, userGameXP, gameStreak, unlockedAvatars, selectedAvatar, unlockedFrames, selectedFrame, isMuted, emailPrefix]);
+  }, [coins, gems, userGameXP, gameStreak, unlockedAvatars, selectedAvatar, unlockedFrames, selectedFrame, mathGrade, isMuted, emailPrefix]);
+
+  useEffect(() => {
+    if (profile.classGrade) {
+      setMathGrade(prev => {
+        const hasSaved = localStorage.getItem(`studymate_games_${emailPrefix}_math_grade`);
+        return hasSaved ? prev : profile.classGrade;
+      });
+    }
+  }, [profile.classGrade, emailPrefix]);
 
   // AI Game Recommender engine based on profile weakSubjects
   const getAIRecommendation = () => {
@@ -781,24 +794,54 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
 
             {/* Accessibility Controls & Difficulty Level selector */}
             <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900/60 p-4 rounded-3xl border border-slate-100 dark:border-slate-800/80">
-              <div className="flex items-center space-x-3.5">
-                <span className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center">
-                  <Sliders className="w-4 h-4 mr-1.5" /> Set Difficulty:
-                </span>
-                <div className="flex bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200/40 dark:border-slate-700/50">
-                  {(["easy", "medium", "hard", "expert"] as DifficultyLevel[]).map((level) => (
-                    <button
-                      key={level}
-                      onClick={() => { setDifficulty(level); synthSound(300 + (level === "expert" ? 200 : 50), "sine", 0.08); }}
-                      className={`text-[10px] uppercase tracking-wider font-black px-3 py-1.5 rounded-lg cursor-pointer transition ${
-                        difficulty === level
-                          ? "bg-indigo-500 text-white shadow-sm"
-                          : "text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700/50"
-                      }`}
+              <div className="flex flex-wrap items-center gap-4">
+                <div className="flex items-center space-x-3.5">
+                  <span className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center">
+                    <Sliders className="w-4 h-4 mr-1.5" /> Set Difficulty:
+                  </span>
+                  <div className="flex bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200/40 dark:border-slate-700/50">
+                    {(["easy", "medium", "hard", "expert"] as DifficultyLevel[]).map((level) => (
+                      <button
+                        key={level}
+                        onClick={() => { setDifficulty(level); synthSound(300 + (level === "expert" ? 200 : 50), "sine", 0.08); }}
+                        className={`text-[10px] uppercase tracking-wider font-black px-3 py-1.5 rounded-lg cursor-pointer transition ${
+                          difficulty === level
+                            ? "bg-indigo-500 text-white shadow-sm"
+                            : "text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700/50"
+                        }`}
+                      >
+                        {level}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Challenge Class Select Dropdown */}
+                <div className="flex items-center space-x-3">
+                  <span className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center">
+                    <Award className="w-4 h-4 mr-1.5 text-indigo-500" /> Math Class:
+                  </span>
+                  <div className="relative">
+                    <select
+                      value={mathGrade}
+                      onChange={(e) => {
+                        setMathGrade(e.target.value);
+                        synthSound(450, "sine", 0.1);
+                      }}
+                      className="bg-white dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-200 pl-3 pr-8 py-1.5 rounded-xl border border-slate-200/40 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer appearance-none"
                     >
-                      {level}
-                    </button>
-                  ))}
+                      {Array.from({ length: 12 }, (_, i) => `Class ${i + 1}`).map((cls) => (
+                        <option key={cls} value={cls}>
+                          {cls}
+                        </option>
+                      ))}
+                    </select>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
+                      <svg className="fill-current h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
+                        <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
+                      </svg>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -1467,7 +1510,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
               {activeGameId === "geometry_challenge" && (
                 <GeometryChallengeGame 
                   difficulty={difficulty}
-                  grade={profile.classGrade}
+                  grade={mathGrade}
                   onFinished={(score, max, acc) => handleGameFinished("geometry_challenge", score, max, acc)}
                   opponentScore={isMultiplayerMatch ? opponentScore : undefined}
                   opponentName={isMultiplayerMatch && matchedOpponent ? matchedOpponent.name : undefined}
@@ -1478,7 +1521,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
               {activeGameId === "quick_calc" && (
                 <MathCalculationSprintGame 
                   difficulty={difficulty}
-                  grade={profile.classGrade}
+                  grade={mathGrade}
                   onFinished={(score, max, acc) => handleGameFinished("quick_calc", score, max, acc)}
                   opponentScore={isMultiplayerMatch ? opponentScore : undefined}
                   opponentName={isMultiplayerMatch && matchedOpponent ? matchedOpponent.name : undefined}
@@ -1489,7 +1532,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
               {activeGameId === "math_fractions" && (
                 <MathCalculationSprintGame 
                   difficulty={difficulty}
-                  grade={profile.classGrade}
+                  grade={mathGrade}
                   onFinished={(score, max, acc) => handleGameFinished("math_fractions", score, max, acc)}
                   opponentScore={isMultiplayerMatch ? opponentScore : undefined}
                   opponentName={isMultiplayerMatch && matchedOpponent ? matchedOpponent.name : undefined}
@@ -1577,7 +1620,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
               {activeGameId === "logic_sequences" && (
                 <MathCalculationSprintGame 
                   difficulty={difficulty}
-                  grade={profile.classGrade}
+                  grade={mathGrade}
                   onFinished={(score, max, acc) => handleGameFinished("logic_sequences", score, max, acc)}
                   opponentScore={isMultiplayerMatch ? opponentScore : undefined}
                   opponentName={isMultiplayerMatch && matchedOpponent ? matchedOpponent.name : undefined}
@@ -1747,7 +1790,7 @@ function MathCalculationSprintGame({ difficulty, grade, onFinished, opponentScor
       let num2 = Math.floor(Math.random() * 8) + 2;
       
       // Adapting math based on classes/grades (Primary, Middle, Senior)
-      const gradeNum = parseInt(grade) || 8;
+      const gradeNum = parseInt(String(grade).replace(/\D/g, "")) || 8;
 
       if (gradeNum <= 4) {
         // Primary: Addition, Subtraction, basic tables
@@ -3059,7 +3102,7 @@ interface GeometryChallengeProps {
 }
 
 function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, opponentName, synthSound }: GeometryChallengeProps) {
-  const gradeNum = parseInt(grade) || 8;
+  const gradeNum = parseInt(String(grade).replace(/\D/g, "")) || 8;
 
   // Game flow states
   const [mode, setMode] = useState<"select" | "learn" | "practice" | "quiz">("select");

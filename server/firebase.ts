@@ -286,6 +286,18 @@ function getLocalMessages(before?: string, search?: string, limit = 50): ChatMes
 // Load local fallback cache on startup
 loadFallbackDB();
 
+// Verify Firestore connection on startup to avoid request delays and repeated retry error logs
+(async () => {
+  try {
+    // Attempt a quick, non-destructive read query to check Firestore permission and availability
+    await db.collection("users").limit(1).get();
+    console.log("[Firebase] Firestore connection verified. Using Firestore as primary database.");
+  } catch (err: any) {
+    console.warn(`[Firebase] Firestore connection failed or restricted in this container sandbox. Enabling local fallback DB immediately to prevent API latencies. Error: ${err.message || err}`);
+    useLocalFallback = true;
+  }
+})();
+
 export const firebaseDB = {
   // --- USERS ---
   async getUser(email: string): Promise<ChatUser | null> {
