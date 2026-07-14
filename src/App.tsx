@@ -2,6 +2,55 @@ import React, { useState, useEffect, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, Task, Alarm, TimetableItem, Habit, Badge, AppNotification, DailyActivity } from "./types";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { auth, signOut } from "./lib/firebase";
+
+// Privacy-respecting localStorage proxy wrapper to prevent caching sensitive session data unless explicitly enabled
+const customLocalStorage = {
+  getItem(key: string): string | null {
+    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
+    if (key === "studymate_remember_me" || remember) {
+      return window.localStorage.getItem(key);
+    }
+    return null;
+  },
+  setItem(key: string, value: string): void {
+    if (key === "studymate_remember_me" || window.localStorage.getItem("studymate_remember_me") === "true") {
+      window.localStorage.setItem(key, value);
+    }
+  },
+  removeItem(key: string): void {
+    window.localStorage.removeItem(key);
+  },
+  clear(): void {
+    window.localStorage.clear();
+  }
+};
+
+// Privacy-respecting sessionStorage proxy wrapper
+const customSessionStorage = {
+  getItem(key: string): string | null {
+    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
+    if (remember) {
+      return window.sessionStorage.getItem(key);
+    }
+    return null;
+  },
+  setItem(key: string, value: string): void {
+    if (window.localStorage.getItem("studymate_remember_me") === "true") {
+      window.sessionStorage.setItem(key, value);
+    }
+  },
+  removeItem(key: string): void {
+    window.sessionStorage.removeItem(key);
+  },
+  clear(): void {
+    window.sessionStorage.clear();
+  }
+};
+
+const localStorage = customLocalStorage;
+const sessionStorage = customSessionStorage;
+
 import { 
   DEFAULT_BADGES, MOTIVATIONAL_QUOTES, SUBJECT_PRESETS, EXAM_PRESETS, DEFAULT_HABITS 
 } from "./data";
@@ -118,8 +167,23 @@ const TAB_THEMES: Record<string, { gradient: string; activeBg: string; activeTex
 export default function App() {
   // Gmail Session Authentication
   const [loggedInEmail, setLoggedInEmail] = useState<string | null>(() => {
-    return localStorage.getItem("studymate_logged_in_email");
+    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
+    return remember ? window.localStorage.getItem("studymate_logged_in_email") : null;
   });
+
+  const [sessionToken, setSessionToken] = useState<string | null>(() => {
+    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
+    return remember ? window.localStorage.getItem("studymate_token") : null;
+  });
+
+  const [sessionRefreshToken, setSessionRefreshToken] = useState<string | null>(() => {
+    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
+    return remember ? window.localStorage.getItem("studymate_refresh_token") : null;
+  });
+
+  const isRememberMe = () => {
+    return window.localStorage.getItem("studymate_remember_me") === "true";
+  };
 
   // Dynamic user storage partition key generator
   const getStorageKey = (key: string) => {
@@ -139,9 +203,11 @@ export default function App() {
   const [studyHoursToday, setStudyHoursToday] = useState(2);
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [showNewSignupWelcome, setShowNewSignupWelcome] = useState<boolean>(() => {
-    const loggedEmail = localStorage.getItem("studymate_logged_in_email") || "default";
+    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
+    if (!remember) return false;
+    const loggedEmail = window.localStorage.getItem("studymate_logged_in_email") || "default";
     const dbPrefix = loggedEmail.replace(/[^a-zA-Z0-9]/g, "_");
-    return localStorage.getItem(`studymate_show_welcome_${dbPrefix}`) === "true";
+    return window.localStorage.getItem(`studymate_show_welcome_${dbPrefix}`) === "true";
   });
   
   // Navigation states
@@ -324,13 +390,23 @@ export default function App() {
   };
 
   // Log in Success handler
-  const handleLoginSuccess = (email: string, token: string, refreshToken?: string) => {
-    localStorage.setItem("studymate_logged_in_email", email);
-    localStorage.setItem("studymate_token", token);
-    if (refreshToken) {
-      localStorage.setItem("studymate_refresh_token", refreshToken);
+  const handleLoginSuccess = (email: string, token: string, refreshToken?: string, rememberMe?: boolean) => {
+    if (rememberMe) {
+      window.localStorage.setItem("studymate_remember_me", "true");
+      window.localStorage.setItem("studymate_logged_in_email", email);
+      window.localStorage.setItem("studymate_token", token);
+      if (refreshToken) {
+        window.localStorage.setItem("studymate_refresh_token", refreshToken);
+      }
+    } else {
+      window.localStorage.clear();
+      window.sessionStorage.clear();
     }
     setLoggedInEmail(email);
+    setSessionToken(token);
+    if (refreshToken) {
+      setSessionRefreshToken(refreshToken);
+    }
   };
 
   // Log Out / Clear session handler
@@ -338,10 +414,15 @@ export default function App() {
     // Fire-and-forget logout on server to clear HTTP-only cookies
     fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
     
-    localStorage.removeItem("studymate_logged_in_email");
-    localStorage.removeItem("studymate_token");
-    localStorage.removeItem("studymate_refresh_token");
+    // Clear Firebase Client Auth session
+    signOut(auth).catch((e) => console.warn("Firebase signOut error:", e));
+
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+
     setLoggedInEmail(null);
+    setSessionToken(null);
+    setSessionRefreshToken(null);
     setProfile(null);
     setTasks([]);
     setAlarms([]);
@@ -355,7 +436,7 @@ export default function App() {
   // Helper to silently request a fresh access token using refresh token
   const refreshClientToken = async (): Promise<string | null> => {
     try {
-      const storedRefreshToken = localStorage.getItem("studymate_refresh_token") || "";
+      const storedRefreshToken = sessionRefreshToken || window.localStorage.getItem("studymate_refresh_token") || "";
       if (!storedRefreshToken) {
         handleLogout();
         return null;
@@ -369,9 +450,15 @@ export default function App() {
       
       if (res.ok) {
         const data = await res.json();
-        localStorage.setItem("studymate_token", data.token);
+        setSessionToken(data.token);
         if (data.refreshToken) {
-          localStorage.setItem("studymate_refresh_token", data.refreshToken);
+          setSessionRefreshToken(data.refreshToken);
+        }
+        if (isRememberMe()) {
+          window.localStorage.setItem("studymate_token", data.token);
+          if (data.refreshToken) {
+            window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
+          }
         }
         return data.token;
       } else if (res.status === 401 || res.status === 403) {
@@ -401,7 +488,7 @@ export default function App() {
     setSyncStatus("syncing");
     
     try {
-      let token = localStorage.getItem("studymate_token") || "";
+      let token = sessionToken || window.localStorage.getItem("studymate_token") || "";
       const payload = {
         profile: currentProfile !== undefined ? currentProfile : profile,
         tasks: currentTasks !== undefined ? currentTasks : tasks,
@@ -459,7 +546,7 @@ export default function App() {
     
     setSyncStatus("syncing");
     try {
-      const token = localStorage.getItem("studymate_token") || "";
+      const token = sessionToken || window.localStorage.getItem("studymate_token") || "";
       const res = await fetch("/api/auth/delete-account", {
         method: "POST",
         headers: {
@@ -516,7 +603,7 @@ export default function App() {
       let serverData: any = null;
       let hasNetworkError = false;
       try {
-        let token = localStorage.getItem("studymate_token") || "";
+        let token = sessionToken || window.localStorage.getItem("studymate_token") || "";
         let res = await fetch("/api/sync/pull", {
           headers: {
             "Authorization": `Bearer ${token}`

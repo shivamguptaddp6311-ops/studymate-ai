@@ -1,38 +1,27 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { motion } from "motion/react";
-import { Sparkles, Shield, Mail, Key, Check, Info, ArrowRight, RefreshCw } from "lucide-react";
+import { Shield, Mail, Key, Info, ArrowRight, RefreshCw, LogIn, UserPlus } from "lucide-react";
+import { 
+  auth, 
+  googleProvider, 
+  signInWithPopup, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword 
+} from "../lib/firebase";
 
 interface GoogleLoginProps {
-  onLoginSuccess: (email: string, token: string) => void;
+  onLoginSuccess: (email: string, token: string, refreshToken?: string, rememberMe?: boolean) => void;
 }
 
 export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
+  const [activeTab, setActiveTab] = useState<"google" | "email">("google");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [accountExists, setAccountExists] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    const emailToTest = email.trim().toLowerCase();
-    if (emailToTest && emailToTest.includes("@") && emailToTest.includes(".")) {
-      const delayDebounce = setTimeout(async () => {
-        try {
-          const res = await fetch(`/api/auth/check-email?email=${encodeURIComponent(emailToTest)}`);
-          if (res.ok) {
-            const data = await res.json();
-            setAccountExists(data.exists);
-          }
-        } catch (e) {
-          console.warn("Failed to check email existence", e);
-        }
-      }, 400);
-      return () => clearTimeout(delayDebounce);
-    } else {
-      setAccountExists(null);
-    }
-  }, [email]);
 
   const playSound = (freq: number, type: OscillatorType = "sine") => {
     try {
@@ -50,17 +39,57 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
     } catch (e) {}
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleGoogleSignIn = async () => {
+    setLoading(true);
+    setError("");
+    playSound(600, "sine");
+    try {
+      // Force account selection is configured in googleProvider custom parameters
+      const result = await signInWithPopup(auth, googleProvider);
+      const user = result.user;
+      if (!user || !user.email) {
+        throw new Error("Failed to retrieve user email from Google OAuth.");
+      }
+
+      const idToken = await user.getIdToken();
+
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: user.email,
+          idToken
+        })
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Authentication verification failed on the server.");
+      }
+
+      playSound(880, "sine");
+      onLoginSuccess(data.email, data.token, data.refreshToken, rememberMe);
+    } catch (err: any) {
+      console.error("Google sign in error:", err);
+      setError(err.message || "Google authentication handshake failed.");
+      playSound(300, "sawtooth");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmailPasswordSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email) {
-      setError("Please enter your Google account email.");
+    if (!email || !password) {
+      setError("Please fill in both email and password fields.");
       playSound(300, "sawtooth");
       return;
     }
-    
-    // Quick validation
+
     if (!email.includes("@") || !email.includes(".")) {
-      setError("Please enter a valid Gmail address (e.g., shivamguptaddp6312@gmail.com).");
+      setError("Please enter a valid email address.");
       playSound(300, "sawtooth");
       return;
     }
@@ -70,8 +99,19 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
     playSound(600, "sine");
 
     try {
-      // If password field is empty or dot placeholder, use preset
-      const actualPassword = (!password || password === "••••••••••••") ? "Shivam@6312" : password;
+      let userCredential;
+      if (isSignUp) {
+        userCredential = await createUserWithEmailAndPassword(auth, email.trim(), password);
+      } else {
+        userCredential = await signInWithEmailAndPassword(auth, email.trim(), password);
+      }
+
+      const user = userCredential.user;
+      if (!user || !user.email) {
+        throw new Error("Firebase auth did not return a valid user session.");
+      }
+
+      const idToken = await user.getIdToken();
 
       const res = await fetch("/api/auth/login", {
         method: "POST",
@@ -79,31 +119,39 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          email: email.trim(),
-          password: actualPassword
+          email: user.email,
+          idToken
         })
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error || "Authentication failed.");
+        throw new Error(data.error || "Failed to secure backend session synchronization.");
       }
 
       playSound(880, "sine");
-      onLoginSuccess(data.email, data.token);
+      onLoginSuccess(data.email, data.token, data.refreshToken, rememberMe);
     } catch (err: any) {
-      setError(err.message || "Failed to establish secure login handshakes.");
+      console.error("Email/Password auth error:", err);
+      let errMsg = "Authentication failed.";
+      if (err.code === "auth/wrong-password" || err.code === "auth/invalid-credential") {
+        errMsg = "Incorrect password. Please verify your password and try again.";
+      } else if (err.code === "auth/user-not-found") {
+        errMsg = "No study profile matches this email. Toggle to 'Sign Up' to register your profile!";
+      } else if (err.code === "auth/email-already-in-use") {
+        errMsg = "This email is already registered. Toggle to 'Log In' to access your profile.";
+      } else if (err.code === "auth/invalid-email") {
+        errMsg = "Please enter a valid email address.";
+      } else if (err.code === "auth/weak-password") {
+        errMsg = "Password must be at least 6 characters long.";
+      } else {
+        errMsg = err.message || errMsg;
+      }
+      setError(errMsg);
       playSound(300, "sawtooth");
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleQuickLogin = (presetEmail: string) => {
-    setEmail(presetEmail);
-    setPassword("Shivam@6312");
-    setShowPassword(true);
-    playSound(550, "sine");
   };
 
   return (
@@ -120,10 +168,9 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
         className="w-full max-w-md bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden p-8 space-y-6 relative"
       >
         
-        {/* Google G Brand Header */}
+        {/* Brand Header */}
         <div className="text-center space-y-2.5">
           <div className="flex justify-center">
-            {/* Beautiful authentic-like Google SVG Logo Icon */}
             <div className="w-14 h-14 rounded-2xl bg-slate-50 dark:bg-slate-800/80 border border-slate-100 dark:border-slate-800 flex items-center justify-center shadow-sm">
               <svg className="w-7 h-7" viewBox="0 0 24 24">
                 <path
@@ -147,8 +194,8 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
           </div>
           
           <div className="space-y-1">
-            <h2 className="text-xl font-black text-slate-800 dark:text-slate-100 font-sans tracking-tight">Sign in with Google</h2>
-            <p className="text-xs text-slate-400 font-semibold">to continue to StudyMate Workspace</p>
+            <h2 className="text-xl font-black text-slate-800 dark:text-slate-100 font-sans tracking-tight">StudyMate Workspace</h2>
+            <p className="text-xs text-slate-400 font-semibold">Secure study synchronization platform</p>
           </div>
         </div>
 
@@ -156,123 +203,198 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
         <div className="p-3 bg-slate-50 dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-start space-x-2.5 text-[11px] text-slate-500 leading-normal">
           <Shield className="w-4.5 h-4.5 text-indigo-500 flex-shrink-0 mt-0.5" />
           <span>
-            <strong>Automatic Sync:</strong> Your grade's CBSE syllabus modules, 10-day test series, custom timetables, and Consistency Streaks will be locked to this specific Google Account.
+            <strong>Automatic Sync:</strong> Your CBSE syllabus modules, custom timetables, and Consistency Streaks will be secured to your authenticated account.
           </span>
         </div>
 
-        {/* LoginForm */}
-        <form onSubmit={handleSubmit} className="space-y-4">
-          
-          {/* Email input field */}
-          <div className="space-y-1">
-            <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">Google Email Address</label>
-            <div className="relative">
-              <input
-                type="email"
-                placeholder="email@gmail.com"
-                required
-                className="w-full px-3.5 py-2.5 pl-10 rounded-xl border border-slate-200 dark:border-slate-800 bg-transparent text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-500 transition-colors"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={loading}
-              />
-              <Mail className="w-4.5 h-4.5 text-slate-400 absolute left-3 top-3" />
-            </div>
-            
-            {accountExists !== null && (
-              <motion.div 
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`text-[10px] font-bold p-2.5 rounded-xl border flex items-start space-x-1.5 leading-normal ${
-                  accountExists 
-                    ? "bg-emerald-50/50 dark:bg-emerald-950/10 border-emerald-100/60 dark:border-emerald-900/30 text-emerald-600 dark:text-emerald-400" 
-                    : "bg-indigo-50/50 dark:bg-indigo-950/10 border-indigo-100/60 dark:border-indigo-900/30 text-indigo-600 dark:text-indigo-400"
-                }`}
-              >
-                <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-                {accountExists ? (
-                  <span>Registered study profile found. Click below to <strong>Sign Back In</strong> and sync your data!</span>
-                ) : (
-                  <span>No existing study profile found. You will be guided to <strong>Create a New Profile</strong>!</span>
-                )}
-              </motion.div>
-            )}
-          </div>
-
-          {/* Optional Password input field for high-fidelity feeling */}
-          <div className="space-y-1">
-            <div className="flex justify-between items-center">
-              <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">Account Password (Optional)</label>
-              <button 
-                type="button" 
-                onClick={() => setShowPassword(!showPassword)}
-                className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400"
-              >
-                {showPassword ? "Hide" : "Show"}
-              </button>
-            </div>
-            <div className="relative">
-              <input
-                type={showPassword ? "text" : "password"}
-                placeholder="••••••••••••"
-                className="w-full px-3.5 py-2.5 pl-10 rounded-xl border border-slate-200 dark:border-slate-800 bg-transparent text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-500 transition-colors"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                disabled={loading}
-              />
-              <Key className="w-4.5 h-4.5 text-slate-400 absolute left-3 top-3" />
-            </div>
-          </div>
-
-          {error && (
-            <p className="text-[10px] text-rose-500 font-bold bg-rose-50 dark:bg-rose-950/20 p-2.5 rounded-xl border border-rose-100 dark:border-rose-900/30 flex items-center">
-              <Info className="w-3.5 h-3.5 mr-1.5 flex-shrink-0" />
-              {error}
-            </p>
-          )}
-
-          {/* Action Login button */}
+        {/* Switch Tabs for Auth Type */}
+        <div className="flex bg-slate-100 dark:bg-slate-950 p-1 rounded-2xl border border-slate-150 dark:border-slate-800">
           <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 dark:disabled:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center justify-center space-x-2 cursor-pointer"
+            type="button"
+            onClick={() => {
+              setActiveTab("google");
+              setError("");
+              playSound(450, "sine");
+            }}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "google"
+                ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-100/60 dark:border-slate-800"
+                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+            }`}
           >
-            {loading ? (
-              <>
-                <RefreshCw className="w-4.5 h-4.5 animate-spin text-white" />
-                <span>Synchronizing OAuth Handshake...</span>
-              </>
-            ) : (
-              <>
-                <span>
-                  {accountExists === true 
-                    ? "Sign Back In with Google" 
-                    : accountExists === false 
-                    ? "Create New StudyMate Account" 
-                    : "Securely Log In with Google"}
-                </span>
-                <ArrowRight className="w-4 h-4" />
-              </>
-            )}
+            Google OAuth
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab("email");
+              setError("");
+              playSound(450, "sine");
+            }}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+              activeTab === "email"
+                ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm border border-slate-100/60 dark:border-slate-800"
+                : "text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+            }`}
+          >
+            Email & Password
+          </button>
+        </div>
 
-        </form>
+        {error && (
+          <p className="text-[10px] text-rose-500 font-bold bg-rose-50 dark:bg-rose-950/20 p-2.5 rounded-xl border border-rose-100 dark:border-rose-900/30 flex items-center leading-normal">
+            <Info className="w-3.5 h-3.5 mr-1.5 flex-shrink-0" />
+            {error}
+          </p>
+        )}
 
-        {/* Quick Demo Login Option for Shivam and Evaluators */}
-        <div className="border-t border-slate-100 dark:border-slate-800 pt-4 space-y-2">
-          <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block text-center">
-            One-Tap Sync Presets
-          </span>
-          <div className="flex justify-center">
+        {/* Auth Content based on active tab */}
+        {activeTab === "google" ? (
+          <div className="space-y-4">
+            <div className="p-3 text-center text-[11px] text-slate-400 font-semibold leading-relaxed">
+              Log in securely with your Google account. We never permanently save or auto-fill your credentials.
+            </div>
+
+            <div className="flex items-center space-x-2 pb-2 justify-center">
+              <input
+                id="google_remember_me"
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+              />
+              <label htmlFor="google_remember_me" className="text-[11px] font-bold text-slate-500 dark:text-slate-400 select-none cursor-pointer">
+                Remember me on this device
+              </label>
+            </div>
+
             <button
-              onClick={() => handleQuickLogin("shivamguptaddp6312@gmail.com")}
-              className="px-4 py-2 bg-slate-50 hover:bg-slate-100 dark:bg-slate-950 dark:hover:bg-slate-800 border border-slate-100 dark:border-slate-800 rounded-xl text-[11px] font-bold text-slate-600 dark:text-slate-300 transition flex items-center space-x-1.5"
+              type="button"
+              disabled={loading}
+              onClick={handleGoogleSignIn}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 dark:disabled:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center justify-center space-x-2 cursor-pointer"
             >
-              <span>User: shivamguptaddp6312@gmail.com</span>
-              <Check className="w-3.5 h-3.5 text-emerald-500" />
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4.5 h-4.5 animate-spin text-white" />
+                  <span>Verifying Google Handshake...</span>
+                </>
+              ) : (
+                <>
+                  <span>Sign In with Google Account</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
             </button>
           </div>
-        </div>
+        ) : (
+          <form onSubmit={handleEmailPasswordSubmit} className="space-y-4">
+            
+            {/* Log In vs Sign Up toggle */}
+            <div className="flex justify-between items-center px-1">
+              <span className="text-[11px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                {isSignUp ? "Create a New Profile" : "Access Existing Profile"}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsSignUp(!isSignUp);
+                  setError("");
+                  playSound(500, "sine");
+                }}
+                className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+              >
+                {isSignUp ? "Switch to Log In" : "Switch to Sign Up"}
+              </button>
+            </div>
+
+            {/* Email input field */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">Email Address</label>
+              <div className="relative">
+                <input
+                  type="email"
+                  placeholder="email@example.com"
+                  required
+                  className="w-full px-3.5 py-2.5 pl-10 rounded-xl border border-slate-200 dark:border-slate-800 bg-transparent text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-500 transition-colors"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                />
+                <Mail className="w-4.5 h-4.5 text-slate-400 absolute left-3 top-3" />
+              </div>
+            </div>
+
+            {/* Password input field */}
+            <div className="space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-widest block">Password</label>
+                <button 
+                  type="button" 
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400"
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••••••"
+                  required
+                  className="w-full px-3.5 py-2.5 pl-10 rounded-xl border border-slate-200 dark:border-slate-800 bg-transparent text-xs text-slate-800 dark:text-slate-100 outline-none focus:border-indigo-500 transition-colors"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  disabled={loading}
+                />
+                <Key className="w-4.5 h-4.5 text-slate-400 absolute left-3 top-3" />
+              </div>
+            </div>
+
+            {/* Remember Me checkbox */}
+            <div className="flex items-center space-x-2 pb-2">
+              <input
+                id="email_remember_me"
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="rounded border-slate-300 dark:border-slate-700 text-indigo-600 focus:ring-indigo-500 w-4 h-4 cursor-pointer"
+              />
+              <label htmlFor="email_remember_me" className="text-[11px] font-bold text-slate-500 dark:text-slate-400 select-none cursor-pointer">
+                Remember me on this device
+              </label>
+            </div>
+
+            {/* Action button */}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-300 dark:disabled:bg-slate-800 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center justify-center space-x-2 cursor-pointer"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="w-4.5 h-4.5 animate-spin text-white" />
+                  <span>Authenticating secure profile...</span>
+                </>
+              ) : (
+                <>
+                  {isSignUp ? (
+                    <>
+                      <UserPlus className="w-4.5 h-4.5 mr-1" />
+                      <span>Create Profile & Sign Up</span>
+                    </>
+                  ) : (
+                    <>
+                      <LogIn className="w-4.5 h-4.5 mr-1" />
+                      <span>Log In to StudyMate</span>
+                    </>
+                  )}
+                  <ArrowRight className="w-4 h-4 ml-1" />
+                </>
+              )}
+            </button>
+          </form>
+        )}
 
       </motion.div>
     </div>

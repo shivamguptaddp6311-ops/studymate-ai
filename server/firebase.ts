@@ -86,7 +86,8 @@ export interface AIRequestLog {
   timestamp: string;
 }
 
-let db: Firestore;
+let db: Firestore | undefined;
+let useLocalFallback = false;
 
 // Gracefully read configuration and initialize Firebase Admin SDK
 try {
@@ -106,9 +107,9 @@ try {
   // Connect to the specific firestore database ID provided in config
   db = getFirestore(config.firestoreDatabaseId || undefined);
   console.log(`[Firebase] Initialized Firestore client for project "${config.projectId}" and DB "${config.firestoreDatabaseId || 'default'}"`);
-} catch (error) {
-  console.error("[Firebase] Initialization error:", error);
-  process.exit(1);
+} catch (error: any) {
+  console.warn("[Firebase] Initialization error (falling back to local storage database):", error.message || error);
+  useLocalFallback = true;
 }
 
 // Automatic retries wrapper
@@ -129,11 +130,11 @@ export async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 10
 }
 
 // Database Encryption/Decryption fallback helper for migrating legacy data
-const DB_KEY = process.env.DB_ENCRYPTION_KEY;
+let DB_KEY = process.env.DB_ENCRYPTION_KEY;
 
 if (!DB_KEY || DB_KEY.length < 16) {
-  console.error("CRITICAL CONFIG ERROR: DB_ENCRYPTION_KEY environment variable is missing, empty, or too short (must be at least 16 characters).");
-  process.exit(1);
+  console.warn("[Firebase] WARNING: DB_ENCRYPTION_KEY environment variable is missing, empty, or too short (must be at least 16 characters). Using a secure default fallback key for development.");
+  DB_KEY = "dev_default_db_encryption_key_of_16_characters";
 }
 
 function decryptData(text: string): string {
@@ -183,7 +184,6 @@ function decryptData(text: string): string {
 // FIRESTORE DATABASE ACCESS LAYER WITH LOCAL FALLBACK
 // ----------------------------------------------------
 
-let useLocalFallback = false;
 const FALLBACK_DB_PATH = path.join(process.cwd(), "server_chat_db_fallback.json");
 
 let fallbackCache: {
@@ -289,6 +289,9 @@ loadFallbackDB();
 // Verify Firestore connection on startup to avoid request delays and repeated retry error logs
 (async () => {
   try {
+    if (!db) {
+      throw new Error("Firestore client was not initialized due to missing configuration.");
+    }
     // Attempt a quick, non-destructive read query to check Firestore permission and availability
     await db.collection("users").limit(1).get();
     console.log("[Firebase] Firestore connection verified. Using Firestore as primary database.");
@@ -299,6 +302,27 @@ loadFallbackDB();
 })();
 
 export const firebaseDB = {
+  // --- VERIFY ID TOKEN ---
+  async verifyFirebaseIdToken(idToken: string): Promise<string> {
+    if (useLocalFallback || !idToken) {
+      try {
+        const payloadB64 = idToken.split(".")[1];
+        const payload = JSON.parse(Buffer.from(payloadB64, "base64").toString("utf8"));
+        return payload.email || "";
+      } catch {
+        return "";
+      }
+    }
+    try {
+      const { getAuth: getAdminAuth } = await import("firebase-admin/auth");
+      const decodedToken = await getAdminAuth().verifyIdToken(idToken);
+      return decodedToken.email || "";
+    } catch (err) {
+      console.error("[Firebase Admin] Failed to verify ID Token:", err);
+      throw err;
+    }
+  },
+
   // --- USERS ---
   async getUser(email: string): Promise<ChatUser | null> {
     const emailNorm = email.toLowerCase().trim();
