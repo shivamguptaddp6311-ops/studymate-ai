@@ -219,32 +219,119 @@ async function retryWithBackoff<T>(
   throw lastError;
 }
 
+// Robust state-machine to repair common AI-generated JSON formatting errors
+export function repairJsonString(raw: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    
+    if (inString) {
+      if (escaped) {
+        // We are currently escaping a character.
+        // In standard JSON, only certain characters can follow a backslash: ", \, /, b, f, n, r, t, u
+        // But in math/LaTeX or rich texts, we might have things like \frac, \alpha, \times, \theta, \beta.
+        const isValidEscape = ["\"", "\\", "/", "b", "f", "n", "r", "t"].includes(c) || 
+                              (c === "u" && /^[0-9a-fA-F]{4}$/.test(raw.substring(i + 1, i + 5)));
+        
+        if (!isValidEscape) {
+          result += "\\\\" + c;
+        } else {
+          // If it is f, b, t, n, r but followed by letters (e.g. \frac, \begin, \times, \newline, \right)
+          // it is almost certainly a LaTeX keyword or other text keyword rather than a real control character.
+          const rest = raw.substring(i);
+          const isLatexWord = /^[a-zA-Z]+/.test(rest);
+          if (isLatexWord && ["f", "b", "t", "n", "r"].includes(c)) {
+            result += "\\\\" + c;
+          } else {
+            result += "\\" + c;
+          }
+        }
+        escaped = false;
+      } else if (c === "\\") {
+        escaped = true;
+      } else if (c === "\"") {
+        inString = false;
+        result += c;
+      } else if (c === "\n") {
+        // Raw literal newlines are invalid in JSON string values. Escape them as \n.
+        result += "\\n";
+      } else if (c === "\r") {
+        result += "\\r";
+      } else if (c === "\t") {
+        result += "\\t";
+      } else {
+        result += c;
+      }
+    } else {
+      if (c === "\"") {
+        inString = true;
+      }
+      result += c;
+    }
+  }
+  
+  if (escaped) {
+    result += "\\\\";
+  }
+  
+  // Clean up trailing commas in objects or arrays
+  return result.replace(/,\s*([\]}])/g, "$1");
+}
+
 // Robust fallback JSON parser helper
 export function parseJsonResponse(text: string): any {
   if (!text) return {};
   const cleaned = text.trim();
+  
+  // 1. Try standard parsing of the cleaned text
   try {
     return JSON.parse(cleaned);
   } catch (e) {
-    // Attempt markdown json extraction
-    const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-    if (jsonMatch && jsonMatch[1]) {
-      try {
-        return JSON.parse(jsonMatch[1].trim());
-      } catch (e2) {
-        // continue
-      }
-    }
-    // Attempt relaxed cleanup (e.g. strip wrapping ```, trim whitespaces)
-    let relaxed = cleaned;
-    relaxed = relaxed.replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+    // continue
+  }
+
+  // 2. Try markdown json block extraction
+  const jsonMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (jsonMatch && jsonMatch[1]) {
     try {
-      return JSON.parse(relaxed.trim());
-    } catch (e3) {
-      console.error("[AIService] Failed all attempts to parse JSON response:", text);
-      throw new Error("Failed to parse JSON response from AI provider.");
+      return JSON.parse(jsonMatch[1].trim());
+    } catch (e2) {
+      // continue
     }
   }
+
+  // 3. Try parsing after relaxed cleanup (stripping code blocks)
+  let relaxed = cleaned;
+  relaxed = relaxed.replace(/^```json\s*/i, "").replace(/\s*```$/, "").trim();
+  try {
+    return JSON.parse(relaxed);
+  } catch (e3) {
+    // continue
+  }
+
+  // 4. Try parsing using our custom state-machine repair helper on the text
+  try {
+    const repaired = repairJsonString(relaxed);
+    return JSON.parse(repaired);
+  } catch (e4) {
+    // continue
+  }
+
+  // 5. Try parsing using our custom state-machine repair helper on raw match
+  if (jsonMatch && jsonMatch[1]) {
+    try {
+      const repairedMatch = repairJsonString(jsonMatch[1].trim());
+      return JSON.parse(repairedMatch);
+    } catch (e5) {
+      // continue
+    }
+  }
+
+  console.error("[AIService] Failed all attempts to parse JSON response:", text);
+  throw new Error("Failed to parse JSON response from AI provider.");
 }
 
 // Main execution function with retries and automatic fallback
@@ -327,7 +414,7 @@ export async function executeAIRequest(options: {
       try {
         // Validate support for document/PDF format
         if (isPdf && ["openai", "groq", "anthropic"].includes(provider)) {
-          console.warn(`[AIService] Skipping provider ${provider} because PDF document input is only natively supported by Gemini/OpenRouter.`);
+          console.info(`[AIService] Skipping provider ${provider} because PDF document input is only natively supported by Gemini/OpenRouter.`);
           continue;
         }
 
@@ -378,10 +465,10 @@ export async function executeAIRequest(options: {
       } catch (err: any) {
         const errMsg = err.message || String(err);
         if (provider === "anthropic" && (errMsg.includes("credit balance") || errMsg.includes("Credit balance") || errMsg.includes("billing") || errMsg.includes("Billing") || errMsg.includes("status 400"))) {
-          console.warn("[AIService] Disabling Anthropic provider dynamically due to credit balance/billing failure.");
+          console.info("[AIService] Disabling Anthropic provider dynamically due to credit balance/billing failure.");
           isAnthropicDisabled = true;
         }
-        console.warn(`[AIService] Provider ${provider} failed:`, err.message || err);
+        console.info(`[AIService] Provider ${provider} failed, attempting fallback:`, err.message || err);
         lastError = err;
         
         // Propagate immediate aborts
@@ -495,7 +582,7 @@ async function callGemini(
         signal
       );
     }, 3, 1000, (err, attempt) => {
-      console.warn(`[AIService] Gemini attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
+      console.info(`[AIService] Gemini attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
     }, signal);
   };
 
@@ -513,7 +600,7 @@ async function callGemini(
       errMsg.includes("timed out") ||
       errMsg.includes("timeout")
     ) {
-      console.warn(`[AIService] gemini-3.5-flash failed with: ${errMsg}. Instantly falling back to gemini-3.1-flash-lite...`);
+      console.info(`[AIService] gemini-3.5-flash failed with: ${errMsg}. Instantly falling back to gemini-3.1-flash-lite...`);
       try {
         return await executeCall("gemini-3.1-flash-lite");
       } catch (fallbackErr) {
@@ -594,7 +681,7 @@ async function callOpenAI(
       signal
     );
   }, 3, 1000, (err, attempt) => {
-    console.warn(`[AIService] OpenAI attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
+    console.info(`[AIService] OpenAI attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
   }, signal);
 }
 
@@ -669,7 +756,7 @@ async function callGroq(
       signal
     );
   }, 3, 1000, (err, attempt) => {
-    console.warn(`[AIService] Groq attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
+    console.info(`[AIService] Groq attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
   }, signal);
 }
 
@@ -747,7 +834,7 @@ async function callOpenRouter(
       signal
     );
   }, 3, 1000, (err, attempt) => {
-    console.warn(`[AIService] OpenRouter attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
+    console.info(`[AIService] OpenRouter attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
   }, signal);
 }
 
@@ -839,6 +926,6 @@ async function callAnthropic(
       signal
     );
   }, 3, 1000, (err, attempt) => {
-    console.warn(`[AIService] Anthropic attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
+    console.info(`[AIService] Anthropic attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
   }, signal);
 }

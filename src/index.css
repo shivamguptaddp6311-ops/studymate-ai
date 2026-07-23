@@ -1,15 +1,301 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400;1,600&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
+  --font-sans: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif;
+  --font-display: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
 }
 
 body {
   font-family: var(--font-sans);
+  transition: background-color 0.3s ease, color 0.3s ease;
+  background-color: #0f172a;
+  background-image: radial-gradient(rgba(147, 51, 234, 0.08) 1.5px, transparent 1.5px), radial-gradient(rgba(59, 130, 246, 0.05) 1.5px, transparent 1.5px);
+  background-position: 0 0, 12px 12px;
+  background-size: 24px 24px;
+  color: #f8fafc;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .font-display {
   font-family: var(--font-display);
 }
+
+/* ==========================================================================
+   APPLE-LEVEL TYPOGRAPHY HIERARCHY UTILITIES
+   ========================================================================== */
+
+.typo-hero {
+  font-family: var(--font-display);
+  font-size: clamp(2rem, 3.5vw + 1rem, 3.5rem);
+  line-height: 1.12;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.typo-large-title {
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 2vw + 0.5rem, 2.25rem);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+}
+
+.typo-section-title {
+  font-family: var(--font-display);
+  font-size: clamp(1.125rem, 1.25vw + 0.25rem, 1.5rem);
+  line-height: 1.28;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.typo-subtitle {
+  font-family: var(--font-sans);
+  font-size: 0.975rem;
+  line-height: 1.45;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.typo-body {
+  font-family: var(--font-sans);
+  font-size: 0.925rem;
+  line-height: 1.6;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+}
+
+.typo-caption {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  font-weight: 400;
+  letter-spacing: 0em;
+}
+
+.typo-button {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.25;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.typo-label-sm {
+  font-family: var(--font-sans);
+  font-size: 0.725rem;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* Accessibility: Text Size Scale Support */
+html.text-size-sm {
+  font-size: 14px !important;
+}
+html.text-size-md {
+  font-size: 16px !important;
+}
+html.text-size-lg {
+  font-size: 18px !important;
+}
+
+/* ==========================================================================
+   FLAGSHIP MOTION & ANIMATION SYSTEM UTILITIES (60-120 FPS)
+   ========================================================================== */
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes floatSlow {
+  0%, 100% {
+    transform: translateY(0px) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(0.5deg);
+  }
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(255, 255, 255, 0.15) 50%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite linear;
+}
+
+.animate-float-slow {
+  animation: floatSlow 6s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 3s ease-in-out infinite;
+}
+
+/* Accessible Interactive Touch Targets */
+button, 
+a, 
+input, 
+select, 
+textarea {
+  min-height: 44px;
+}
+button:active, 
+a:active {
+  transform: scale(0.98);
+}
+
+/* Flagship Color Palette: Deep Navy Dark Mode (#070b18) */
+html.dark,
+html.dark body {
+  background-color: #070b18 !important;
+  color: #f8fafc !important;
+  background-image: radial-gradient(rgba(168, 85, 247, 0.07) 1.5px, transparent 1.5px), radial-gradient(rgba(59, 130, 246, 0.05) 1.5px, transparent 1.5px) !important;
+  background-size: 28px 28px !important;
+}
+
+/* Flagship Frosted Glass Surface Cards with Very Subtle Translucent White Borders */
+html.dark .bg-white,
+html.dark .bg-slate-900,
+html.dark .bg-slate-800,
+html.dark [class*="bg-slate-900/"],
+html.dark [class*="bg-slate-800/"] {
+  background-color: rgba(13, 21, 38, 0.75) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35) !important;
+  backdrop-filter: blur(16px) !important;
+}
+
+/* Hover state glow for Frosted Glass cards */
+html.dark .bg-white:hover,
+html.dark .bg-slate-900:hover {
+  border-color: rgba(255, 255, 255, 0.2) !important;
+  box-shadow: 0 12px 40px rgba(147, 51, 234, 0.15) !important;
+}
+
+/* Primary Purple Gradient Overrides */
+html.dark .bg-indigo-600,
+html.dark .bg-indigo-500,
+html.dark .bg-purple-600 {
+  background-image: linear-gradient(to right, #9333ea, #6366f1, #7e22ce) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.2) !important;
+}
+
+html.dark .text-indigo-600,
+html.dark .text-indigo-500,
+html.dark .text-indigo-400,
+html.dark .text-purple-400 {
+  color: #c084fc !important;
+}
+
+html.dark .border-indigo-100,
+html.dark .border-slate-100,
+html.dark .border-slate-200,
+html.dark .border-slate-700,
+html.dark .border-slate-800 {
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+html.dark input, 
+html.dark select, 
+html.dark textarea {
+  background-color: rgba(10, 16, 30, 0.85) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: #f8fafc !important;
+}
+
+html.dark input:focus, 
+html.dark select:focus, 
+html.dark textarea:focus {
+  border-color: #c084fc !important;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.35) !important;
+}
+
+/* High Contrast Mode Styles */
+html.high-contrast .text-slate-400,
+html.high-contrast .text-slate-500,
+html.high-contrast .text-slate-600 {
+  color: #1e293b !important;
+}
+html.dark.high-contrast .text-slate-400,
+html.dark.high-contrast .text-slate-500,
+html.dark.high-contrast .text-slate-600 {
+  color: #f1f5f9 !important;
+}
+
+html.high-contrast .border,
+html.high-contrast border {
+  border-color: #000000 !important;
+  border-width: 2px !important;
+}
+
+html.dark.high-contrast .border,
+html.dark.high-contrast border {
+  border-color: #ffffff !important;
+  border-width: 2px !important;
+}
+
+html.high-contrast button,
+html.high-contrast input,
+html.high-contrast select {
+  border: 2px solid #000000 !important;
+}
+
+html.dark.high-contrast button,
+html.dark.high-contrast input,
+html.dark.high-contrast select {
+  border: 2px solid #ffffff !important;
+}
+
+/* Clean Premium Theme-Adaptive Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+html.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
+/* Ensure all select drop-down option lists have dark navy backgrounds and readable text in Dark Mode */
+html.dark option {
+  background-color: #0d1527 !important;
+  color: #f8fafc !important;
+}
+

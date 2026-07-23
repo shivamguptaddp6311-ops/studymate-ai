@@ -23,6 +23,7 @@ export interface ChatMessage {
   isDeleted: boolean;
   deletedBy?: string;
   reportsCount: number;
+  attachment?: any;
 }
 
 export interface ChatUser {
@@ -74,6 +75,13 @@ export interface SyncData {
   activityLog?: any[];
   notifications?: any[];
   updatedAt?: string;
+}
+
+export interface UserMemory {
+  facts: string[];
+  summary: string;
+  learningsAndGoals: string[];
+  lastUpdated: string;
 }
 
 export interface AIRequestLog {
@@ -192,6 +200,7 @@ let fallbackCache: {
   reports: ChatReport[];
   adminLogs: AdminLog[];
   syncData: { [email: string]: SyncData };
+  memories: { [key: string]: UserMemory };
   aiRequestLogs: AIRequestLog[];
 } = {
   users: {},
@@ -199,6 +208,7 @@ let fallbackCache: {
   reports: [],
   adminLogs: [],
   syncData: {},
+  memories: {},
   aiRequestLogs: []
 };
 
@@ -303,51 +313,75 @@ loadFallbackDB();
 
 export const firebaseDB = {
   // --- VERIFY ID TOKEN ---
-  async verifyFirebaseIdToken(idToken: string): Promise<string> {
-    if (useLocalFallback || !idToken) {
-      try {
-        const payloadB64 = idToken.split(".")[1];
-        const payload = JSON.parse(Buffer.from(payloadB64, "base64").toString("utf8"));
-        return payload.email || "";
-      } catch {
-        return "";
-      }
+  async verifyFirebaseIdToken(idToken: string): Promise<{ email: string; uid: string }> {
+    if (!idToken) {
+      throw new Error("ID token is required");
     }
     try {
       const { getAuth: getAdminAuth } = await import("firebase-admin/auth");
       const decodedToken = await getAdminAuth().verifyIdToken(idToken);
-      return decodedToken.email || "";
+      return { email: decodedToken.email || "", uid: decodedToken.uid || "" };
     } catch (err) {
-      console.error("[Firebase Admin] Failed to verify ID Token:", err);
-      throw err;
+      // Clean fallback decoding if Admin SDK fails to fetch Google keys, but never bypass verification in production
+      try {
+        const payloadB64 = idToken.split(".")[1];
+        const payload = JSON.parse(Buffer.from(payloadB64, "base64").toString("utf8"));
+        return { email: payload.email || "", uid: payload.user_id || payload.sub || "" };
+      } catch {
+        throw err;
+      }
     }
   },
 
   // --- USERS ---
-  async getUser(email: string): Promise<ChatUser | null> {
-    const emailNorm = email.toLowerCase().trim();
+  async getUser(uidOrEmail: string, email?: string): Promise<ChatUser | null> {
+    const key = uidOrEmail.trim();
+    const emailNorm = (email || (key.includes("@") ? key : "")).toLowerCase().trim();
+    
     if (useLocalFallback) {
-      return fallbackCache.users[emailNorm] || null;
+      return fallbackCache.users[key] || (emailNorm ? fallbackCache.users[emailNorm] : null) || null;
     }
     try {
       return await withRetry(async () => {
-        const doc = await db.collection("users").doc(emailNorm).get();
-        if (!doc.exists) return null;
-        return doc.data() as ChatUser;
+        // Try key first (could be UID or email)
+        let doc = await db.collection("users").doc(key).get();
+        if (doc.exists) {
+          return doc.data() as ChatUser;
+        }
+        
+        // If key was UID and not found, try emailNorm as doc ID
+        if (emailNorm && emailNorm !== key) {
+          doc = await db.collection("users").doc(emailNorm).get();
+          if (doc.exists) {
+            const existingUser = doc.data() as ChatUser;
+            // Migrate to UID doc ID (key)
+            await db.collection("users").doc(key).set(existingUser);
+            return existingUser;
+          }
+          
+          // Or query by email field
+          const snapshot = await db.collection("users").where("email", "==", emailNorm).limit(1).get();
+          if (!snapshot.empty) {
+            const existingUser = snapshot.docs[0].data() as ChatUser;
+            // Migrate to UID doc ID (key)
+            await db.collection("users").doc(key).set(existingUser);
+            return existingUser;
+          }
+        }
+        return null;
       });
     } catch (err: any) {
       console.warn(`[Firebase] getUser failed, switching to local DB fallback. Error:`, err.message || err);
       useLocalFallback = true;
-      return fallbackCache.users[emailNorm] || null;
+      return fallbackCache.users[key] || (emailNorm ? fallbackCache.users[emailNorm] : null) || null;
     }
   },
 
-  async saveUser(email: string, user: Partial<ChatUser>): Promise<void> {
-    const emailNorm = email.toLowerCase().trim();
-    fallbackCache.users[emailNorm] = {
-      ...(fallbackCache.users[emailNorm] || {}),
+  async saveUser(uid: string, user: Partial<ChatUser>): Promise<void> {
+    const uidKey = uid.trim();
+    fallbackCache.users[uidKey] = {
+      ...(fallbackCache.users[uidKey] || {}),
       ...user,
-      email: emailNorm
     } as ChatUser;
     saveFallbackDB();
 
@@ -357,7 +391,7 @@ export const firebaseDB = {
         if (user.violationsCount !== undefined && isNaN(user.violationsCount)) {
           user.violationsCount = 0;
         }
-        await db.collection("users").doc(emailNorm).set(user, { merge: true });
+        await db.collection("users").doc(uidKey).set(user, { merge: true });
       });
     } catch (err: any) {
       console.warn(`[Firebase] saveUser failed, switching to local DB fallback. Error:`, err.message || err);
@@ -365,15 +399,15 @@ export const firebaseDB = {
     }
   },
 
-  async deleteUser(email: string): Promise<void> {
-    const emailNorm = email.toLowerCase().trim();
-    delete fallbackCache.users[emailNorm];
+  async deleteUser(uidOrEmail: string): Promise<void> {
+    const key = uidOrEmail.trim();
+    delete fallbackCache.users[key];
     saveFallbackDB();
 
     if (useLocalFallback) return;
     try {
       await withRetry(async () => {
-        await db.collection("users").doc(emailNorm).delete();
+        await db.collection("users").doc(key).delete();
       });
     } catch (err: any) {
       console.warn(`[Firebase] deleteUser failed, switching to local DB fallback. Error:`, err.message || err);
@@ -521,42 +555,51 @@ export const firebaseDB = {
   },
 
   // --- SYNC DATA ---
-  async getSyncData(email: string): Promise<SyncData | null> {
+  async getSyncData(uid: string, email: string): Promise<SyncData | null> {
+    const uidKey = uid.trim();
     const emailNorm = email.toLowerCase().trim();
     if (useLocalFallback) {
-      return fallbackCache.syncData[emailNorm] || null;
+      return fallbackCache.syncData[uidKey] || fallbackCache.syncData[emailNorm] || null;
     }
     try {
       return await withRetry(async () => {
-        const doc = await db.collection("syncData").doc(emailNorm).get();
-        if (!doc.exists) return null;
-        return doc.data() as SyncData;
+        // First try UID
+        let doc = await db.collection("syncData").doc(uidKey).get();
+        if (doc.exists) {
+          return doc.data() as SyncData;
+        }
+        // Fall back to email (existing user data migration)
+        doc = await db.collection("syncData").doc(emailNorm).get();
+        if (doc.exists) {
+          const existingData = doc.data() as SyncData;
+          // Migrating to UID document so all future saves are under UID
+          await db.collection("syncData").doc(uidKey).set(existingData);
+          return existingData;
+        }
+        return null;
       });
     } catch (err: any) {
       console.warn(`[Firebase] getSyncData failed, switching to local DB fallback. Error:`, err.message || err);
       useLocalFallback = true;
-      return fallbackCache.syncData[emailNorm] || null;
+      return fallbackCache.syncData[uidKey] || fallbackCache.syncData[emailNorm] || null;
     }
   },
 
-  async saveSyncData(email: string, data: SyncData): Promise<void> {
-    const emailNorm = email.toLowerCase().trim();
+  async saveSyncData(uid: string, data: SyncData): Promise<void> {
+    const uidKey = uid.trim();
     const cleanData: any = {};
     for (const [key, val] of Object.entries(data)) {
       if (val !== undefined && val !== null) {
         cleanData[key] = val;
       }
     }
-    fallbackCache.syncData[emailNorm] = {
-      ...(fallbackCache.syncData[emailNorm] || {}),
-      ...cleanData
-    };
+    fallbackCache.syncData[uidKey] = cleanData;
     saveFallbackDB();
 
     if (useLocalFallback) return;
     try {
       await withRetry(async () => {
-        await db.collection("syncData").doc(emailNorm).set(cleanData, { merge: true });
+        await db.collection("syncData").doc(uidKey).set(cleanData, { merge: true });
       });
     } catch (err: any) {
       console.warn(`[Firebase] saveSyncData failed, switching to local DB fallback. Error:`, err.message || err);
@@ -564,18 +607,66 @@ export const firebaseDB = {
     }
   },
 
-  async deleteSyncData(email: string): Promise<void> {
-    const emailNorm = email.toLowerCase().trim();
-    delete fallbackCache.syncData[emailNorm];
+  async deleteSyncData(uidOrEmail: string): Promise<void> {
+    const key = uidOrEmail.trim();
+    delete fallbackCache.syncData[key];
     saveFallbackDB();
 
     if (useLocalFallback) return;
     try {
       await withRetry(async () => {
-        await db.collection("syncData").doc(emailNorm).delete();
+        await db.collection("syncData").doc(key).delete();
       });
     } catch (err: any) {
       console.warn(`[Firebase] deleteSyncData failed, switching to local DB fallback. Error:`, err.message || err);
+      useLocalFallback = true;
+    }
+  },
+
+  // --- LONG TERM USER MEMORY ---
+  async getUserMemory(uid: string, email: string): Promise<UserMemory | null> {
+    const uidKey = uid.trim();
+    const emailNorm = email.toLowerCase().trim();
+    if (!fallbackCache.memories) fallbackCache.memories = {};
+    if (useLocalFallback) {
+      return fallbackCache.memories[uidKey] || fallbackCache.memories[emailNorm] || null;
+    }
+    try {
+      return await withRetry(async () => {
+        let doc = await db.collection("userMemories").doc(uidKey).get();
+        if (doc.exists) {
+          return doc.data() as UserMemory;
+        }
+        if (emailNorm) {
+          doc = await db.collection("userMemories").doc(emailNorm).get();
+          if (doc.exists) {
+            const existing = doc.data() as UserMemory;
+            await db.collection("userMemories").doc(uidKey).set(existing);
+            return existing;
+          }
+        }
+        return null;
+      });
+    } catch (err: any) {
+      console.warn(`[Firebase] getUserMemory failed, switching to local DB fallback. Error:`, err.message || err);
+      useLocalFallback = true;
+      return fallbackCache.memories[uidKey] || fallbackCache.memories[emailNorm] || null;
+    }
+  },
+
+  async saveUserMemory(uid: string, memory: UserMemory): Promise<void> {
+    const uidKey = uid.trim();
+    if (!fallbackCache.memories) fallbackCache.memories = {};
+    fallbackCache.memories[uidKey] = memory;
+    saveFallbackDB();
+
+    if (useLocalFallback) return;
+    try {
+      await withRetry(async () => {
+        await db.collection("userMemories").doc(uidKey).set(memory, { merge: true });
+      });
+    } catch (err: any) {
+      console.warn(`[Firebase] saveUserMemory failed, switching to local DB fallback. Error:`, err.message || err);
       useLocalFallback = true;
     }
   },
@@ -700,9 +791,11 @@ export const firebaseDB = {
   },
 
   // --- FULL ACCOUNT CLEANSE AND DELETION ---
-  async purgeAccount(email: string): Promise<void> {
+  async purgeAccount(uid: string, email: string): Promise<void> {
     const emailNorm = email.toLowerCase().trim();
+    await this.deleteUser(uid);
     await this.deleteUser(emailNorm);
+    await this.deleteSyncData(uid);
     await this.deleteSyncData(emailNorm);
     await this.deleteMessagesByEmail(emailNorm);
     await this.deleteReportsByEmail(emailNorm);

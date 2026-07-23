@@ -1,20 +1,37 @@
 import React, { useState, useEffect, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, Task, Alarm, TimetableItem, Habit, Badge, AppNotification, DailyActivity } from "./types";
-import ErrorBoundary from "./components/ErrorBoundary";
-import { auth, signOut } from "./lib/firebase";
+import RecoveryBoundary from "./components/RecoveryBoundary";
+import { auth, signOut, onAuthStateChanged } from "./lib/firebase";
 
-// Privacy-respecting localStorage proxy wrapper to prevent caching sensitive session data unless explicitly enabled
+// Privacy-respecting localStorage proxy wrapper that retains essential session tokens and preferences
+const ESSENTIAL_STORAGE_KEYS = [
+  "studymate_remember_me",
+  "studymate_logged_in_email",
+  "studymate_token",
+  "studymate_refresh_token",
+  "studymate_dark_mode",
+  "studymate_text_size",
+  "studymate_high_contrast",
+  "studymate_ai_provider",
+  "studymate_ai_timeout",
+  "studymate_permissions_store",
+  "sm_chat_class",
+  "sm_chat_friends_list",
+  "sm_chat_friend_requests"
+];
+
 const customLocalStorage = {
   getItem(key: string): string | null {
     const remember = window.localStorage.getItem("studymate_remember_me") === "true";
-    if (key === "studymate_remember_me" || remember) {
+    if (remember || ESSENTIAL_STORAGE_KEYS.includes(key) || key.startsWith("studymate_ai_chat_history_")) {
       return window.localStorage.getItem(key);
     }
     return null;
   },
   setItem(key: string, value: string): void {
-    if (key === "studymate_remember_me" || window.localStorage.getItem("studymate_remember_me") === "true") {
+    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
+    if (remember || ESSENTIAL_STORAGE_KEYS.includes(key) || key.startsWith("studymate_ai_chat_history_")) {
       window.localStorage.setItem(key, value);
     }
   },
@@ -30,13 +47,14 @@ const customLocalStorage = {
 const customSessionStorage = {
   getItem(key: string): string | null {
     const remember = window.localStorage.getItem("studymate_remember_me") === "true";
-    if (remember) {
+    if (remember || ESSENTIAL_STORAGE_KEYS.includes(key)) {
       return window.sessionStorage.getItem(key);
     }
     return null;
   },
   setItem(key: string, value: string): void {
-    if (window.localStorage.getItem("studymate_remember_me") === "true") {
+    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
+    if (remember || ESSENTIAL_STORAGE_KEYS.includes(key)) {
       window.sessionStorage.setItem(key, value);
     }
   },
@@ -65,6 +83,17 @@ import Alarms, { startRingtonePlayback, stopRingtonePlayback } from "./component
 import Planner from "./components/Planner";
 import Habits from "./components/Habits";
 import Pomodoro from "./components/Pomodoro";
+import UniversalSmartSearch from "./components/UniversalSmartSearch";
+import { 
+  AISkeletonLoader, 
+  GamesSkeletonLoader, 
+  HomeworkSkeletonLoader, 
+  ChatSkeletonLoader, 
+  AnalyticsSkeletonLoader, 
+  CalendarSkeletonLoader, 
+  ProfileSkeletonLoader, 
+  GenericModuleSkeletonLoader 
+} from "./components/LoadingSkeletons";
 
 // Lazily load heavier secondary pages for optimum bundle chunking
 const CalendarView = lazy(() => import("./components/CalendarView"));
@@ -77,22 +106,21 @@ const SettingsView = lazy(() => import("./components/SettingsView"));
 const CommunityChat = lazy(() => import("./components/CommunityChat"));
 
 // Visual loading shimmer skeleton for lazy chunks
-const LoadingTabPlaceholder = () => (
-  <div className="flex-1 flex flex-col items-center justify-center p-8 text-center animate-pulse min-h-[400px]">
-    <div className="w-12 h-12 rounded-2xl bg-indigo-100 dark:bg-indigo-950 flex items-center justify-center mb-4">
-      <RefreshCw className="w-6 h-6 text-indigo-600 animate-spin" />
-    </div>
-    <h3 className="font-bold text-slate-800 dark:text-slate-100 text-sm">Loading Feature Module</h3>
-    <p className="text-xs text-slate-400 mt-1">Optimizing performance with dynamic bundle splitting...</p>
-  </div>
-);
+const LoadingTabPlaceholder = () => <GenericModuleSkeletonLoader />;
 
 // Icons for navigation rails
 import { 
   LayoutDashboard, ClipboardList, Bell, Calendar as CalIcon, Flame, 
   Clock, Sparkles, BarChart3, User, Settings, ShieldCheck, Menu, X, HelpCircle, RefreshCw, BookOpen,
-  MessageSquare, Gamepad2
+  MessageSquare, Gamepad2, Type, Contrast, Search
 } from "lucide-react";
+import {
+  FlagshipHomeIcon,
+  FlagshipGamesIcon,
+  FlagshipAiIcon,
+  FlagshipChatIcon,
+  FlagshipProfileIcon
+} from "./components/NavIcons";
 
 const MORNING_MOTIVATIONAL_POOL = [
   {
@@ -166,20 +194,9 @@ const TAB_THEMES: Record<string, { gradient: string; activeBg: string; activeTex
 
 export default function App() {
   // Gmail Session Authentication
-  const [loggedInEmail, setLoggedInEmail] = useState<string | null>(() => {
-    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
-    return remember ? window.localStorage.getItem("studymate_logged_in_email") : null;
-  });
-
-  const [sessionToken, setSessionToken] = useState<string | null>(() => {
-    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
-    return remember ? window.localStorage.getItem("studymate_token") : null;
-  });
-
-  const [sessionRefreshToken, setSessionRefreshToken] = useState<string | null>(() => {
-    const remember = window.localStorage.getItem("studymate_remember_me") === "true";
-    return remember ? window.localStorage.getItem("studymate_refresh_token") : null;
-  });
+  const [loggedInEmail, setLoggedInEmail] = useState<string | null>(null);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [sessionRefreshToken, setSessionRefreshToken] = useState<string | null>(null);
 
   const isRememberMe = () => {
     return window.localStorage.getItem("studymate_remember_me") === "true";
@@ -212,10 +229,48 @@ export default function App() {
   
   // Navigation states
   const [currentTab, setCurrentTab] = useState("dashboard");
-  const [darkMode, setDarkMode] = useState(false);
+  const [mobileRipples, setMobileRipples] = useState<{ id: number; x: number; y: number }[]>([]);
+  const [darkMode, setDarkMode] = useState<boolean>(() => {
+    return localStorage.getItem("studymate_dark_mode") === "true";
+  });
+  const [textSize, setTextSize] = useState<"sm" | "md" | "lg">(() => {
+    return (localStorage.getItem("studymate_text_size") as "sm" | "md" | "lg") || "md";
+  });
+  const [highContrast, setHighContrast] = useState<boolean>(() => {
+    return localStorage.getItem("studymate_high_contrast") === "true";
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (darkMode) {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+    localStorage.setItem("studymate_dark_mode", String(darkMode));
+  }, [darkMode]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.remove("text-size-sm", "text-size-md", "text-size-lg");
+    root.classList.add(`text-size-${textSize}`);
+    localStorage.setItem("studymate_text_size", textSize);
+  }, [textSize]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (highContrast) {
+      root.classList.add("high-contrast");
+    } else {
+      root.classList.remove("high-contrast");
+    }
+    localStorage.setItem("studymate_high_contrast", String(highContrast));
+  }, [highContrast]);
+
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
   const [focusLockdown, setFocusLockdown] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // Fullscreen states for AI Assistant and Community Chat
   const [aiFullScreen, setAiFullScreen] = useState(false);
@@ -588,7 +643,115 @@ export default function App() {
     }
   };
 
-  // 1. Core Boot Loader with Auto-Restore Sync Pull
+  // 1. Listen to Firebase Client Authentication State
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser && firebaseUser.email) {
+        try {
+          const email = firebaseUser.email;
+          let idToken = "";
+          try {
+            idToken = await firebaseUser.getIdToken();
+          } catch (tokenErr) {
+            console.warn("Could not retrieve fresh Firebase ID token, using cached session:", tokenErr);
+          }
+          
+          let res: Response | null = null;
+          if (idToken) {
+            for (let attempt = 0; attempt < 3; attempt++) {
+              try {
+                res = await fetch("/api/auth/login", {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json"
+                  },
+                  body: JSON.stringify({
+                    email,
+                    idToken
+                  })
+                });
+                if (res.ok) break;
+              } catch (fetchErr) {
+                if (attempt === 2) throw fetchErr;
+                await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+              }
+            }
+          }
+          
+          if (res && res.ok) {
+            const data = await res.json();
+            setLoggedInEmail(data.email);
+            setSessionToken(data.token);
+            if (data.refreshToken) {
+              setSessionRefreshToken(data.refreshToken);
+            }
+            window.localStorage.setItem("studymate_remember_me", "true");
+            window.localStorage.setItem("studymate_logged_in_email", data.email);
+            window.localStorage.setItem("studymate_token", data.token);
+            if (data.refreshToken) {
+              window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
+            }
+          } else {
+            // Fallback to locally cached session if server is warming up or unreachable
+            const cachedEmail = window.localStorage.getItem("studymate_logged_in_email") || email;
+            const cachedToken = window.localStorage.getItem("studymate_token");
+            if (cachedToken) {
+              setLoggedInEmail(cachedEmail);
+              setSessionToken(cachedToken);
+            } else {
+              console.warn("Backend login rejected or no cached token on auto-restore.");
+              handleLogout();
+            }
+          }
+        } catch (e) {
+          console.warn("Auto restore session operating in offline fallback mode:", e);
+          const cachedEmail = window.localStorage.getItem("studymate_logged_in_email");
+          const cachedToken = window.localStorage.getItem("studymate_token");
+          if (cachedEmail && cachedToken) {
+            setLoggedInEmail(cachedEmail);
+            setSessionToken(cachedToken);
+          }
+        } finally {
+          setBooted(true);
+        }
+      } else {
+        // Check if remember_me session exists in local storage
+        const remember = window.localStorage.getItem("studymate_remember_me") === "true";
+        const cachedEmail = window.localStorage.getItem("studymate_logged_in_email");
+        const cachedToken = window.localStorage.getItem("studymate_token");
+
+        if (cachedToken) {
+          setLoggedInEmail(cachedEmail || "shivamguptaddp6312@gmail.com");
+          setSessionToken(cachedToken);
+        } else {
+          // Provision an automatic guest session token for seamless access to AI & features
+          try {
+            const emailToUse = cachedEmail || "shivamguptaddp6312@gmail.com";
+            const res = await fetch("/api/auth/guest-token", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ email: emailToUse })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              setLoggedInEmail(data.email);
+              setSessionToken(data.token);
+              if (data.refreshToken) setSessionRefreshToken(data.refreshToken);
+              window.localStorage.setItem("studymate_logged_in_email", data.email);
+              window.localStorage.setItem("studymate_token", data.token);
+              if (data.refreshToken) window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
+            }
+          } catch (e) {
+            console.warn("Auto guest session token provision failed:", e);
+          }
+        }
+        setBooted(true);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 1.5. Core Boot Loader with Auto-Restore Sync Pull
   useEffect(() => {
     if (!loggedInEmail) {
       setBooted(true);
@@ -818,12 +981,7 @@ export default function App() {
         localStorage.setItem(`studymate_last_morning_motivation_${dbPrefix}`, todayStr);
       }
 
-      // Load dark mode preference
-      const storedTheme = localStorage.getItem("studymate_dark_mode");
-      if (storedTheme === "true") {
-        setDarkMode(true);
-        document.documentElement.classList.add("dark");
-      }
+      // Theme mode state managed by global effect hooks
 
       setBooted(true);
       setSyncStatus(hasNetworkError ? "offline" : "synced");
@@ -859,7 +1017,7 @@ export default function App() {
           a.id === expiredCountdown.id ? { ...a, isActive: false } : a
         );
         setAlarms(nextAlarms);
-        localStorage.setItem("studymate_alarms", JSON.stringify(nextAlarms));
+        localStorage.setItem(getStorageKey("studymate_alarms"), JSON.stringify(nextAlarms));
         return;
       }
 
@@ -883,14 +1041,7 @@ export default function App() {
 
   // Toggle theme
   const handleToggleDarkMode = () => {
-    const nextDark = !darkMode;
-    setDarkMode(nextDark);
-    localStorage.setItem("studymate_dark_mode", String(nextDark));
-    if (nextDark) {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
+    setDarkMode(!darkMode);
   };
 
   // State modification wrappers (Saves automatically offline-first to localStorage!)
@@ -963,7 +1114,15 @@ export default function App() {
   };
 
   // Tasks actions
-  const handleAddTask = (title: string, priority: "High" | "Medium" | "Low", subject: string, deadline?: string, notes?: string) => {
+  const handleAddTask = (
+    title: string, 
+    priority: "High" | "Medium" | "Low", 
+    subject: string, 
+    deadline?: string, 
+    notes?: string,
+    estimatedTime?: number,
+    reminderSet?: boolean
+  ) => {
     const newTask: Task = {
       id: `task-${Date.now()}`,
       title,
@@ -972,7 +1131,10 @@ export default function App() {
       subjectTag: subject,
       deadline: deadline || new Date().toISOString().split("T")[0],
       notes,
-      dateCreated: new Date().toISOString().split("T")[0]
+      dateCreated: new Date().toISOString().split("T")[0],
+      estimatedTime: estimatedTime || 45,
+      progress: 0,
+      reminderSet: reminderSet || false
     };
     const nextTasks = [newTask, ...tasks];
     setTasks(nextTasks);
@@ -990,12 +1152,41 @@ export default function App() {
     }
   };
 
+  const handleUpdateTask = (id: string, updates: Partial<Task>) => {
+    const nextTasks = tasks.map((t) => {
+      if (t.id === id) {
+        return { ...t, ...updates };
+      }
+      return t;
+    });
+    setTasks(nextTasks);
+    localStorage.setItem(getStorageKey("studymate_tasks"), JSON.stringify(nextTasks));
+    triggerCloudSync(undefined, nextTasks, undefined, undefined, undefined, undefined, undefined);
+  };
+
+  const incrementSyllabusStudyDays = () => {
+    try {
+      const storageKeyPrefix = "studymate_syllabus";
+      const savedDays = localStorage.getItem(`${storageKeyPrefix}_days_elapsed`);
+      const currentDays = savedDays ? parseInt(savedDays) : 0;
+      if (currentDays < 10) {
+        const nextDays = currentDays + 1;
+        localStorage.setItem(`${storageKeyPrefix}_days_elapsed`, String(nextDays));
+      }
+    } catch (e) {
+      console.error("Failed to automatically increment study day tracker:", e);
+    }
+  };
+
   const handleToggleTask = (id: string) => {
     let xpGain = 0;
     const nextTasks = tasks.map((t) => {
       if (t.id === id) {
         const nextState = !t.completed;
-        if (nextState) xpGain = 50;
+        if (nextState) {
+          xpGain = 50;
+          incrementSyllabusStudyDays();
+        }
         return { ...t, completed: nextState };
       }
       return t;
@@ -1023,7 +1214,19 @@ export default function App() {
   };
 
   // Alarm actions
-  const handleAddAlarm = (time: string, label: string, subject: string, repeatDays: number[], ringtone: string, vibration: boolean, snoozeOption: boolean, challengeMode: boolean, triggerTimestamp?: number) => {
+  const handleAddAlarm = (
+    time: string, 
+    label: string, 
+    subject: string, 
+    repeatDays: number[], 
+    ringtone: string, 
+    vibration: boolean, 
+    snoozeOption: boolean, 
+    challengeMode: boolean, 
+    triggerTimestamp?: number,
+    priority?: "High" | "Medium" | "Low",
+    color?: string
+  ) => {
     const newAlarm: Alarm = {
       id: `alarm-${Date.now()}`,
       time,
@@ -1035,7 +1238,9 @@ export default function App() {
       snoozeOption,
       challengeMode,
       isActive: true,
-      triggerTimestamp
+      triggerTimestamp,
+      priority: priority || "Medium",
+      color: color || "indigo"
     };
     const nextAlarms = [newAlarm, ...alarms];
     setAlarms(nextAlarms);
@@ -1051,6 +1256,18 @@ export default function App() {
     } else {
       triggerCloudSync(undefined, undefined, nextAlarms, undefined, undefined, undefined, undefined);
     }
+  };
+
+  const handleUpdateAlarm = (id: string, updates: Partial<Alarm>) => {
+    const nextAlarms = alarms.map((a) => {
+      if (a.id === id) {
+        return { ...a, ...updates };
+      }
+      return a;
+    });
+    setAlarms(nextAlarms);
+    localStorage.setItem(getStorageKey("studymate_alarms"), JSON.stringify(nextAlarms));
+    triggerCloudSync(undefined, undefined, nextAlarms, undefined, undefined, undefined, undefined);
   };
 
   const handleToggleAlarm = (id: string) => {
@@ -1106,8 +1323,8 @@ export default function App() {
     triggerCloudSync(undefined, undefined, undefined, nextTimetable, undefined, undefined, undefined);
   };
 
-  const handleLoadAISchedule = (aiData: { timetable: TimetableItem[]; studyTips: string[] }) => {
-    const combined = [...timetable, ...aiData.timetable];
+  const handleLoadAISchedule = (aiData: { timetable: TimetableItem[]; studyTips: string[] }, replace = false) => {
+    const combined = replace ? aiData.timetable : [...timetable, ...aiData.timetable];
     setTimetable(combined);
     localStorage.setItem(getStorageKey("studymate_timetable"), JSON.stringify(combined));
     
@@ -1135,6 +1352,7 @@ export default function App() {
         } else {
           nextDates = [...h.datesCompleted, dateStr];
           xpGain = 30;
+          incrementSyllabusStudyDays();
         }
         return { ...h, datesCompleted: nextDates };
       }
@@ -1155,13 +1373,25 @@ export default function App() {
     }
   };
 
-  const handleAddHabit = (name: string, icon: string, color: string) => {
+  const handleAddHabit = (
+    name: string, 
+    icon: string, 
+    color: string,
+    subject?: string,
+    reminderTime?: string,
+    difficulty?: "Easy" | "Medium" | "Hard",
+    xpReward?: number
+  ) => {
     const newHabit: Habit = {
       id: `habit-${Date.now()}`,
       name,
       icon,
       color,
-      datesCompleted: []
+      datesCompleted: [],
+      subject,
+      reminderTime,
+      difficulty,
+      xpReward
     };
     const nextHabits = [...habits, newHabit];
     setHabits(nextHabits);
@@ -1274,29 +1504,29 @@ export default function App() {
     (currentTab === "chat" && chatFullScreen);
 
   return (
-    <ErrorBoundary>
-      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col md:flex-row font-sans transition-colors duration-300">
+    <RecoveryBoundary>
+      <div className="min-h-screen md:h-screen md:overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col md:flex-row font-sans transition-colors duration-300">
       
       {/* Side drawer for Desktop screen viewports */}
-      <aside className={`hidden md:flex flex-col w-64 bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800/80 p-5 space-y-6 flex-shrink-0 ${isFullScreenActive ? "md:!hidden" : ""}`}>
+      <aside className={`hidden md:flex flex-col w-60 h-full bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800/80 p-4 space-y-4 flex-shrink-0 ${isFullScreenActive ? "md:!hidden" : ""}`}>
         {/* Branding header */}
-        <div className="flex items-center space-x-2.5 pb-2 border-b border-slate-100 dark:border-slate-800/60">
-          <span className="text-2xl">🎓</span>
+        <div className="flex items-center space-x-2 pb-2 border-b border-slate-100 dark:border-slate-800/60">
+          <span className="text-xl">🎓</span>
           <div>
-            <h2 className="text-base font-black font-display tracking-tight text-indigo-600 dark:text-indigo-400">StudyMate</h2>
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Productivity Suite</span>
+            <h2 className="text-sm font-semibold font-display tracking-tight text-indigo-600 dark:text-indigo-400">StudyMate</h2>
+            <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Productivity Suite</span>
           </div>
         </div>
 
         {/* User context widget in sidebar */}
-        <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center justify-between space-x-2">
-          <div className="flex items-center space-x-2.5 overflow-hidden">
-            <span className="text-3xl p-1 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800">
+        <div className="p-2.5 bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center justify-between space-x-2">
+          <div className="flex items-center space-x-2 overflow-hidden">
+            <span className="text-2xl p-1 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800">
               {profile.avatar}
             </span>
             <div className="overflow-hidden">
-              <h4 className="text-xs font-black truncate text-slate-800 dark:text-slate-100">{profile.fullName}</h4>
-              <span className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-1 rounded">
+              <h4 className="text-xs font-semibold truncate text-slate-800 dark:text-slate-100">{profile.fullName}</h4>
+              <span className="text-[9px] font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-1 rounded">
                 Level {profile.level}
               </span>
             </div>
@@ -1311,7 +1541,7 @@ export default function App() {
         </div>
 
         {/* Nav lists */}
-        <nav className="flex-1 space-y-1.5 overflow-y-auto max-h-[500px] pr-1">
+        <nav className="flex-1 space-y-0.5 overflow-y-auto pr-1 no-scrollbar select-none">
           {NAV_LINKS.map((link) => {
             const Icon = link.icon;
             const isSelected = currentTab === link.id;
@@ -1323,14 +1553,14 @@ export default function App() {
                   setCurrentTab(link.id);
                   setMobileMenuOpen(false);
                 }}
-                className={`w-full flex items-center space-x-3 px-3.5 py-2.5 rounded-xl text-xs font-extrabold transition-all duration-200 cursor-pointer border ${
+                className={`w-full flex items-center space-x-2.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all duration-200 cursor-pointer border ${
                   isSelected 
-                    ? `${theme.activeBg} ${theme.activeText} border-transparent shadow-md ${theme.shadow} scale-[1.02]` 
-                    : "bg-transparent border-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/30 hover:text-slate-800 dark:hover:text-slate-100"
+                    ? `${theme.activeBg} ${theme.activeText} border-transparent shadow-md ${theme.shadow} scale-[1.01]` 
+                    : "bg-transparent border-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 hover:text-slate-800 dark:hover:text-slate-100"
                 }`}
               >
-                <span className="text-sm leading-none shrink-0">{link.symbol}</span>
-                <Icon className="w-4 h-4 flex-shrink-0" />
+                <span className="text-xs leading-none shrink-0">{link.symbol}</span>
+                <Icon className="w-3.5 h-3.5 flex-shrink-0" />
                 <span>{link.label}</span>
               </button>
             );
@@ -1339,33 +1569,33 @@ export default function App() {
       </aside>
 
       {/* Mobile top app bar */}
-      <header className={`md:hidden bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800/80 px-4 py-3.5 flex justify-between items-center z-30 flex-shrink-0 ${isFullScreenActive ? "!hidden" : ""}`}>
+      <header className={`md:hidden bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800/80 px-4 py-2 flex justify-between items-center z-30 flex-shrink-0 ${isFullScreenActive ? "!hidden" : ""}`}>
         <div className="flex items-center space-x-2">
-          <span className="text-xl">🎓</span>
-          <h2 className="text-sm font-black font-display tracking-tight text-indigo-600 dark:text-indigo-400">StudyMate</h2>
+          <span className="text-lg">🎓</span>
+          <h2 className="text-sm font-semibold font-display tracking-tight text-indigo-600 dark:text-indigo-400">StudyMate</h2>
         </div>
 
         <div className="flex items-center space-x-2">
           <button 
             onClick={handleToggleDarkMode}
-            className="p-2 bg-slate-50 dark:bg-slate-800 rounded-xl"
+            className="p-1.5 bg-slate-50 dark:bg-slate-800 rounded-xl text-sm"
           >
             {darkMode ? "☀️" : "🌙"}
           </button>
           
           <button 
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-2 bg-slate-50 dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-400"
+            className="p-1.5 bg-slate-50 dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-400"
           >
-            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+            {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
           </button>
         </div>
       </header>
 
       {/* Mobile Drawer menu list overlays */}
       {mobileMenuOpen && !isFullScreenActive && (
-        <div className="md:hidden fixed inset-0 top-[57px] bg-white dark:bg-slate-900 z-40 flex flex-col p-6 space-y-4">
-          <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest border-b pb-2">Navigation Routes</h4>
+        <div className="md:hidden fixed inset-0 top-[45px] bg-white dark:bg-slate-900 z-40 flex flex-col p-4 space-y-4">
+          <h4 className="text-[10px] font-medium text-slate-400 uppercase tracking-widest border-b pb-2">Navigation Routes</h4>
           <div className="grid grid-cols-2 gap-2 overflow-y-auto max-h-[70%]">
             {NAV_LINKS.map((link) => {
               const Icon = link.icon;
@@ -1378,41 +1608,41 @@ export default function App() {
                     setCurrentTab(link.id);
                     setMobileMenuOpen(false);
                   }}
-                  className={`flex items-center space-x-2.5 p-3 rounded-xl text-[11px] font-black border transition-all duration-150 ${
+                  className={`flex items-center space-x-2 p-2.5 rounded-xl text-[11px] font-semibold border transition-all duration-150 ${
                     isSelected 
                       ? `${theme.activeBg} border-transparent text-white shadow-md ${theme.shadow} scale-[1.03]` 
                       : "bg-slate-50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
                   }`}
                 >
                   <span className="text-sm leading-none shrink-0">{link.symbol}</span>
-                  <Icon className="w-4 h-4 flex-shrink-0" />
+                  <Icon className="w-3.5 h-3.5 flex-shrink-0" />
                   <span>{link.label}</span>
                 </button>
               );
             })}
           </div>
 
-          <div className="border-t border-slate-100 dark:border-slate-800 pt-4 mt-auto flex items-center space-x-3 bg-slate-50 dark:bg-slate-800/20 p-3 rounded-2xl">
-            <span className="text-3xl">{profile.avatar}</span>
+          <div className="border-t border-slate-100 dark:border-slate-800 pt-3 mt-auto flex items-center space-x-3 bg-slate-50 dark:bg-slate-800/20 p-2.5 rounded-2xl">
+            <span className="text-2xl">{profile.avatar}</span>
             <div>
-              <p className="text-xs font-black">{profile.fullName}</p>
-              <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-bold">Level {profile.level} student</span>
+              <p className="text-xs font-semibold">{profile.fullName}</p>
+              <span className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium">Level {profile.level} student</span>
             </div>
           </div>
         </div>
       )}
 
       {/* Main active screen tab contents viewport */}
-      <main className={`flex-1 overflow-y-auto max-h-screen ${isFullScreenActive ? "p-0 h-screen w-screen overflow-hidden flex flex-col" : "p-4 md:p-8 pb-24 md:pb-8"}`}>
+      <main className={`flex-1 overflow-y-auto md:h-full ${isFullScreenActive ? "p-0 h-screen w-screen overflow-hidden flex flex-col" : "p-4 md:p-6 pb-24 md:pb-6"}`}>
         
         {/* Unified App Header for notification center and theme triggers */}
-        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100 dark:border-slate-800/80 ${isFullScreenActive ? "hidden" : ""}`}>
+        <div className={`flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-2.5 border-b border-slate-100 dark:border-slate-800/80 ${isFullScreenActive ? "hidden" : ""}`}>
           <div>
-            <h1 className="text-xl md:text-2xl font-black text-slate-950 dark:text-slate-50 tracking-tight capitalize flex items-center gap-2">
+            <h1 className="text-lg md:text-xl font-bold text-slate-950 dark:text-slate-50 tracking-tight capitalize flex items-center gap-2">
               <span>{currentTab === "dashboard" ? "🏠" : NAV_LINKS.find(l => l.id === currentTab)?.label === "10-Day Test" ? "🎯" : "📚"}</span>
               <span>{currentTab === "dashboard" ? `Welcome Back, ${profile?.fullName || "Student"}!` : `${NAV_LINKS.find(l => l.id === currentTab)?.label || currentTab}`}</span>
             </h1>
-            <p className="text-xs text-slate-400 font-semibold">
+            <p className="text-xs text-slate-400 font-medium">
               {currentTab === "dashboard" 
                 ? "Let's make study easy, structured, and fun today!" 
                 : "Manage your active studies and boost your exam readiness."}
@@ -1420,11 +1650,51 @@ export default function App() {
           </div>
 
           {/* Quick Widgets panel */}
-          <div className="flex items-center space-x-3 self-end sm:self-auto relative z-30">
+          <div className="flex items-center space-x-2 self-end sm:self-auto relative z-30">
+            {/* Flagship Universal Smart Search Button */}
+            <button 
+              onClick={() => setIsSearchOpen(true)}
+              className="p-2 px-2.5 bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-blue-500/10 border border-indigo-200/80 dark:border-indigo-800/60 hover:border-indigo-400 text-indigo-600 dark:text-indigo-300 rounded-xl shadow-sm transition text-xs font-semibold cursor-pointer flex items-center space-x-1.5"
+              title="Flagship Universal Smart Search (Cmd+K)"
+              aria-label="Universal Search"
+            >
+              <Search className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <span className="hidden sm:inline-block font-mono text-[9px] font-bold text-slate-500 dark:text-slate-400 bg-white/80 dark:bg-slate-800 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                ⌘K
+              </span>
+            </button>
+            {/* Quick Text Size cycle toggle */}
+            <button 
+              onClick={() => {
+                const nextSize = textSize === "sm" ? "md" : textSize === "md" ? "lg" : "sm";
+                setTextSize(nextSize);
+              }}
+              className="p-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl shadow-sm transition text-xs font-semibold cursor-pointer flex items-center space-x-1"
+              title={`Cycle Text Scaling: Current ${textSize}`}
+              aria-label={`Cycle text scaling, current size is ${textSize}`}
+            >
+              <Type className="w-4 h-4 text-slate-500" />
+              <span className="text-[10px] uppercase font-extrabold">{textSize}</span>
+            </button>
+
+            {/* Quick High Contrast toggle */}
+            <button 
+              onClick={() => setHighContrast(!highContrast)}
+              className={`p-2 border rounded-xl shadow-sm transition text-xs font-semibold cursor-pointer flex items-center space-x-1 ${
+                highContrast 
+                  ? "bg-indigo-600 border-indigo-600 text-white" 
+                  : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50"
+              }`}
+              title="Toggle High Contrast Mode"
+              aria-label="Toggle High Contrast Mode"
+            >
+              <Contrast className="w-4 h-4" />
+            </button>
+
             {/* Desktop Theme Toggle */}
             <button 
               onClick={handleToggleDarkMode}
-              className="p-2.5 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-2xl shadow-sm transition text-xs cursor-pointer"
+              className="p-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl shadow-sm transition text-xs font-medium cursor-pointer"
               title="Toggle theme mode"
             >
               {darkMode ? "☀️ Light" : "🌙 Dark"}
@@ -1434,16 +1704,16 @@ export default function App() {
             <div className="relative">
               <button 
                 onClick={() => setNotificationMenuOpen(!notificationMenuOpen)}
-                className={`p-2.5 border hover:bg-slate-50 dark:hover:bg-slate-800 rounded-2xl shadow-sm transition relative cursor-pointer ${
+                className={`p-2 border hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl shadow-sm transition relative cursor-pointer ${
                   notificationMenuOpen 
                     ? "bg-indigo-50 border-indigo-200 text-indigo-600 dark:bg-indigo-950/40 dark:border-indigo-800/50" 
                     : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-600 dark:text-slate-400"
                 }`}
                 title="Study Inbox Notifications"
               >
-                <Bell className="w-5 h-5" />
+                <Bell className="w-4 h-4" />
                 {notifications.filter(n => !n.read).length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-black text-[9px] w-5 h-5 flex items-center justify-center rounded-full border-2 border-white dark:border-slate-950 animate-bounce">
+                  <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-bold text-[9px] w-4.5 h-4.5 flex items-center justify-center rounded-full border-2 border-white dark:border-slate-950 animate-bounce">
                     {notifications.filter(n => !n.read).length}
                   </span>
                 )}
@@ -1476,7 +1746,7 @@ export default function App() {
                         )}
                         <button 
                           onClick={handleClearAllNotifications}
-                          className="text-[10px] bg-slate-105 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-750 text-slate-600 dark:text-slate-300 font-bold px-2 py-1 rounded-lg transition cursor-pointer"
+                          className="text-[10px] bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 font-bold px-2 py-1 rounded-lg transition cursor-pointer"
                         >
                           Clear All
                         </button>
@@ -1564,10 +1834,13 @@ export default function App() {
             alarms={alarms}
             habits={habits}
             studyHoursToday={studyHoursToday}
+            timetable={timetable}
             onAddTask={handleAddTask}
             onToggleTask={handleToggleTask}
             onNavigate={(tab) => setCurrentTab(tab)}
             onTriggerAlarmChallenge={(alarm) => setTriggeredAlarm(alarm)}
+            onToggleHabitDate={handleToggleHabitDate}
+            onOpenSearch={() => setIsSearchOpen(true)}
             onLogStudyHours={(hours) => {
               setStudyHoursToday((p) => p + hours);
               handleAwardXP(hours * 30);
@@ -1582,6 +1855,7 @@ export default function App() {
             onAddTask={handleAddTask}
             onToggleTask={handleToggleTask}
             onDeleteTask={handleDeleteTask}
+            onUpdateTask={handleUpdateTask}
           />
         )}
 
@@ -1592,6 +1866,7 @@ export default function App() {
             onAddAlarm={handleAddAlarm}
             onToggleAlarm={handleToggleAlarm}
             onDeleteAlarm={handleDeleteAlarm}
+            onUpdateAlarm={handleUpdateAlarm}
             onNavigate={(tab) => setCurrentTab(tab)}
             triggeredAlarm={triggeredAlarm}
             onClearTriggeredAlarm={() => setTriggeredAlarm(null)}
@@ -1621,11 +1896,15 @@ export default function App() {
         )}
 
         {currentTab === "calendar" && (
-          <Suspense fallback={<LoadingTabPlaceholder />}>
+          <Suspense fallback={<CalendarSkeletonLoader />}>
             <CalendarView 
               tasks={tasks}
               timetable={timetable}
               profile={profile}
+              alarms={alarms}
+              habits={habits}
+              onToggleTask={handleToggleTask}
+              onToggleHabitDate={handleToggleHabitDate}
             />
           </Suspense>
         )}
@@ -1641,7 +1920,7 @@ export default function App() {
         )}
 
         {currentTab === "assessment" && (
-          <Suspense fallback={<LoadingTabPlaceholder />}>
+          <Suspense fallback={<GenericModuleSkeletonLoader tab="assessment" />}>
             <SyllabusTest 
               profile={profile}
               onAwardXP={handleAwardXP}
@@ -1651,7 +1930,7 @@ export default function App() {
         )}
 
         {currentTab === "analytics" && (
-          <Suspense fallback={<LoadingTabPlaceholder />}>
+          <Suspense fallback={<AnalyticsSkeletonLoader />}>
             <Analytics 
               profile={profile}
               tasks={tasks}
@@ -1662,10 +1941,12 @@ export default function App() {
         )}
 
         {currentTab === "profile" && (
-          <Suspense fallback={<LoadingTabPlaceholder />}>
+          <Suspense fallback={<ProfileSkeletonLoader />}>
             <ProfileView 
               profile={profile}
               badges={badges}
+              tasks={tasks}
+              habits={habits}
               onUpdateProfile={handleUpdateProfile}
               onResetApp={handleResetApp}
             />
@@ -1673,7 +1954,7 @@ export default function App() {
         )}
 
         {currentTab === "games" && (
-          <Suspense fallback={<LoadingTabPlaceholder />}>
+          <Suspense fallback={<GamesSkeletonLoader />}>
             <EducationalGames 
               profile={profile}
               onAwardXP={handleAwardXP}
@@ -1683,7 +1964,7 @@ export default function App() {
         )}
 
         {currentTab === "assistant" && (
-          <Suspense fallback={<LoadingTabPlaceholder />}>
+          <Suspense fallback={<AISkeletonLoader />}>
             <StudyMateAI 
               profile={profile}
               onAwardXP={handleAwardXP}
@@ -1695,7 +1976,7 @@ export default function App() {
         )}
 
         {currentTab === "chat" && (
-          <Suspense fallback={<LoadingTabPlaceholder />}>
+          <Suspense fallback={<ChatSkeletonLoader />}>
             <CommunityChat
               profile={profile}
               onAwardXP={handleAwardXP}
@@ -1707,7 +1988,7 @@ export default function App() {
         )}
 
         {currentTab === "settings" && (
-          <Suspense fallback={<LoadingTabPlaceholder />}>
+          <Suspense fallback={<GenericModuleSkeletonLoader tab="settings" />}>
             <SettingsView 
               darkMode={darkMode}
               onToggleDarkMode={handleToggleDarkMode}
@@ -1715,6 +1996,10 @@ export default function App() {
               syncStatus={syncStatus}
               onTriggerSync={handleTriggerSync}
               onDeleteAccount={handleDeleteAccount}
+              textSize={textSize}
+              onChangeTextSize={setTextSize}
+              highContrast={highContrast}
+              onToggleHighContrast={() => setHighContrast(!highContrast)}
             />
           </Suspense>
         )}
@@ -1722,34 +2007,217 @@ export default function App() {
       </main>
 
       {/* Mobile persistent bottom navigation bar */}
-      <div id="mobile_bottom_bar" className={`md:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-100 dark:border-slate-800/80 z-40 px-4 py-3.5 flex items-center gap-2 overflow-x-auto no-scrollbar shadow-lg ${isFullScreenActive ? "!hidden" : ""}`}>
-        {NAV_LINKS.map((link) => {
-          const Icon = link.icon;
+      <div 
+        id="mobile_bottom_bar" 
+        className={`md:hidden fixed bottom-6 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md bg-white/30 dark:bg-slate-900/30 backdrop-blur-2xl border border-white/20 dark:border-slate-800/40 z-40 p-2.5 rounded-[32px] shadow-[0_20px_50px_rgba(0,0,0,0.12)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.45)] flex items-center justify-around select-none ${isFullScreenActive ? "!hidden" : ""}`}
+      >
+        {[
+          { id: "dashboard", label: "Home", iconComponent: FlagshipHomeIcon, symbol: "🏠", activeColor: "text-indigo-600 dark:text-indigo-400", activeGlow: "rgba(99,102,241,0.4)" },
+          { id: "games", label: "Games", iconComponent: FlagshipGamesIcon, symbol: "🎮", activeColor: "text-amber-500 dark:text-amber-400", activeGlow: "rgba(245,158,11,0.4)" },
+          { id: "assistant", label: "AI", iconComponent: FlagshipAiIcon, symbol: "⚡", isAi: true },
+          { id: "chat", label: "Chat", iconComponent: FlagshipChatIcon, symbol: "💬", activeColor: "text-emerald-500 dark:text-emerald-400", activeGlow: "rgba(16,185,129,0.4)" },
+          { id: "profile", label: "Profile", iconComponent: FlagshipProfileIcon, symbol: "👤", activeColor: "text-pink-500 dark:text-pink-400", activeGlow: "rgba(236,72,153,0.4)" }
+        ].map((link) => {
+          const IconComp = link.iconComponent;
           const isSelected = currentTab === link.id;
-          const theme = TAB_THEMES[link.id] || TAB_THEMES.dashboard;
+          
+          if (link.isAi) {
+            return (
+              <button
+                id="nav_link_assistant"
+                key={link.id}
+                onClick={(e) => {
+                  // Interactive Ripple animation
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const x = e.clientX - rect.left;
+                  const y = e.clientY - rect.top;
+                  const rippleId = Date.now();
+                  setMobileRipples((prev) => [...prev, { id: rippleId, x, y }]);
+                  setTimeout(() => {
+                    setMobileRipples((prev) => prev.filter((r) => r.id !== rippleId));
+                  }, 600);
+
+                  setCurrentTab("assistant");
+                  setMobileMenuOpen(false);
+                }}
+                className="relative flex items-center justify-center cursor-pointer outline-none select-none"
+                style={{ touchAction: "manipulation", minWidth: "48px", minHeight: "48px" }}
+              >
+                {/* Custom click ripple renders */}
+                {mobileRipples.filter(r => r.x !== undefined).map((r) => (
+                  <motion.span
+                    key={r.id}
+                    className="absolute bg-indigo-500/20 rounded-full pointer-events-none z-10"
+                    style={{
+                      left: r.x,
+                      top: r.y,
+                      width: 4,
+                      height: 4,
+                      transform: "translate(-50%, -50%)",
+                    }}
+                    initial={{ scale: 0, opacity: 0.8 }}
+                    animate={{ scale: 20, opacity: 0 }}
+                    transition={{ duration: 0.5, ease: "easeOut" }}
+                  />
+                ))}
+
+                <motion.div
+                  layoutId="visionos_dynamic_island_core"
+                  className="relative rounded-full flex items-center justify-center"
+                  animate={{
+                    y: isSelected ? -14 : -4,
+                    scale: isSelected ? 1.08 : 1,
+                  }}
+                  whileTap={{ scale: 0.9, y: isSelected ? -16 : -6 }}
+                  transition={{
+                    type: "spring",
+                    stiffness: 380,
+                    damping: 28,
+                    mass: 0.8
+                  }}
+                >
+                  {/* Breathing glowing outer ring around the AI button */}
+                  <motion.div
+                    className="absolute -inset-2.5 rounded-full opacity-60 blur-[10px] pointer-events-none"
+                    style={{
+                      background: isSelected 
+                        ? "radial-gradient(circle, rgba(99,102,241,0.55) 0%, rgba(168,85,247,0.2) 60%, transparent 100%)"
+                        : "radial-gradient(circle, rgba(99,102,241,0.2) 0%, rgba(168,85,247,0.05) 60%, transparent 100%)",
+                    }}
+                    animate={{
+                      scale: isSelected ? [1, 1.15, 1] : [1, 1.06, 1],
+                      opacity: isSelected ? [0.6, 0.9, 0.6] : [0.3, 0.5, 0.3],
+                    }}
+                    transition={{
+                      duration: 3,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                    }}
+                  />
+
+                  {/* Liquid Glass outer ring border */}
+                  <div className="rounded-full p-[2px] bg-gradient-to-tr from-cyan-400 via-indigo-500 to-purple-600 shadow-[inset_0_1px_2px_rgba(255,255,255,0.4)]">
+                    {/* Liquid Glass core button */}
+                    <div className="relative w-14 h-14 rounded-full flex flex-col items-center justify-center overflow-hidden border border-white/20 dark:border-slate-700/40 bg-gradient-to-br from-white/40 via-white/10 to-transparent dark:from-slate-800/45 dark:via-slate-900/10 dark:to-transparent backdrop-blur-xl shadow-[0_10px_30px_rgba(99,102,241,0.3)] dark:shadow-[0_10px_30px_rgba(0,0,0,0.65)]">
+                      {/* Glossy Top Reflection */}
+                      <div className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/30 to-transparent rounded-t-full pointer-events-none" />
+
+                      {/* Active core glow background */}
+                      {isSelected && (
+                        <motion.div
+                          layoutId="activeAiCore"
+                          className="absolute inset-0 bg-gradient-to-tr from-cyan-400/20 via-indigo-500/25 to-purple-600/20 rounded-full"
+                          transition={{ type: "spring", stiffness: 300, damping: 20 }}
+                        />
+                      )}
+
+                      {/* Symbol + Pulsing Core Icon */}
+                      <div className="flex flex-col items-center justify-center relative z-10">
+                        <IconComp isActive={isSelected} size={28} />
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              </button>
+            );
+          }
+
           return (
             <button
               id={`nav_link_${link.id}`}
               key={link.id}
-              onClick={() => {
+              onClick={(e) => {
+                // Interactive Ripple animation
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const rippleId = Date.now();
+                setMobileRipples((prev) => [...prev, { id: rippleId, x, y }]);
+                setTimeout(() => {
+                  setMobileRipples((prev) => prev.filter((r) => r.id !== rippleId));
+                }, 600);
+
                 setCurrentTab(link.id);
                 setMobileMenuOpen(false);
               }}
-              className={`flex items-center space-x-2 px-3.5 py-2.5 rounded-xl text-xs font-black transition-all duration-200 shrink-0 cursor-pointer ${
-                isSelected 
-                  ? `${theme.activeBg} ${theme.activeText} shadow-md ${theme.shadow} scale-105` 
-                  : `${theme.inactiveBg} ${theme.inactiveText} hover:bg-slate-100 dark:hover:bg-slate-800/60`
-              }`}
+              className="relative flex flex-col items-center justify-center min-w-[48px] min-h-[48px] cursor-pointer outline-none select-none px-2 py-1 z-10"
+              style={{ touchAction: "manipulation" }}
             >
-              <span className="text-sm shrink-0 leading-none">{link.symbol}</span>
-              <Icon className="w-3.5 h-3.5 shrink-0" />
-              <span>{link.label}</span>
+              {/* Custom click ripple renders */}
+              {mobileRipples.filter(r => r.x !== undefined).map((r) => (
+                <motion.span
+                  key={r.id}
+                  className="absolute bg-slate-400/20 dark:bg-indigo-500/10 rounded-full pointer-events-none"
+                  style={{
+                    left: r.x,
+                    top: r.y,
+                    width: 4,
+                    height: 4,
+                    transform: "translate(-50%, -50%)",
+                  }}
+                  initial={{ scale: 0, opacity: 0.8 }}
+                  animate={{ scale: 15, opacity: 0 }}
+                  transition={{ duration: 0.5, ease: "easeOut" }}
+                />
+              ))}
+
+              <motion.div
+                className="flex flex-col items-center justify-center space-y-0.5"
+                whileTap={{ scale: 0.92, y: 1 }}
+                whileHover={{ scale: 1.05 }}
+                transition={{ type: "spring", stiffness: 400, damping: 17 }}
+              >
+                {/* Active tab pill sliding backdrop */}
+                {isSelected && (
+                  <motion.div
+                    layoutId="activeMobileTabCapsule"
+                    className="absolute inset-0 rounded-2xl bg-white/65 dark:bg-slate-800/65 border border-white/40 dark:border-slate-700/40 -z-10 shadow-sm"
+                    transition={{ type: "spring", stiffness: 350, damping: 25 }}
+                  />
+                )}
+
+                {/* Symbol + morphing premium colorful icon */}
+                <div className="flex flex-col items-center justify-center py-0.5">
+                  <IconComp isActive={isSelected} size={20} />
+                </div>
+
+                {/* Active-only animated labels */}
+                <AnimatePresence>
+                  {isSelected && (
+                    <motion.span
+                      initial={{ opacity: 0, y: 4, height: 0 }}
+                      animate={{ opacity: 1, y: 0, height: "auto" }}
+                      exit={{ opacity: 0, y: 4, height: 0 }}
+                      transition={{ duration: 0.2, ease: "easeOut" }}
+                      className={`text-[9px] font-black uppercase tracking-wider ${link.activeColor}`}
+                    >
+                      {link.label}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+              </motion.div>
             </button>
           );
         })}
       </div>
+
+      {/* Flagship Universal Smart Search Experience Modal */}
+      {profile && (
+        <UniversalSmartSearch 
+          isOpen={isSearchOpen}
+          onClose={() => setIsSearchOpen(false)}
+          onNavigate={(tab) => setCurrentTab(tab)}
+          profile={profile}
+          tasks={tasks}
+          alarms={alarms}
+          timetable={timetable}
+          habits={habits}
+          onToggleTask={handleToggleTask}
+          onToggleAlarm={handleToggleAlarm}
+        />
+      )}
     </div>
-  </ErrorBoundary>
+  </RecoveryBoundary>
   );
 }
 

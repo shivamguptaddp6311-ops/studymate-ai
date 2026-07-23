@@ -42,6 +42,11 @@ export interface Task {
   subjectTag: string;
   completed: boolean;
   dateCreated: string;
+  // Premium workspace optional properties
+  estimatedTime?: number; // in minutes
+  progress?: number; // 0 to 100
+  reminderSet?: boolean;
+  completedDate?: string; // YYYY-MM-DD
 }
 
 export interface Alarm {
@@ -56,6 +61,8 @@ export interface Alarm {
   challengeMode: boolean; // Solve math problem before dismiss
   isActive: boolean;
   triggerTimestamp?: number; // Milliseconds timestamp for absolute alarms
+  priority?: "High" | "Medium" | "Low";
+  color?: string;
 }
 
 export interface TimetableItem {
@@ -72,6 +79,10 @@ export interface Habit {
   icon: string; // Emoji
   datesCompleted: string[]; // Array of YYYY-MM-DD
   color: string; // CSS color or Tailwind class
+  subject?: string;
+  reminderTime?: string;
+  difficulty?: "Easy" | "Medium" | "Hard";
+  xpReward?: number;
 }
 
 export interface ScannedQuestion {

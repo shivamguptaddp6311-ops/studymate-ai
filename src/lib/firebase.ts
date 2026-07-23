@@ -5,7 +5,8 @@ import {
   signInWithPopup, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
-  signOut 
+  signOut,
+  onAuthStateChanged
 } from "firebase/auth";
 
 // Direct loading of Firebase configurations from the provisioned config file
@@ -32,5 +33,6 @@ export {
   signInWithPopup, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
-  signOut 
+  signOut,
+  onAuthStateChanged
 };

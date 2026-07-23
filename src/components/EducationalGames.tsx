@@ -5,9 +5,15 @@ import {
   Volume2, VolumeX, Shield, Play, Lock, AlertCircle, RefreshCw, User, 
   Flame, CheckCircle2, Star, Clock, UserCheck, UserPlus, Search, Sliders, 
   Menu, X, HelpCircle, Dumbbell, Activity, Check, Share2, Compass, AlertTriangle,
-  Heart, ArrowLeft, Lightbulb, EyeOff, Keyboard, Calendar, History
+  Heart, ArrowLeft, Lightbulb, EyeOff, Keyboard, Calendar, History, ChevronDown
 } from "lucide-react";
 import { UserProfile } from "../types";
+import SyllabusQuestGame from "./SyllabusQuestGame";
+import { 
+  GlassCard, HeroCard, QuickActionCard, ProgressCard, AnalyticsCard, 
+  AchievementCard, AICard, TimelineCard, EmptyStateCard, PremiumButton, 
+  PremiumInput, PremiumDialog, PremiumBottomSheet, PremiumIcon, PremiumCard 
+} from "./PremiumUI";
 
 interface EducationalGamesProps {
   profile: UserProfile;
@@ -16,7 +22,7 @@ interface EducationalGamesProps {
 }
 
 // Global Types for Game System
-type GameCategory = "all" | "math" | "memory" | "eye" | "logic" | "speed";
+type GameCategory = "all" | "math" | "memory" | "eye" | "logic" | "speed" | "geometry" | "pattern";
 type DifficultyLevel = "easy" | "medium" | "hard" | "expert";
 
 interface Achievement {
@@ -39,7 +45,215 @@ interface GameItem {
   bgLight: string;
   borderCol: string;
   skillsTrained: string[];
+  difficulty: DifficultyLevel;
+  estimatedTime: string;
+  xpReward: number;
+  completionRate: number;
 }
+
+// ==========================================
+// 3D FLOATING CARD COMPONENT WITH TILT & GLOW
+// ==========================================
+const Floating3DCard = ({ 
+  children, 
+  className = "",
+  onClick 
+}: { 
+  children: React.ReactNode; 
+  className?: string;
+  onClick?: () => void;
+}) => {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [rotateX, setRotateX] = useState(0);
+  const [rotateY, setRotateY] = useState(0);
+  const [glowPos, setGlowPos] = useState({ x: 50, y: 50 });
+  const [isHovered, setIsHovered] = useState(false);
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!cardRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+
+    const rX = -((y - centerY) / centerY) * 7;
+    const rY = ((x - centerX) / centerX) * 7;
+
+    setRotateX(rX);
+    setRotateY(rY);
+    setGlowPos({ x: (x / rect.width) * 100, y: (y / rect.height) * 100 });
+  };
+
+  const handleMouseLeave = () => {
+    setRotateX(0);
+    setRotateY(0);
+    setIsHovered(false);
+  };
+
+  return (
+    <motion.div
+      ref={cardRef}
+      onMouseMove={handleMouseMove}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={handleMouseLeave}
+      onClick={onClick}
+      whileHover={{ y: -8, scale: 1.02 }}
+      whileTap={{ scale: 0.97 }}
+      transition={{ type: "spring", stiffness: 350, damping: 22 }}
+      style={{
+        transformStyle: "preserve-3d",
+        transform: `perspective(1000px) rotateX(${rotateX}deg) rotateY(${rotateY}deg)`,
+      }}
+      className={`relative rounded-3xl border border-slate-200/60 dark:border-slate-800/80 bg-white/70 dark:bg-slate-900/70 backdrop-blur-xl p-5 shadow-lg hover:shadow-2xl transition-all duration-300 overflow-hidden group cursor-pointer ${className}`}
+    >
+      <div
+        className="absolute inset-0 pointer-events-none transition-opacity duration-300 opacity-0 group-hover:opacity-100 rounded-3xl"
+        style={{
+          background: `radial-gradient(400px circle at ${glowPos.x}% ${glowPos.y}%, rgba(99, 102, 241, 0.15), transparent 80%)`,
+        }}
+      />
+      {children}
+    </motion.div>
+  );
+};
+
+// ==========================================
+// HIGH PERFORMANCE CONFETTI CELEBRATION CANVAS
+// ==========================================
+const ConfettiCanvas = ({ active }: { active: boolean }) => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let animationFrameId: number;
+    let width = (canvas.width = canvas.offsetWidth);
+    let height = (canvas.height = canvas.offsetHeight);
+
+    const handleResize = () => {
+      if (canvas) {
+        width = canvas.width = canvas.offsetWidth;
+        height = canvas.height = canvas.offsetHeight;
+      }
+    };
+    window.addEventListener("resize", handleResize);
+
+    const colors = ["#4F46E5", "#06B6D4", "#F59E0B", "#10B981", "#EC4899", "#8B5CF6"];
+    const particles = Array.from({ length: 140 }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * -height - 20,
+      r: Math.random() * 4 + 4,
+      d: Math.random() * height,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      tilt: Math.random() * 10 - 5,
+      tiltAngleIncremental: Math.random() * 0.07 + 0.02,
+      tiltAngle: 0,
+    }));
+
+    const draw = () => {
+      ctx.clearRect(0, 0, width, height);
+      let activeParticles = false;
+
+      particles.forEach((p) => {
+        p.tiltAngle += p.tiltAngleIncremental;
+        p.y += (Math.cos(p.d) + 3 + p.r / 2) / 2;
+        p.x += Math.sin(p.tiltAngle);
+        p.tilt = Math.sin(p.tiltAngle - p.r / 2) * 15;
+
+        if (p.y < height) {
+          activeParticles = true;
+        }
+
+        ctx.beginPath();
+        ctx.lineWidth = p.r / 2;
+        ctx.strokeStyle = p.color;
+        ctx.moveTo(p.x + p.tilt + p.r / 2, p.y);
+        ctx.lineTo(p.x + p.tilt, p.y + p.tilt + p.r / 2);
+        ctx.stroke();
+      });
+
+      if (activeParticles) {
+        animationFrameId = requestAnimationFrame(draw);
+      }
+    };
+
+    draw();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, [active]);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none w-full h-full z-50 rounded-3xl" />;
+};
+
+// ==========================================
+// HIGH PERFORMANCE AMBIENT GLOW PARTICLES
+// ==========================================
+const AmbientParticles = () => {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let animationFrameId: number;
+    let width = (canvas.width = canvas.offsetWidth);
+    let height = (canvas.height = canvas.offsetHeight);
+
+    const handleResize = () => {
+      if (canvas) {
+        width = canvas.width = canvas.offsetWidth;
+        height = canvas.height = canvas.offsetHeight;
+      }
+    };
+    window.addEventListener("resize", handleResize);
+
+    const particles = Array.from({ length: 40 }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      size: Math.random() * 2 + 1,
+      speedY: -(Math.random() * 0.3 + 0.1),
+      opacity: Math.random() * 0.4 + 0.1,
+    }));
+
+    const draw = () => {
+      ctx.clearRect(0, 0, width, height);
+
+      particles.forEach((p) => {
+        p.y += p.speedY;
+        if (p.y < 0) {
+          p.y = height;
+          p.x = Math.random() * width;
+        }
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(129, 140, 248, ${p.opacity})`;
+        ctx.fill();
+      });
+
+      animationFrameId = requestAnimationFrame(draw);
+    };
+
+    draw();
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 pointer-events-none w-full h-full opacity-60 mix-blend-screen" />;
+};
 
 export default function EducationalGames({ profile, onAwardXP, onAddNotification }: EducationalGamesProps) {
   const emailPrefix = profile.emailAddress.replace(/[^a-zA-Z0-9]/g, "_");
@@ -89,12 +303,90 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
     }
   });
 
+  // Daily challenge countdown timer state
+  const [timeLeft, setTimeLeft] = useState("");
+  useEffect(() => {
+    const updateCountdown = () => {
+      const now = new Date();
+      const midnight = new Date();
+      midnight.setHours(24, 0, 0, 0);
+      const diff = midnight.getTime() - now.getTime();
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+      setTimeLeft(`${hours.toString().padStart(2, "0")}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`);
+    };
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   // Daily / Weekly Challenges System
   const [dailyChallenges, setDailyChallenges] = useState([
     { id: "math_1", text: "Solve 5 Math speed sprints", target: 5, current: 2, xp: 20, coins: 50, completed: false },
     { id: "memory_1", text: "Reach a score of 12 in Card Matching", target: 12, current: 0, xp: 25, coins: 60, completed: false },
     { id: "multi_1", text: "Win 1 Live Multiplayer Duel", target: 1, current: 0, xp: 30, coins: 80, completed: false }
   ]);
+
+  // 7-Day Weekly Streak & Rewards System
+  const [weeklyRewards, setWeeklyRewards] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`studymate_games_${emailPrefix}_weekly_rewards`);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [
+      { day: 1, dayName: "Mon", type: "coins", amount: 50, icon: "🪙", claimed: true },
+      { day: 2, dayName: "Tue", type: "xp", amount: 30, icon: "⚡", claimed: true },
+      { day: 3, dayName: "Wed", type: "gems", amount: 2, icon: "💎", claimed: false },
+      { day: 4, dayName: "Thu", type: "coins", amount: 100, icon: "🪙", claimed: false },
+      { day: 5, dayName: "Fri", type: "xp", amount: 50, icon: "⚡", claimed: false },
+      { day: 6, dayName: "Sat", type: "gems", amount: 5, icon: "💎", claimed: false },
+      { day: 7, dayName: "Sun", type: "chest", amount: 250, icon: "🎁", claimed: false },
+    ];
+  });
+
+  // Recently Played Sessions History
+  const [recentlyPlayed, setRecentlyPlayed] = useState(() => {
+    try {
+      const saved = localStorage.getItem(`studymate_games_${emailPrefix}_recently_played`);
+      if (saved) return JSON.parse(saved);
+    } catch (e) {}
+    return [
+      { gameId: "quick_calc", title: "Math Calculation Sprint", icon: "🧮", category: "math", score: 120, accuracy: 92, stars: 3, timestamp: "Today" },
+      { gameId: "geometry_challenge", title: "Geometry Challenge", icon: "📐", category: "geometry", score: 85, accuracy: 88, stars: 2, timestamp: "Yesterday" },
+      { gameId: "memory_pairs", title: "Memory Matrix Pairs", icon: "🧠", category: "memory", score: 150, accuracy: 95, stars: 3, timestamp: "2 days ago" },
+    ];
+  });
+
+  // Celebration Particles & Popup Modals
+  const [showCelebrationConfetti, setShowCelebrationConfetti] = useState(false);
+  const [xpBurstText, setXpBurstText] = useState<string | null>(null);
+  const [unlockedBadgeCelebration, setUnlockedBadgeCelebration] = useState<Achievement | null>(null);
+
+  const triggerXPBurst = (text: string) => {
+    setXpBurstText(text);
+    setTimeout(() => setXpBurstText(null), 2200);
+  };
+
+  const claimWeeklyReward = (dayNumber: number) => {
+    setWeeklyRewards(prev => {
+      const updated = prev.map(r => {
+        if (r.day === dayNumber && !r.claimed) {
+          if (r.type === "coins" || r.type === "chest") setCoins(c => c + r.amount);
+          if (r.type === "xp") { setUserGameXP(x => x + r.amount); onAwardXP(r.amount); }
+          if (r.type === "gems") setGems(g => g + r.amount);
+          return { ...r, claimed: true };
+        }
+        return r;
+      });
+      localStorage.setItem(`studymate_games_${emailPrefix}_weekly_rewards`, JSON.stringify(updated));
+      return updated;
+    });
+    playSuccessChime();
+    setShowCelebrationConfetti(true);
+    setTimeout(() => setShowCelebrationConfetti(false), 3000);
+    triggerXPBurst("REWARD CLAIMED! 🎉");
+  };
 
   // Audio system state
   const [isMuted, setIsMuted] = useState<boolean>(() => {
@@ -265,13 +557,17 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
     {
       id: "geometry_challenge",
       title: "Geometry Challenge",
-      category: "math",
+      category: "geometry",
       desc: "Identify shapes, angles, areas, perimeters, volumes, and coordinate planes with beautiful interactive vector diagrams!",
       icon: <span className="text-2xl">📐</span>,
       color: "from-amber-500 to-orange-500",
       bgLight: "bg-amber-50/60 dark:bg-amber-950/20",
       borderCol: "border-amber-100 dark:border-amber-900/40",
-      skillsTrained: ["Geometry", "Spatial Reasoning", "Area & Volume"]
+      skillsTrained: ["Geometry", "Spatial Reasoning", "Area & Volume"],
+      difficulty: "medium",
+      estimatedTime: "3 min",
+      xpReward: 60,
+      completionRate: 88
     },
     {
       id: "quick_calc",
@@ -282,7 +578,11 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       color: "from-blue-500 to-indigo-600",
       bgLight: "bg-blue-50/60 dark:bg-blue-950/20",
       borderCol: "border-blue-100 dark:border-blue-900/40",
-      skillsTrained: ["Mental Math", "Arithmetic Speed", "Accuracy under stress"]
+      skillsTrained: ["Mental Math", "Arithmetic Speed", "Accuracy under stress"],
+      difficulty: "easy",
+      estimatedTime: "2 min",
+      xpReward: 50,
+      completionRate: 94
     },
     {
       id: "math_fractions",
@@ -293,7 +593,11 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       color: "from-sky-400 to-indigo-500",
       bgLight: "bg-sky-50/60 dark:bg-sky-950/20",
       borderCol: "border-sky-100 dark:border-sky-900/40",
-      skillsTrained: ["Fractions & Ratios", "Mental Division", "Decimal Estimation"]
+      skillsTrained: ["Fractions & Ratios", "Mental Division", "Decimal Estimation"],
+      difficulty: "medium",
+      estimatedTime: "2 min",
+      xpReward: 55,
+      completionRate: 90
     },
     {
       id: "memory_pairs",
@@ -304,7 +608,11 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       color: "from-purple-500 to-pink-600",
       bgLight: "bg-purple-50/60 dark:bg-purple-950/20",
       borderCol: "border-purple-100 dark:border-purple-900/40",
-      skillsTrained: ["Active Recall", "Visual Retention", "Spatial Matching"]
+      skillsTrained: ["Active Recall", "Visual Retention", "Spatial Matching"],
+      difficulty: "easy",
+      estimatedTime: "2 min",
+      xpReward: 45,
+      completionRate: 92
     },
     {
       id: "formula_recall",
@@ -315,18 +623,26 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       color: "from-fuchsia-500 to-rose-600",
       bgLight: "bg-fuchsia-50/60 dark:bg-fuchsia-950/20",
       borderCol: "border-fuchsia-100 dark:border-fuchsia-900/40",
-      skillsTrained: ["Scientific Formulas", "Algebraic Identities", "Chemical Notations"]
+      skillsTrained: ["Scientific Formulas", "Algebraic Identities", "Chemical Notations"],
+      difficulty: "hard",
+      estimatedTime: "3 min",
+      xpReward: 75,
+      completionRate: 84
     },
     {
       id: "pattern_memory",
       title: "Pattern Memory Grid",
-      category: "memory",
+      category: "pattern",
       desc: "Remember and repeat increasingly complex flashing visual patterns. Test your visual-spatial focus and accuracy!",
       icon: <span className="text-2xl">🔲</span>,
       color: "from-pink-500 to-purple-600",
       bgLight: "bg-pink-50/60 dark:bg-pink-950/20",
       borderCol: "border-pink-100 dark:border-pink-900/40",
-      skillsTrained: ["Visual-Spatial Recall", "Short-term Memory", "Sequence Encoding"]
+      skillsTrained: ["Visual-Spatial Recall", "Short-term Memory", "Sequence Encoding"],
+      difficulty: "medium",
+      estimatedTime: "2 min",
+      xpReward: 50,
+      completionRate: 89
     },
     {
       id: "sequence_recall",
@@ -337,40 +653,71 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       color: "from-fuchsia-500 to-indigo-600",
       bgLight: "bg-fuchsia-50/60 dark:bg-fuchsia-950/20",
       borderCol: "border-fuchsia-100 dark:border-fuchsia-900/40",
-      skillsTrained: ["Sequential Auditory Buffer", "Adaptive Logic Decoding", "Color Working Memory"]
+      skillsTrained: ["Sequential Auditory Buffer", "Adaptive Logic Decoding", "Color Working Memory"],
+      difficulty: "hard",
+      estimatedTime: "3 min",
+      xpReward: 80,
+      completionRate: 82
     },
     {
       id: "speed_matrix",
       title: "Speed Vision & Search",
-      category: "eye",
+      category: "speed",
       desc: "Scientifically-inspired training: Rapidly locate numbers or symbols in order to train peripheral eye sight and cognitive mapping.",
       icon: <span className="text-2xl">👁️</span>,
       color: "from-emerald-500 to-teal-600",
       bgLight: "bg-emerald-50/60 dark:bg-emerald-950/20",
       borderCol: "border-emerald-100 dark:border-emerald-900/40",
-      skillsTrained: ["Visual Span", "Eye-Hand Coordination", "Peripheral Tracking"]
+      skillsTrained: ["Visual Span", "Eye-Hand Coordination", "Peripheral Tracking"],
+      difficulty: "medium",
+      estimatedTime: "2 min",
+      xpReward: 55,
+      completionRate: 91
     },
     {
       id: "letter_tracking",
       title: "Dynamic Alphabet Pursuit",
-      category: "eye",
+      category: "speed",
       desc: "A classical ocular scan exercise: Search and track letter matrices in strict alphabetic order under high-speed pacing.",
       icon: <span className="text-2xl">🔤</span>,
       color: "from-green-400 to-emerald-500",
       bgLight: "bg-green-50/60 dark:bg-green-950/20",
       borderCol: "border-green-100 dark:border-green-900/40",
-      skillsTrained: ["Peripheral Vision", "Cognitive Scan Velocity", "Saccadic Focus"]
+      skillsTrained: ["Peripheral Vision", "Cognitive Scan Velocity", "Saccadic Focus"],
+      difficulty: "easy",
+      estimatedTime: "2 min",
+      xpReward: 40,
+      completionRate: 95
     },
     {
       id: "eye_ball_tracker",
       title: "Find the Ball (Eye Training)",
-      category: "eye",
+      category: "speed",
       desc: "Watch the red target ball shuffle and slowly turn white over 10 seconds. Keep your eyes locked to find the target!",
       icon: <span className="text-2xl">🔴</span>,
       color: "from-rose-500 to-amber-500",
       bgLight: "bg-rose-50/60 dark:bg-rose-950/10",
       borderCol: "border-rose-100 dark:border-rose-900/30",
-      skillsTrained: ["Eye Tracking", "Attention Maintenance", "Visual Trajectory"]
+      skillsTrained: ["Eye Tracking", "Attention Maintenance", "Visual Trajectory"],
+      difficulty: "easy",
+      estimatedTime: "1 min",
+      xpReward: 35,
+      completionRate: 96
+    },
+    {
+      id: "syllabus_quest",
+      title: "Syllabus Quest: Trivia Master",
+      category: "logic",
+      desc: "Play an adaptive rapid-fire trivia quiz based strictly on your CBSE syllabus. Adjusts difficulty dynamically based on your performance!",
+      icon: <span className="text-2xl">🧠</span>,
+      color: "from-indigo-600 to-purple-600",
+      bgLight: "bg-indigo-50/60 dark:bg-indigo-950/20",
+      borderCol: "border-indigo-100 dark:border-indigo-900/40",
+      skillsTrained: ["Active Recall", "Syllabus Mastery", "Adaptive Cognitive Speed"],
+      difficulty: "hard",
+      estimatedTime: "4 min",
+      xpReward: 100,
+      completionRate: 85
     },
     {
       id: "tic_tac_ai",
@@ -381,7 +728,11 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       color: "from-amber-500 to-orange-600",
       bgLight: "bg-amber-50/60 dark:bg-amber-950/20",
       borderCol: "border-amber-100 dark:border-amber-900/40",
-      skillsTrained: ["Logical Planning", "Anticipation", "Tactical Play"]
+      skillsTrained: ["Logical Planning", "Anticipation", "Tactical Play"],
+      difficulty: "expert",
+      estimatedTime: "3 min",
+      xpReward: 90,
+      completionRate: 78
     },
     {
       id: "logic_sequences",
@@ -392,7 +743,11 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       color: "from-orange-400 to-red-500",
       bgLight: "bg-orange-50/60 dark:bg-orange-950/20",
       borderCol: "border-orange-100 dark:border-orange-900/40",
-      skillsTrained: ["Sequence Identification", "Inductive Logic", "Formula Extrapolation"]
+      skillsTrained: ["Sequence Identification", "Inductive Logic", "Formula Extrapolation"],
+      difficulty: "hard",
+      estimatedTime: "3 min",
+      xpReward: 70,
+      completionRate: 86
     },
     {
       id: "speed_sum",
@@ -403,7 +758,11 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       color: "from-rose-500 to-red-600",
       bgLight: "bg-rose-50/60 dark:bg-rose-950/20",
       borderCol: "border-rose-100 dark:border-rose-900/40",
-      skillsTrained: ["Working Memory", "Arithmetic Velocity", "Active Auditory Buffer"]
+      skillsTrained: ["Working Memory", "Arithmetic Velocity", "Active Auditory Buffer"],
+      difficulty: "medium",
+      estimatedTime: "2 min",
+      xpReward: 50,
+      completionRate: 88
     },
     {
       id: "speed_ops",
@@ -414,7 +773,11 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
       color: "from-rose-600 to-pink-500",
       bgLight: "bg-rose-50/60 dark:bg-rose-950/10",
       borderCol: "border-rose-100 dark:border-rose-900/40",
-      skillsTrained: ["Rapid Operations", "Operator Decoding", "Multi-Thread Calculations"]
+      skillsTrained: ["Rapid Operations", "Operator Decoding", "Multi-Thread Calculations"],
+      difficulty: "expert",
+      estimatedTime: "2 min",
+      xpReward: 85,
+      completionRate: 81
     }
   ];
 
@@ -603,8 +966,33 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
 
     setGamePlaying(false);
     setShowGameSummary(true);
+
+    // Record into Recently Played list
+    const foundGame = GAMES_CATALOGUE.find(g => g.id === gameId);
+    if (foundGame) {
+      const newSession = {
+        gameId,
+        title: foundGame.title,
+        icon: "🎮",
+        category: foundGame.category,
+        score: playerScore,
+        accuracy,
+        stars: accuracy >= 90 ? 3 : accuracy >= 70 ? 2 : 1,
+        timestamp: "Just now"
+      };
+      setRecentlyPlayed(prev => {
+        const filtered = prev.filter(p => p.gameId !== gameId);
+        const updated = [newSession, ...filtered].slice(0, 6);
+        localStorage.setItem(`studymate_games_${emailPrefix}_recently_played`, JSON.stringify(updated));
+        return updated;
+      });
+    }
+
     if (won) {
       playSuccessChime();
+      setShowCelebrationConfetti(true);
+      setTimeout(() => setShowCelebrationConfetti(false), 3500);
+      triggerXPBurst(`+${totalXPWon} XP! 🔥`);
     } else {
       playFailureBuzz();
     }
@@ -623,6 +1011,12 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
 
   const getFilteredGames = () => {
     if (selectedCategory === "all") return GAMES_CATALOGUE;
+    if (selectedCategory === "geometry") return GAMES_CATALOGUE.filter(g => g.id === "geometry_challenge");
+    if (selectedCategory === "pattern") return GAMES_CATALOGUE.filter(g => g.id === "pattern_memory" || g.id === "sequence_recall" || g.id === "speed_matrix");
+    if (selectedCategory === "speed") return GAMES_CATALOGUE.filter(g => g.category === "speed" || g.id === "quick_calc" || g.id === "letter_tracking" || g.id === "speed_ops");
+    if (selectedCategory === "math") return GAMES_CATALOGUE.filter(g => g.category === "math" && g.id !== "geometry_challenge");
+    if (selectedCategory as string === "memory") return GAMES_CATALOGUE.filter(g => g.category === "memory");
+    if (selectedCategory as string === "logic") return GAMES_CATALOGUE.filter(g => g.category === "logic");
     return GAMES_CATALOGUE.filter(g => g.category === selectedCategory);
   };
 
@@ -633,181 +1027,405 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
   };
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-4 md:p-6 space-y-6 h-[calc(100vh-140px)] overflow-y-auto pr-2">
+    <>
+      <div className="w-full max-w-7xl mx-auto p-4 md:p-6 space-y-8 h-[calc(100vh-140px)] overflow-y-auto pr-2 relative">
       
-      {/* Top Banner Status Header bar */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-5 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex items-center space-x-4">
-          <div className="relative">
-            {/* Avatar frame renderer */}
-            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center bg-indigo-50 dark:bg-indigo-950 border-4 ${
-              selectedFrame === "gold" ? "border-amber-400 shadow-md" : 
-              selectedFrame === "neon" ? "border-cyan-400 animate-pulse" :
-              selectedFrame === "obsidian" ? "border-purple-600" : "border-indigo-100 dark:border-slate-800"
-            }`}>
-              <span className="text-3xl">{selectedAvatar}</span>
-            </div>
-            <div className="absolute -top-1.5 -right-1.5 bg-amber-500 text-white rounded-full p-0.5 text-[9px] font-black flex items-center shadow-md">
-              Lv.{Math.floor(userGameXP / 200) + 1}
+      {/* 3D-like floating particles behind dashboard elements */}
+      <AmbientParticles />
+
+      {/* Top Banner Status Header bar - Inspired by modern console HUDs */}
+      <div className="bg-gradient-to-r from-slate-900/90 via-indigo-950/80 to-purple-950/90 border border-indigo-500/20 rounded-3xl p-6 shadow-2xl flex flex-col lg:flex-row lg:items-center justify-between gap-6 relative overflow-hidden backdrop-blur-xl">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(139,92,246,0.15),transparent_60%)]" />
+        
+        <div className="flex flex-col sm:flex-row sm:items-center gap-5 z-10">
+          <div className="relative flex-shrink-0 self-start sm:self-center">
+            {/* Animated Console-Style Avatar Frame */}
+            <motion.div 
+              whileHover={{ scale: 1.08, rotate: 5 }}
+              whileTap={{ scale: 0.95 }}
+              className={`w-20 h-20 rounded-2xl flex items-center justify-center bg-slate-950/80 border-4 transition-all duration-300 shadow-lg ${
+                selectedFrame === "gold" ? "border-amber-400 shadow-[0_0_15px_rgba(251,191,36,0.6)]" : 
+                selectedFrame === "neon" ? "border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.6)] animate-pulse" :
+                selectedFrame === "obsidian" ? "border-purple-600 shadow-[0_0_12px_rgba(147,51,234,0.6)]" : "border-indigo-500/30"
+              }`}
+            >
+              <span className="text-5xl filter drop-shadow-[0_4px_6px_rgba(0,0,0,0.3)]">{selectedAvatar}</span>
+            </motion.div>
+            <div className="absolute -bottom-2 -right-2 bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 rounded-lg px-2.5 py-0.5 text-[10px] font-black flex items-center shadow-md border border-amber-300">
+              LV.{Math.floor(userGameXP / 200) + 1}
             </div>
           </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h2 className="text-base font-black text-slate-800 dark:text-slate-100">{profile.fullName || "Gamer"}</h2>
-              <span className="text-[10px] font-extrabold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded-lg border border-indigo-100 dark:border-indigo-900/40">
-                Grade {profile.classGrade}
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <h2 className="text-xl font-black text-white tracking-tight drop-shadow-md">{profile.fullName || "Gamer"}</h2>
+              <span className="text-[10px] font-extrabold bg-indigo-500/20 text-indigo-300 px-3 py-0.5 rounded-lg border border-indigo-500/30 uppercase tracking-widest">
+                {profile.classGrade}
               </span>
             </div>
-            <div className="flex items-center space-x-4 mt-1.5 text-xs text-slate-500 dark:text-slate-400 font-semibold">
-              <span className="flex items-center text-amber-500 font-black">
-                <Flame className="w-4 h-4 mr-1 animate-bounce" /> {gameStreak} Day Streak
-              </span>
-              <span>XP: {userGameXP % 200} / 200 to next level</span>
+            
+            {/* Dynamic level progress bar */}
+            <div className="space-y-1.5 max-w-sm">
+              <div className="flex items-center justify-between text-[11px] text-slate-300 font-bold">
+                <span className="flex items-center text-orange-400 font-black animate-pulse">
+                  <Flame className="w-4 h-4 mr-1 text-orange-500 animate-bounce" /> {gameStreak} Day Streak
+                </span>
+                <span className="text-indigo-300">XP: {userGameXP % 200} / 200</span>
+              </div>
+              <div className="w-56 h-2 bg-slate-950 rounded-full overflow-hidden p-[1px] border border-indigo-950">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${((userGameXP % 200) / 200) * 100}%` }}
+                  transition={{ type: "spring", stiffness: 80, damping: 15 }}
+                  className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 rounded-full shadow-[0_0_8px_rgba(99,102,241,0.5)]"
+                />
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Currency Widgets & Mute Toggles */}
-        <div className="flex items-center flex-wrap gap-3">
-          <div className="flex items-center bg-amber-50 dark:bg-amber-950/20 border border-amber-200/50 dark:border-amber-900/30 px-3 py-1.5 rounded-2xl text-xs font-black text-amber-600 dark:text-amber-400 shadow-sm">
-            <Coins className="w-4 h-4 mr-1.5 text-amber-500 shrink-0" />
-            <span>{coins} Gold</span>
-          </div>
+        {/* Console currency display & sound toggle */}
+        <div className="flex items-center flex-wrap gap-3 z-10">
+          <motion.div 
+            whileHover={{ scale: 1.05, y: -2 }}
+            className="flex items-center bg-gradient-to-r from-amber-500/10 to-amber-500/20 border border-amber-500/30 px-4 py-2.5 rounded-2xl text-xs font-black text-amber-400 shadow-[0_4px_12px_rgba(245,158,11,0.1)]"
+          >
+            <Coins className="w-4.5 h-4.5 mr-2 text-amber-400 animate-spin-slow" />
+            <span>{coins} <span className="text-[10px] text-amber-500 font-bold">GOLD</span></span>
+          </motion.div>
 
-          <div className="flex items-center bg-cyan-50 dark:bg-cyan-950/20 border border-cyan-200/50 dark:border-cyan-900/30 px-3 py-1.5 rounded-2xl text-xs font-black text-cyan-600 dark:text-cyan-400 shadow-sm">
-            <Gem className="w-4 h-4 mr-1.5 text-cyan-500 shrink-0" />
-            <span>{gems} Gems</span>
-          </div>
+          <motion.div 
+            whileHover={{ scale: 1.05, y: -2 }}
+            className="flex items-center bg-gradient-to-r from-cyan-500/10 to-cyan-500/20 border border-cyan-500/30 px-4 py-2.5 rounded-2xl text-xs font-black text-cyan-400 shadow-[0_4px_12px_rgba(6,182,212,0.1)]"
+          >
+            <Gem className="w-4.5 h-4.5 mr-2 text-cyan-400 animate-bounce" />
+            <span>{gems} <span className="text-[10px] text-cyan-500 font-bold">GEMS</span></span>
+          </motion.div>
 
           <button
             onClick={() => {
               setIsMuted(!isMuted);
               synthSound(440, "sine", 0.08);
             }}
-            className="p-2 bg-slate-50 dark:bg-slate-800 border border-slate-200/40 dark:border-slate-700/50 rounded-xl text-slate-500 dark:text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 hover:text-indigo-600 transition duration-150 cursor-pointer shadow-sm"
+            className="p-3 bg-slate-950/80 border border-slate-800 rounded-2xl text-slate-400 hover:text-indigo-400 hover:border-indigo-500/50 transition duration-200 cursor-pointer shadow-md"
             title={isMuted ? "Unmute sound" : "Mute sound"}
           >
-            {isMuted ? <VolumeX className="w-4 h-4 text-rose-500" /> : <Volume2 className="w-4 h-4" />}
+            {isMuted ? <VolumeX className="w-4.5 h-4.5 text-rose-500" /> : <Volume2 className="w-4.5 h-4.5 text-indigo-400" />}
           </button>
         </div>
       </div>
 
-      {/* Main Tabs Navigator */}
-      <div className="flex border-b border-slate-100 dark:border-slate-800/60 pb-0.5 overflow-x-auto gap-1">
-        <button
-          onClick={() => { setActiveTab("arcade"); synthSound(300, "sine", 0.08); }}
-          className={`px-4 py-2.5 font-extrabold text-sm flex items-center space-x-2 border-b-2 transition duration-200 cursor-pointer ${
-            activeTab === "arcade"
-              ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
-              : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
-          }`}
-        >
-          <Gamepad2 className="w-4 h-4" />
-          <span>Game Arcade</span>
-        </button>
-        <button
-          onClick={() => { setActiveTab("multiplayer"); synthSound(350, "sine", 0.08); }}
-          className={`px-4 py-2.5 font-extrabold text-sm flex items-center space-x-2 border-b-2 transition duration-200 cursor-pointer ${
-            activeTab === "multiplayer"
-              ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
-              : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
-          }`}
-        >
-          <Target className="w-4 h-4 text-purple-500" />
-          <span>Live Multiplayer</span>
-          <span className="bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-400 text-[9px] px-1.5 py-0.5 rounded font-black">DUEL</span>
-        </button>
-        <button
-          onClick={() => { setActiveTab("profile"); synthSound(400, "sine", 0.08); }}
-          className={`px-4 py-2.5 font-extrabold text-sm flex items-center space-x-2 border-b-2 transition duration-200 cursor-pointer ${
-            activeTab === "profile"
-              ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
-              : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
-          }`}
-        >
-          <User className="w-4 h-4 text-emerald-500" />
-          <span>Stats & Badges</span>
-        </button>
-        <button
-          onClick={() => { setActiveTab("shop"); synthSound(450, "sine", 0.08); }}
-          className={`px-4 py-2.5 font-extrabold text-sm flex items-center space-x-2 border-b-2 transition duration-200 cursor-pointer ${
-            activeTab === "shop"
-              ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
-              : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
-          }`}
-        >
-          <Coins className="w-4 h-4 text-amber-500" />
-          <span>Unlock Shop</span>
-        </button>
-        <button
-          onClick={() => { setActiveTab("leaderboard"); synthSound(500, "sine", 0.08); }}
-          className={`px-4 py-2.5 font-extrabold text-sm flex items-center space-x-2 border-b-2 transition duration-200 cursor-pointer ${
-            activeTab === "leaderboard"
-              ? "border-indigo-500 text-indigo-600 dark:text-indigo-400"
-              : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
-          }`}
-        >
-          <Trophy className="w-4 h-4 text-rose-500" />
-          <span>Live Board</span>
-        </button>
+      {/* Main Tabs Navigator - High Tech Vibe */}
+      <div className="flex border-b border-indigo-500/10 pb-0.5 overflow-x-auto gap-2 scrollbar-none">
+        {[
+          { id: "arcade", label: "Game Arcade", icon: <Gamepad2 className="w-4 h-4" /> },
+          { id: "multiplayer", label: "Live Multiplayer", icon: <Target className="w-4 h-4 text-purple-500" />, badge: "DUEL" },
+          { id: "profile", label: "Stats & Badges", icon: <User className="w-4 h-4 text-emerald-500" /> },
+          { id: "shop", label: "Unlock Shop", icon: <Coins className="w-4 h-4 text-amber-500" /> },
+          { id: "leaderboard", label: "Live Board", icon: <Trophy className="w-4 h-4 text-rose-500" /> }
+        ].map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => { setActiveTab(tab.id as any); synthSound(300 + (tab.id === "arcade" ? 50 : 100), "sine", 0.08); }}
+            className={`px-5 py-3 font-black text-xs flex items-center space-x-2 border-b-2 transition duration-200 cursor-pointer shrink-0 ${
+              activeTab === tab.id
+                ? "border-indigo-500 text-indigo-600 dark:text-indigo-400 bg-indigo-500/5 dark:bg-indigo-500/10 rounded-t-xl"
+                : "border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+            }`}
+          >
+            {tab.icon}
+            <span>{tab.label}</span>
+            {tab.badge && (
+              <span className="bg-purple-600 text-white text-[8px] px-1.5 py-0.5 rounded font-black tracking-widest">{tab.badge}</span>
+            )}
+          </button>
+        ))}
       </div>
 
       {/* Main Interface Router */}
       <AnimatePresence mode="wait">
         
-        {/* TAB 1: GAME ARCADE */}
+        {/* TAB 1: GAME ARCADE - FLAGSHIP LEARNING ARCADE */}
         {activeTab === "arcade" && !gamePlaying && !matchmakingActive && (
           <motion.div 
             initial={{ opacity: 0, y: 15 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -15 }}
-            className="space-y-6"
+            className="space-y-8"
           >
-            {/* Intelligent AI Practice Recommendation Card */}
-            <div className="bg-gradient-to-r from-indigo-500/10 to-purple-500/10 dark:from-indigo-950/20 dark:to-purple-950/20 border border-indigo-200/40 dark:border-indigo-900/30 p-5 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-              <div className="flex items-start space-x-3.5">
-                <div className="p-3 bg-indigo-100 dark:bg-indigo-950 rounded-2xl text-indigo-600 dark:text-indigo-400 animate-pulse shrink-0">
-                  <Brain className="w-5 h-5" />
+            {/* Confetti Celebration Overlay */}
+            {showCelebrationConfetti && <ConfettiCanvas active={true} />}
+
+            {/* Floating XP Burst Particle Popup */}
+            <AnimatePresence>
+              {xpBurstText && (
+                <motion.div
+                  initial={{ opacity: 0, y: 20, scale: 0.8 }}
+                  animate={{ opacity: 1, y: -40, scale: 1.2 }}
+                  exit={{ opacity: 0, scale: 0.5 }}
+                  transition={{ duration: 1.8, ease: "easeOut" }}
+                  className="fixed top-24 left-1/2 -translate-x-1/2 z-50 pointer-events-none bg-gradient-to-r from-amber-400 via-orange-500 to-amber-500 text-slate-950 px-6 py-3 rounded-full font-black text-sm tracking-wider uppercase shadow-[0_0_30px_rgba(245,158,11,0.6)] border-2 border-amber-300 flex items-center gap-2"
+                >
+                  <Sparkles className="w-5 h-5 text-slate-950 animate-spin" />
+                  <span>{xpBurstText}</span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* FLAGSHIP HERO GRID (Apple Arcade & Duolingo Inspired) */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              
+              {/* 1. HERO DAILY CHALLENGE CARD (Spans 2 columns on XL) */}
+              <div className="xl:col-span-2 relative bg-gradient-to-br from-slate-950 via-indigo-950 to-slate-900 border border-indigo-500/30 rounded-3xl p-6 md:p-8 shadow-2xl overflow-hidden flex flex-col justify-between space-y-6">
+                <div className="absolute -top-24 -right-24 w-80 h-80 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 rounded-full blur-3xl pointer-events-none" />
+                
+                <div className="relative z-10 flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+                  <div className="space-y-3 max-w-lg">
+                    <div className="flex items-center gap-3">
+                      <span className="bg-gradient-to-r from-amber-400 to-orange-500 text-slate-950 font-black text-[9px] tracking-widest px-3 py-1 rounded-full uppercase shadow-md border border-amber-300">
+                        DAILY CHALLENGE
+                      </span>
+                      <span className="text-xs text-indigo-300 font-extrabold flex items-center bg-indigo-950/80 px-3 py-1 rounded-full border border-indigo-800/60">
+                        <Clock className="w-3.5 h-3.5 mr-1.5 animate-pulse text-indigo-400" /> RESET IN {timeLeft || "18:24:00"}
+                      </span>
+                    </div>
+                    
+                    <h2 className="text-2xl md:text-3xl font-black text-white tracking-tight leading-tight">
+                      Cognitive Power Missions
+                    </h2>
+                    <p className="text-xs text-slate-300 leading-relaxed font-semibold">
+                      Complete today's handpicked training missions to earn <span className="text-amber-400 font-bold">Gold multipliers</span>, premium <span className="text-cyan-400 font-bold">Gems</span>, and boost your streak!
+                    </p>
+                  </div>
+
+                  {/* Level & XP Quick Badge Shield */}
+                  <div className="flex items-center gap-4 bg-slate-900/80 border border-indigo-500/30 p-4 rounded-2xl shrink-0 backdrop-blur-md">
+                    <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 p-0.5 shadow-lg flex items-center justify-center">
+                      <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center text-amber-400 font-black text-xl">
+                        LV.{Math.floor(userGameXP / 200) + 1}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Arcader Title</span>
+                      <span className="text-xs font-black text-white block">Brainiac Scholar</span>
+                      <span className="text-[10px] font-extrabold text-amber-400 mt-0.5 block">{userGameXP} Total XP</span>
+                    </div>
+                  </div>
                 </div>
-                <div>
-                  <h4 className="font-extrabold text-slate-800 dark:text-slate-100 text-sm flex items-center space-x-2">
-                    <span>StudyMate AI Coach Suggestion</span>
-                    <span className="bg-indigo-500 text-white font-black text-[8px] tracking-widest px-1.5 py-0.5 rounded-md">RECOMMENDED</span>
-                  </h4>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-normal font-semibold">
-                    {aiRecommendation.reason}
-                  </p>
+
+                {/* Quests Mission List */}
+                <div className="relative z-10 grid grid-cols-1 md:grid-cols-3 gap-3">
+                  {dailyChallenges.map((challenge) => {
+                    const progressPercent = (challenge.current / challenge.target) * 100;
+                    return (
+                      <motion.div 
+                        key={challenge.id}
+                        whileHover={{ y: -3, scale: 1.02 }}
+                        className={`p-3.5 rounded-2xl border transition-all duration-300 flex flex-col justify-between space-y-3 ${
+                          challenge.completed 
+                            ? "bg-emerald-950/40 border-emerald-500/40 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.1)]"
+                            : "bg-slate-900/80 border-slate-800/80 text-slate-200"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            {challenge.completed ? (
+                              <div className="p-1 bg-emerald-500/20 border border-emerald-400/50 rounded-lg text-emerald-400 shrink-0">
+                                <Check className="w-3.5 h-3.5 stroke-[3px]" />
+                              </div>
+                            ) : (
+                              <div className="w-4 h-4 rounded-full border-2 border-indigo-500/40 flex items-center justify-center shrink-0 mt-0.5">
+                                <div className="w-2 h-2 bg-indigo-500 rounded-full animate-ping" />
+                              </div>
+                            )}
+                            <span className="font-extrabold text-xs leading-snug line-clamp-2">{challenge.text}</span>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <div className="flex items-center justify-between text-[9px] font-bold text-slate-400">
+                            <span>{challenge.current} / {challenge.target}</span>
+                            <span className="text-amber-400">+{challenge.coins} Gold</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                            <div 
+                              className="h-full bg-gradient-to-r from-indigo-500 to-amber-400 rounded-full transition-all duration-500"
+                              style={{ width: `${progressPercent}%` }}
+                            />
+                          </div>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
                 </div>
               </div>
-              <button
-                onClick={() => {
-                  setActiveGameId(aiRecommendation.gameId);
-                  setGamePlaying(true);
-                  synthSound(600, "sine", 0.15);
-                }}
-                className="bg-indigo-600 hover:bg-indigo-500 text-white font-black text-xs px-4 py-2.5 rounded-2xl flex items-center space-x-1.5 cursor-pointer shadow-md transition duration-200"
-              >
-                <Play className="w-3.5 h-3.5 fill-current" />
-                <span>Train Weak Skill</span>
-              </button>
+
+              {/* 2. WEEKLY REWARDS TRACK (7-Day Streak Calendar) */}
+              <div className="relative bg-gradient-to-b from-slate-900 via-indigo-950 to-slate-950 border border-indigo-500/30 rounded-3xl p-6 shadow-2xl flex flex-col justify-between space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-5 h-5 text-amber-400" />
+                    <h3 className="font-black text-white text-sm tracking-tight">Weekly Rewards Deck</h3>
+                  </div>
+                  <span className="text-[10px] font-black text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/30 flex items-center gap-1">
+                    <Flame className="w-3 h-3 text-amber-400" /> {gameStreak}d Streak
+                  </span>
+                </div>
+
+                <p className="text-[11px] text-slate-400 font-semibold leading-relaxed">
+                  Log in daily to claim coins, XP multipliers, and the Sunday Mega Gift Chest!
+                </p>
+
+                {/* 7-Day Streak Cards Horizontal Grid */}
+                <div className="grid grid-cols-7 gap-1.5 pt-2">
+                  {weeklyRewards.map((item) => (
+                    <motion.button
+                      key={item.day}
+                      whileHover={{ y: -3, scale: 1.05 }}
+                      whileTap={{ scale: 0.95 }}
+                      disabled={item.claimed}
+                      onClick={() => claimWeeklyReward(item.day)}
+                      className={`flex flex-col items-center justify-between p-2 rounded-2xl border transition duration-200 cursor-pointer text-center h-24 ${
+                        item.claimed 
+                          ? "bg-emerald-950/40 border-emerald-500/30 text-emerald-400 opacity-80" 
+                          : item.day === 3 || item.day === 4
+                          ? "bg-amber-500/20 border-amber-400/80 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.2)] animate-pulse"
+                          : "bg-slate-900/90 border-slate-800 text-slate-300 hover:border-indigo-500/50"
+                      }`}
+                    >
+                      <span className="text-[9px] font-black uppercase text-slate-400">{item.dayName}</span>
+                      <span className="text-xl my-1">{item.icon}</span>
+                      <span className="text-[9px] font-black truncate w-full">
+                        {item.claimed ? "✓ Claimed" : `+${item.amount}`}
+                      </span>
+                    </motion.button>
+                  ))}
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400 font-bold">
+                  <span>Sunday Gift: <strong className="text-amber-400">250 Gold Chest</strong></span>
+                  <span className="text-indigo-400">7/7 Days</span>
+                </div>
+              </div>
+
             </div>
 
-            {/* Accessibility Controls & Difficulty Level selector */}
-            <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-50 dark:bg-slate-900/60 p-4 rounded-3xl border border-slate-100 dark:border-slate-800/80">
-              <div className="flex flex-wrap items-center gap-4">
-                <div className="flex items-center space-x-3.5">
+            {/* LEADERBOARD PODIUM & SMART COACH BAR */}
+            <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+              
+              {/* Smart Coach AI Suggestion Box */}
+              <div className="xl:col-span-2 relative bg-gradient-to-r from-indigo-950/90 via-slate-900 to-purple-950/90 border border-indigo-500/30 p-5 rounded-3xl flex flex-col md:flex-row items-start md:items-center justify-between gap-5 overflow-hidden shadow-xl">
+                <div className="absolute top-0 right-0 w-40 h-40 bg-indigo-500/10 rounded-full blur-2xl pointer-events-none" />
+                
+                <div className="flex items-start space-x-4 z-10">
+                  <div className="p-3 bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-2xl shadow-lg shrink-0">
+                    <Brain className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-extrabold text-white text-xs tracking-wide">AI Study Coach Insight</h4>
+                      <span className="bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-black text-[8px] tracking-widest px-2 py-0.5 rounded-md uppercase">
+                        PERSONALIZED FOR {profile.classGrade || "YOU"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-300 mt-1.5 leading-relaxed font-semibold max-w-xl">
+                      {aiRecommendation.reason}
+                    </p>
+                  </div>
+                </div>
+
+                <PremiumButton
+                  onClick={() => {
+                    setActiveGameId(aiRecommendation.gameId);
+                    setGamePlaying(true);
+                    synthSound(600, "sine", 0.15);
+                  }}
+                  variant="gradient"
+                  size="md"
+                  className="shadow-lg shadow-indigo-500/20 shrink-0 self-end md:self-center z-10"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>Train Weak Skill</span>
+                </PremiumButton>
+              </div>
+
+              {/* Leaderboard Podium Preview Widget */}
+              <div className="bg-slate-900/80 border border-slate-800 rounded-3xl p-5 shadow-xl flex items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 font-black">
+                    🏆
+                  </div>
+                  <div>
+                    <h4 className="font-black text-white text-xs">Class 8 Standings</h4>
+                    <p className="text-[10px] text-slate-400 font-bold mt-0.5">Top: Aarav S. (1,420 XP)</p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={() => { setActiveTab("leaderboard"); synthSound(400, "sine", 0.08); }}
+                  className="px-3.5 py-2 bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-300 border border-indigo-500/30 rounded-xl text-xs font-black transition cursor-pointer shrink-0"
+                >
+                  View Rank
+                </button>
+              </div>
+
+            </div>
+
+            {/* COGNITIVE ZONE CATEGORY SELECTOR (Apple Arcade & Duolingo Style) */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
+                  <Sliders className="w-4.5 h-4.5 mr-2 text-indigo-500" /> Select Cognitive Zone
+                </h3>
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  {getFilteredGames().length} Games Available
+                </span>
+              </div>
+              
+              <div className="flex items-center gap-2.5 overflow-x-auto pb-3 scrollbar-none snap-x">
+                {[
+                  { id: "all", label: "All Games", icon: <Gamepad2 className="w-4 h-4" /> },
+                  { id: "memory", label: "Memory", icon: <Brain className="w-4 h-4" /> },
+                  { id: "geometry", label: "Geometry", icon: <Compass className="w-4 h-4" /> },
+                  { id: "logic", label: "Logic", icon: <HelpCircle className="w-4 h-4" /> },
+                  { id: "math", label: "Math Sprint", icon: <Trophy className="w-4 h-4" /> },
+                  { id: "pattern", label: "Pattern", icon: <Sliders className="w-4 h-4" /> },
+                  { id: "speed", label: "Brain Speed", icon: <Zap className="w-4 h-4" /> }
+                ].map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => { setSelectedCategory(cat.id as GameCategory); synthSound(300, "sine", 0.08); }}
+                    className={`px-5 py-3 rounded-2xl text-xs font-black shrink-0 transition-all duration-300 cursor-pointer border snap-center flex items-center gap-2 ${
+                      selectedCategory === cat.id
+                        ? "bg-gradient-to-r from-indigo-600 to-purple-600 text-white border-indigo-500 shadow-lg shadow-indigo-600/25 scale-[1.03]"
+                        : "bg-white dark:bg-slate-900 text-slate-500 border-slate-200/60 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 hover:scale-[1.01]"
+                    }`}
+                  >
+                    {cat.icon}
+                    <span>{cat.label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Accessibility / Difficulty Settings drawer */}
+            <div className="flex flex-col xl:flex-row gap-5 justify-between bg-slate-50/50 dark:bg-slate-900/20 p-5 rounded-3xl border border-slate-100 dark:border-slate-800">
+              <div className="flex flex-wrap items-center gap-6">
+                
+                {/* Xbox Style Difficulty selector */}
+                <div className="flex flex-col sm:flex-row sm:items-center gap-3">
                   <span className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center">
-                    <Sliders className="w-4 h-4 mr-1.5" /> Set Difficulty:
+                    <Sliders className="w-4 h-4 mr-2 text-indigo-500" /> Set Difficulty:
                   </span>
-                  <div className="flex bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200/40 dark:border-slate-700/50">
+                  <div className="flex bg-white dark:bg-slate-900 p-1 rounded-2xl border border-slate-200/40 dark:border-slate-800 shadow-inner">
                     {(["easy", "medium", "hard", "expert"] as DifficultyLevel[]).map((level) => (
                       <button
                         key={level}
                         onClick={() => { setDifficulty(level); synthSound(300 + (level === "expert" ? 200 : 50), "sine", 0.08); }}
-                        className={`text-[10px] uppercase tracking-wider font-black px-3 py-1.5 rounded-lg cursor-pointer transition ${
+                        className={`text-[10px] uppercase tracking-wider font-black px-3.5 py-1.5 rounded-xl cursor-pointer transition-all duration-200 ${
                           difficulty === level
-                            ? "bg-indigo-500 text-white shadow-sm"
-                            : "text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700/50"
+                            ? "bg-indigo-600 text-white shadow-md shadow-indigo-600/10"
+                            : "text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800"
                         }`}
                       >
                         {level}
@@ -816,10 +1434,10 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                   </div>
                 </div>
 
-                {/* Challenge Class Select Dropdown */}
-                <div className="flex items-center space-x-3">
+                {/* CBSE Grade Standard Select */}
+                <div className="flex items-center gap-3">
                   <span className="text-xs font-black text-slate-500 dark:text-slate-400 flex items-center">
-                    <Award className="w-4 h-4 mr-1.5 text-indigo-500" /> Math Class:
+                    <Award className="w-4 h-4 mr-2 text-indigo-500" /> Math Grade:
                   </span>
                   <div className="relative">
                     <select
@@ -828,7 +1446,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                         setMathGrade(e.target.value);
                         synthSound(450, "sine", 0.1);
                       }}
-                      className="bg-white dark:bg-slate-800 text-[10px] font-black uppercase tracking-wider text-slate-700 dark:text-slate-200 pl-3 pr-8 py-1.5 rounded-xl border border-slate-200/40 dark:border-slate-700/50 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer appearance-none"
+                      className="bg-white dark:bg-slate-900 text-[10px] font-black uppercase tracking-widest text-slate-700 dark:text-slate-200 pl-4 pr-10 py-2.5 rounded-2xl border border-slate-200/40 dark:border-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 cursor-pointer appearance-none shadow-sm"
                     >
                       {Array.from({ length: 12 }, (_, i) => `Class ${i + 1}`).map((cls) => (
                         <option key={cls} value={cls}>
@@ -836,156 +1454,268 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                         </option>
                       ))}
                     </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
-                      <svg className="fill-current h-3 w-3" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                        <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
-                      </svg>
+                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3.5 text-slate-400">
+                      <ChevronDown className="w-3.5 h-3.5" />
                     </div>
                   </div>
                 </div>
+
               </div>
 
-              {/* Text Size Accessibility Controls */}
-              <div className="flex items-center space-x-2">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Text Scale:</span>
-                <div className="flex bg-white dark:bg-slate-800 p-1 rounded-xl border border-slate-200/40 dark:border-slate-700/50">
-                  <button onClick={() => setTextSize("normal")} className={`px-2 py-1 rounded text-xs font-extrabold ${textSize === "normal" ? "bg-indigo-500 text-white" : "text-slate-400"}`}>A</button>
-                  <button onClick={() => setTextSize("large")} className={`px-2.5 py-1 rounded text-sm font-extrabold ${textSize === "large" ? "bg-indigo-500 text-white" : "text-slate-400"}`}>A+</button>
-                  <button onClick={() => setTextSize("xlarge")} className={`px-3 py-1 rounded text-base font-extrabold ${textSize === "xlarge" ? "bg-indigo-500 text-white" : "text-slate-400"}`}>A++</button>
+              {/* Responsive Text Scale Controller */}
+              <div className="flex items-center gap-3">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Text scale:</span>
+                <div className="flex bg-white dark:bg-slate-900 p-1 rounded-2xl border border-slate-200/40 dark:border-slate-800 shadow-sm">
+                  <button onClick={() => setTextSize("normal")} className={`px-3 py-1 rounded-xl text-xs font-black transition-all ${textSize === "normal" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400"}`}>A</button>
+                  <button onClick={() => setTextSize("large")} className={`px-3.5 py-1 rounded-xl text-sm font-black transition-all ${textSize === "large" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400"}`}>A+</button>
+                  <button onClick={() => setTextSize("xlarge")} className={`px-4 py-1 rounded-xl text-base font-black transition-all ${textSize === "xlarge" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400"}`}>A++</button>
                 </div>
               </div>
             </div>
 
-            {/* Category selection bar */}
-            <div className="flex items-center space-x-2 overflow-x-auto pb-2 border-b border-slate-100 dark:border-slate-800/40">
-              {[
-                { id: "all", label: "All Categories", icon: <Gamepad2 className="w-4 h-4" /> },
-                { id: "math", label: "🧮 Math Challenges", icon: null },
-                { id: "memory", label: "🧠 Memory Games", icon: null },
-                { id: "eye", label: "👁️ Eye Training", icon: null },
-                { id: "logic", label: "🧩 Logic & Puzzles", icon: null },
-                { id: "speed", label: "⚡ Brain Speed", icon: null }
-              ].map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={() => { setSelectedCategory(cat.id as GameCategory); synthSound(300, "sine", 0.08); }}
-                  className={`px-3.5 py-2 rounded-2xl text-xs font-black shrink-0 transition duration-150 cursor-pointer border ${
-                    selectedCategory === cat.id
-                      ? "bg-indigo-600 text-white border-indigo-600"
-                      : "bg-white dark:bg-slate-800 text-slate-500 border-slate-100 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700"
-                  }`}
-                >
-                  <span className="flex items-center space-x-1">
-                    {cat.icon}
-                    <span>{cat.label}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-
-            {/* Grid display of Arcade Games */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {getFilteredGames().map((game) => (
-                <div 
-                  key={game.id}
-                  className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-5 shadow-sm hover:shadow-md hover:border-indigo-200/50 transition duration-200 flex flex-col justify-between"
-                >
-                  <div className="space-y-3.5">
-                    <div className="flex items-center justify-between">
-                      <div className={`p-3 rounded-2xl ${game.bgLight}`}>
-                        {game.icon}
-                      </div>
-                      <span className="text-[10px] font-black uppercase tracking-widest bg-slate-50 dark:bg-slate-800/80 text-slate-500 px-2 py-0.5 rounded border border-slate-100 dark:border-slate-700">
-                        {game.category}
-                      </span>
-                    </div>
-
-                    <div>
-                      <h3 className="font-extrabold text-slate-800 dark:text-slate-100 text-sm">{game.title}</h3>
-                      <p className={`text-slate-400 leading-relaxed font-semibold mt-1.5 ${getTextSizeClass()}`}>
-                        {game.desc}
-                      </p>
-                    </div>
-
-                    {/* Skill tags */}
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {game.skillsTrained.map(s => (
-                        <span key={s} className="text-[9px] font-bold bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded">
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 pt-5 border-t border-slate-50 dark:border-slate-800/40 mt-5">
-                    <button
-                      onClick={() => {
-                        setActiveGameId(game.id);
-                        setIsMultiplayerMatch(false);
-                        setGamePlaying(true);
-                        synthSound(500, "sine", 0.15);
-                      }}
-                      className={`flex-1 bg-gradient-to-r ${game.color} text-white font-black text-xs py-2.5 rounded-2xl flex items-center justify-center space-x-1.5 hover:opacity-90 shadow-sm transition duration-150 cursor-pointer`}
-                    >
-                      <Play className="w-3.5 h-3.5 fill-current" />
-                      <span>Solo Practice</span>
-                    </button>
-                    <button
-                      onClick={() => startMatchmaking(game.id)}
-                      className="p-2.5 bg-slate-50 dark:bg-slate-800 hover:bg-purple-50 dark:hover:bg-purple-950/20 text-purple-600 dark:text-purple-400 border border-slate-100 dark:border-slate-700 rounded-2xl transition duration-150 cursor-pointer shadow-sm"
-                      title="Play live multiplayer duel"
-                    >
-                      <Target className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Daily Challenges Widget inside Arcade tab */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4">
-              <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center justify-between">
-                <span className="flex items-center">
-                  <Flame className="w-4.5 h-4.5 mr-2 text-orange-500 animate-pulse" /> Daily Learning Quests
-                </span>
-                <span className="text-[10px] text-slate-400">Updates in 18 hrs</span>
-              </h3>
-              
-              <div className="space-y-3">
-                {dailyChallenges.map((challenge) => (
-                  <div 
-                    key={challenge.id}
-                    className={`p-3.5 rounded-2xl border text-xs flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-                      challenge.completed 
-                        ? "bg-emerald-50/40 dark:bg-emerald-950/10 border-emerald-200/50 text-emerald-800 dark:text-emerald-300"
-                        : "bg-slate-50/50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800"
-                    }`}
-                  >
-                    <div className="flex items-center space-x-3">
-                      {challenge.completed ? (
-                        <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
-                      ) : (
-                        <div className="w-5 h-5 rounded-full border-2 border-slate-300 dark:border-slate-600 flex items-center justify-center shrink-0">
-                          <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full opacity-0"></div>
+            {/* 3 CURATED CAROUSELS (Apple Arcade Inspired) */}
+            {selectedCategory === "all" && (
+              <div className="space-y-8">
+                
+                {/* 1. CONTINUE PLAYING CAROUSEL */}
+                <div className="space-y-3.5">
+                  <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
+                    <History className="w-4.5 h-4.5 mr-2 text-emerald-500" /> Continue Playing
+                  </h3>
+                  <div className="flex overflow-x-auto gap-5 pb-4 scrollbar-none snap-x pr-2">
+                    {GAMES_CATALOGUE.slice(0, 4).map((game) => (
+                      <motion.div 
+                        key={`cont-${game.id}`}
+                        whileHover={{ y: -6, scale: 1.02 }}
+                        className="min-w-[280px] max-w-[280px] bg-gradient-to-br from-slate-900/90 via-slate-900 to-slate-950 border border-slate-800 p-5 rounded-3xl snap-center flex flex-col justify-between h-52 relative overflow-hidden shadow-lg group cursor-pointer"
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className={`p-2.5 rounded-2xl ${game.bgLight}`}>
+                              {game.icon}
+                            </div>
+                            <span className="text-[8px] font-black uppercase bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2.5 py-0.5 rounded-full">
+                              IN PROGRESS
+                            </span>
+                          </div>
+                          <div>
+                            <h4 className="font-extrabold text-white text-xs">{game.title}</h4>
+                            <p className="text-[10px] text-slate-400 leading-relaxed font-semibold mt-1 line-clamp-2">{game.desc}</p>
+                          </div>
                         </div>
-                      )}
-                      <div>
-                        <span className="font-extrabold block text-slate-700 dark:text-slate-200">{challenge.text}</span>
-                        <span className="text-[9px] text-slate-400 block mt-0.5">
-                          Progress: {challenge.current} / {challenge.target}
-                        </span>
-                      </div>
-                    </div>
 
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] bg-amber-100 dark:bg-amber-950/40 text-amber-600 px-2 py-1 rounded font-black">
-                        +{challenge.coins} Coins
-                      </span>
-                      <span className="text-[10px] bg-indigo-100 dark:bg-indigo-950/40 text-indigo-600 px-2 py-1 rounded font-black">
-                        +{challenge.xp} XP
-                      </span>
-                    </div>
+                        <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-800">
+                          <span className="text-[9px] text-emerald-400 font-extrabold">92% Accuracy</span>
+                          <button
+                            onClick={() => {
+                              setActiveGameId(game.id);
+                              setIsMultiplayerMatch(false);
+                              setGamePlaying(true);
+                              synthSound(500, "sine", 0.15);
+                            }}
+                            className={`px-3.5 py-1.5 bg-gradient-to-r ${game.color} text-white font-black text-[10px] rounded-xl flex items-center space-x-1 hover:opacity-90 transition cursor-pointer shadow-md`}
+                          >
+                            <Play className="w-3 h-3 fill-current" />
+                            <span>Resume</span>
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))}
                   </div>
+                </div>
+
+                {/* 2. RECOMMENDED GAMES CAROUSEL */}
+                <div className="space-y-3.5">
+                  <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
+                    <Star className="w-4.5 h-4.5 mr-2 text-indigo-500 animate-spin-slow" /> Recommended for You
+                  </h3>
+                  <div className="flex overflow-x-auto gap-5 pb-4 scrollbar-none snap-x pr-2">
+                    {GAMES_CATALOGUE.slice(4, 8).map((game) => (
+                      <motion.div 
+                        key={`rec-${game.id}`}
+                        whileHover={{ y: -6, scale: 1.02 }}
+                        className="min-w-[280px] max-w-[280px] bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-950 border border-indigo-500/20 p-5 rounded-3xl snap-center flex flex-col justify-between h-52 relative overflow-hidden shadow-lg group cursor-pointer"
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className={`p-2.5 rounded-2xl ${game.bgLight}`}>
+                              {game.icon}
+                            </div>
+                            <span className="text-[8px] font-black uppercase bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-2.5 py-0.5 rounded-full">
+                              +{game.xpReward} XP
+                            </span>
+                          </div>
+                          <div>
+                            <h4 className="font-extrabold text-white text-xs">{game.title}</h4>
+                            <p className="text-[10px] text-slate-400 leading-relaxed font-semibold mt-1 line-clamp-2">{game.desc}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-800">
+                          <span className="text-[9px] text-indigo-400 font-extrabold">{game.estimatedTime}</span>
+                          <button
+                            onClick={() => {
+                              setActiveGameId(game.id);
+                              setIsMultiplayerMatch(false);
+                              setGamePlaying(true);
+                              synthSound(500, "sine", 0.15);
+                            }}
+                            className={`px-3.5 py-1.5 bg-gradient-to-r ${game.color} text-white font-black text-[10px] rounded-xl flex items-center space-x-1 hover:opacity-90 transition cursor-pointer shadow-md`}
+                          >
+                            <Play className="w-3 h-3 fill-current" />
+                            <span>Start Mission</span>
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. RECENTLY PLAYED HISTORY CAROUSEL */}
+                <div className="space-y-3.5">
+                  <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
+                    <Activity className="w-4.5 h-4.5 mr-2 text-rose-500" /> Recently Played Sessions
+                  </h3>
+                  <div className="flex overflow-x-auto gap-5 pb-4 scrollbar-none snap-x pr-2">
+                    {recentlyPlayed.map((session, idx) => (
+                      <motion.div 
+                        key={`recent-${idx}`}
+                        whileHover={{ y: -6, scale: 1.02 }}
+                        className="min-w-[280px] max-w-[280px] bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800 p-5 rounded-3xl snap-center flex flex-col justify-between h-52 relative overflow-hidden shadow-lg group cursor-pointer"
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-2xl">{session.icon}</span>
+                            <div className="flex items-center text-amber-400 text-xs">
+                              {Array.from({ length: session.stars }).map((_, i) => (
+                                <Star key={i} className="w-3 h-3 fill-amber-400" />
+                              ))}
+                            </div>
+                          </div>
+                          <div>
+                            <h4 className="font-extrabold text-white text-xs">{session.title}</h4>
+                            <div className="flex items-center justify-between text-[10px] text-slate-400 mt-2 font-bold">
+                              <span>Score: {session.score}</span>
+                              <span className="text-emerald-400">{session.accuracy}% Acc</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-800">
+                          <span className="text-[9px] text-slate-500 font-extrabold">{session.timestamp}</span>
+                          <button
+                            onClick={() => {
+                              setActiveGameId(session.gameId);
+                              setIsMultiplayerMatch(false);
+                              setGamePlaying(true);
+                              synthSound(500, "sine", 0.15);
+                            }}
+                            className="px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-white font-black text-[10px] rounded-xl flex items-center space-x-1 transition cursor-pointer"
+                          >
+                            <Play className="w-3 h-3 fill-current text-indigo-400" />
+                            <span>Replay</span>
+                          </button>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* MAIN GAMES CATALOGUE GRID - 3D FLOATING CARDS */}
+            <div className="space-y-4">
+              <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
+                <Gamepad2 className="w-4.5 h-4.5 mr-2 text-indigo-500" /> 
+                {selectedCategory === "all" ? "All Educational Arcade Games" : `${selectedCategory.toUpperCase()} Cognitive Games`}
+              </h3>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {getFilteredGames().map((game) => (
+                  <Floating3DCard 
+                    key={game.id}
+                    onClick={() => {
+                      setActiveGameId(game.id);
+                      setIsMultiplayerMatch(false);
+                      setGamePlaying(true);
+                      synthSound(500, "sine", 0.15);
+                    }}
+                  >
+                    <div className="flex flex-col justify-between h-full space-y-4">
+                      
+                      <div className="space-y-3">
+                        {/* Header Row */}
+                        <div className="flex items-center justify-between">
+                          <div className={`p-3 rounded-2xl shadow-sm ${game.bgLight} group-hover:scale-110 transition-transform duration-300`}>
+                            {game.icon}
+                          </div>
+                          
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[8px] font-black uppercase bg-slate-100/80 dark:bg-slate-800 text-slate-500 dark:text-slate-400 px-2.5 py-1 rounded-xl border border-slate-200/50 dark:border-slate-700/60">
+                              {game.difficulty}
+                            </span>
+                            <span className="text-[8px] font-black uppercase bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 px-2.5 py-1 rounded-xl border border-indigo-500/20">
+                              +{game.xpReward} XP
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Title & Description */}
+                        <div>
+                          <h3 className="font-extrabold text-slate-800 dark:text-slate-100 text-sm group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                            {game.title}
+                          </h3>
+                          <p className={`text-slate-500 dark:text-slate-400 leading-relaxed font-semibold mt-1.5 ${getTextSizeClass()}`}>
+                            {game.desc}
+                          </p>
+                        </div>
+
+                        {/* Stats Row */}
+                        <div className="flex items-center justify-between text-[10px] text-slate-400 font-extrabold pt-1">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 text-slate-400" /> {game.estimatedTime}
+                          </span>
+                          <span className="text-emerald-500 font-black">
+                            {game.completionRate}% Pass Rate
+                          </span>
+                        </div>
+
+                        {/* Skills trained tags */}
+                        <div className="flex flex-wrap gap-1.5 pt-1">
+                          {game.skillsTrained.map(s => (
+                            <span key={s} className="text-[9px] font-bold bg-slate-100/80 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 px-2 py-0.5 rounded-lg border border-slate-200/50 dark:border-slate-700/40">
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Card Action Buttons */}
+                      <div className="flex items-center gap-2 pt-3 border-t border-slate-100 dark:border-slate-800/80 mt-2 z-10" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => {
+                            setActiveGameId(game.id);
+                            setIsMultiplayerMatch(false);
+                            setGamePlaying(true);
+                            synthSound(500, "sine", 0.15);
+                          }}
+                          className={`flex-1 bg-gradient-to-r ${game.color} text-white font-black text-xs py-2.5 rounded-2xl flex items-center justify-center space-x-1.5 hover:opacity-95 shadow-md hover:shadow-indigo-500/20 transition-all duration-200 cursor-pointer`}
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Solo Practice</span>
+                        </button>
+                        <button
+                          onClick={() => startMatchmaking(game.id)}
+                          className="p-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-purple-50 dark:hover:bg-purple-950/40 text-purple-600 dark:text-purple-400 border border-slate-200/60 dark:border-slate-700/60 rounded-2xl transition duration-150 cursor-pointer shadow-sm"
+                          title="Play live multiplayer duel"
+                        >
+                          <Target className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                    </div>
+                  </Floating3DCard>
                 ))}
               </div>
             </div>
@@ -1000,21 +1730,21 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
             exit={{ opacity: 0, y: -15 }}
             className="space-y-6"
           >
-            <div className="bg-gradient-to-r from-purple-600 to-indigo-700 text-white rounded-3xl p-6 md:p-8 shadow-md relative overflow-hidden">
-              <div className="absolute right-0 bottom-0 opacity-10 text-9xl transform translate-x-10 translate-y-10">
+            <div className="bg-gradient-to-r from-indigo-900 via-purple-900 to-slate-900 text-white rounded-3xl p-6 md:p-8 shadow-2xl relative overflow-hidden">
+              <div className="absolute right-0 bottom-0 opacity-10 text-9xl transform translate-x-10 translate-y-10 pointer-events-none">
                 ⚔️
               </div>
               <div className="max-w-lg space-y-4">
-                <span className="text-[10px] bg-white/20 px-3 py-1 rounded-full font-black tracking-widest uppercase">
+                <span className="text-[10px] bg-white/20 px-3 py-1 rounded-full font-black tracking-widest uppercase border border-white/10">
                   Competitive Arena
                 </span>
-                <h2 className="text-2xl font-black font-display leading-tight">Live Multiplayer Duels</h2>
+                <h2 className="text-2xl font-black leading-tight">Live Multiplayer Duels</h2>
                 <p className="text-xs text-indigo-100 leading-relaxed font-semibold">
                   Match with student toppers or friends from grade level {profile.classGrade} in direct, rapid academic duels! Prove your intellectual supremacy, win double gold coin stakes, and climb global leaderboards.
                 </p>
                 <div className="pt-2 flex flex-wrap gap-3">
                   <div className="flex items-center space-x-1.5 text-xs font-bold text-indigo-100">
-                    <UserCheck className="w-4.5 h-4.5 text-emerald-300" />
+                    <UserCheck className="w-4.5 h-4.5 text-emerald-300 animate-bounce" />
                     <span>248 Active Duellers Online</span>
                   </div>
                 </div>
@@ -1023,7 +1753,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {/* Tournaments Card */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
+              <div className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-xl border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
                 <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
                   <Trophy className="w-4.5 h-4.5 mr-2 text-rose-500 animate-pulse" /> Weekly Arena Tournaments
                 </h3>
@@ -1031,10 +1761,10 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                   Join standard board exam simulation tournaments occurring every Friday. Complete mock speed papers side-by-side with 100+ candidates live!
                 </p>
 
-                <div className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-center justify-between">
+                <div className="p-4 bg-slate-50 dark:bg-slate-950/60 rounded-2xl border border-slate-100 dark:border-slate-800 flex items-center justify-between">
                   <div>
                     <span className="text-xs font-black block text-slate-700 dark:text-slate-200">Class {profile.classGrade} Science Olympics</span>
-                    <span className="text-[10px] text-indigo-500 block font-bold mt-1">Starts: Friday, 6:00 PM</span>
+                    <span className="text-[10px] text-indigo-500 dark:text-indigo-400 block font-bold mt-1">Starts: Friday, 6:00 PM</span>
                   </div>
                   {registeredTournaments.includes(`olympics_${profile.classGrade}`) ? (
                     <span className="text-emerald-500 font-extrabold text-xs flex items-center bg-emerald-50/40 dark:bg-emerald-950/20 border border-emerald-100/50 dark:border-emerald-900/30 px-3 py-1.5 rounded-xl shrink-0">
@@ -1060,7 +1790,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
               </div>
 
               {/* Matchmaker Trigger Grid */}
-              <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
+              <div className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-xl border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
                 <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
                   <Compass className="w-4.5 h-4.5 mr-2 text-purple-500" /> Start Rapid Matching
                 </h3>
@@ -1078,10 +1808,10 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                     <button
                       key={item.id}
                       onClick={() => startMatchmaking(item.id)}
-                      className={`w-full p-3.5 bg-slate-50/50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center justify-between text-xs font-black text-slate-700 dark:text-slate-300 transition duration-150 cursor-pointer ${item.color}`}
+                      className={`w-full p-3.5 bg-slate-50/50 dark:bg-slate-950/40 border border-slate-150 dark:border-slate-800/80 rounded-2xl flex items-center justify-between text-xs font-black text-slate-700 dark:text-slate-300 transition duration-150 cursor-pointer ${item.color}`}
                     >
                       <span>{item.label}</span>
-                      <Target className="w-4 h-4 text-purple-500" />
+                      <Target className="w-4 h-4 text-purple-500 animate-pulse" />
                     </button>
                   ))}
                 </div>
@@ -1090,7 +1820,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
           </motion.div>
         )}
 
-        {/* TAB 3: STATS & BADGES */}
+        {/* TAB 3: STATS & BADGES - Inspired by Apple Watch Rings & Premium Dashboards */}
         {activeTab === "profile" && !gamePlaying && (
           <motion.div 
             initial={{ opacity: 0, y: 15 }}
@@ -1098,60 +1828,89 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
             exit={{ opacity: 0, y: -15 }}
             className="space-y-6"
           >
-            {/* Statistics Grid */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Bento Statistics Grid with Custom Progress Ring indicators */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
               {[
-                { label: "Games Played", val: stats.gamesPlayed, icon: <Gamepad2 className="w-4 h-4" />, col: "text-blue-500 bg-blue-50 dark:bg-blue-950" },
-                { label: "Win Rate", val: stats.gamesPlayed > 0 ? `${Math.round((stats.gamesWon / stats.gamesPlayed) * 100)}%` : "0%", icon: <Trophy className="w-4 h-4" />, col: "text-rose-500 bg-rose-50 dark:bg-rose-950" },
-                { label: "Accuracy Avg", val: `${stats.accuracyAvg}%`, icon: <Check className="w-4 h-4" />, col: "text-emerald-500 bg-emerald-50 dark:bg-emerald-950" },
-                { label: "Math Streak Best", val: `${stats.bestMathStreak} Qs`, icon: <Flame className="w-4 h-4" />, col: "text-amber-500 bg-amber-50 dark:bg-amber-950" }
+                { label: "Games Played", val: stats.gamesPlayed, sub: "All time records", icon: <Gamepad2 className="w-5 h-5" />, col: "text-blue-500 bg-blue-50 dark:bg-blue-950/60 border-blue-100 dark:border-blue-900/30", pct: 100 },
+                { label: "Duel Win Rate", val: stats.gamesPlayed > 0 ? `${Math.round((stats.gamesWon / stats.gamesPlayed) * 100)}%` : "0%", sub: `${stats.gamesWon} victories`, icon: <Trophy className="w-5 h-5" />, col: "text-rose-500 bg-rose-50 dark:bg-rose-950/60 border-rose-100 dark:border-rose-900/30", pct: stats.gamesPlayed > 0 ? Math.round((stats.gamesWon / stats.gamesPlayed) * 100) : 0 },
+                { label: "Ocular Scan Accuracy", val: `${stats.accuracyAvg}%`, sub: "High score average", icon: <Check className="w-5 h-5" />, col: "text-emerald-500 bg-emerald-50 dark:bg-emerald-950/60 border-emerald-100 dark:border-emerald-900/30", pct: stats.accuracyAvg },
+                { label: "Math Streak Best", val: `${stats.bestMathStreak} Qs`, sub: "Cbse curriculum", icon: <Flame className="w-5 h-5" />, col: "text-amber-500 bg-amber-50 dark:bg-amber-950/60 border-amber-100 dark:border-amber-900/30", pct: Math.min((stats.bestMathStreak / 15) * 100, 100) }
               ].map((card, idx) => (
-                <div key={idx} className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-5 rounded-3xl shadow-sm flex items-center space-x-3.5">
-                  <div className={`p-3 rounded-2xl ${card.col}`}>
-                    {card.icon}
+                <div key={idx} className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-xl border border-slate-100 dark:border-slate-800 p-5 rounded-3xl shadow-lg flex items-center justify-between gap-4">
+                  <div className="flex items-center space-x-4">
+                    <div className={`p-3 rounded-2xl border ${card.col}`}>
+                      {card.icon}
+                    </div>
+                    <div>
+                      <span className="text-[10px] text-slate-400 block font-black uppercase tracking-widest">{card.label}</span>
+                      <span className="text-xl font-black text-slate-800 dark:text-slate-100 block mt-0.5">{card.val}</span>
+                      <span className="text-[9px] text-slate-400 block mt-0.5 font-bold">{card.sub}</span>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-[10px] text-slate-400 block font-semibold">{card.label}</span>
-                    <span className="text-base font-black text-slate-800 dark:text-slate-100 block mt-0.5">{card.val}</span>
+
+                  {/* Circular visual progress ring */}
+                  <div className="relative w-12 h-12 shrink-0">
+                    <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
+                      <path
+                        className="text-slate-100 dark:text-slate-800"
+                        strokeWidth="3.5"
+                        stroke="currentColor"
+                        fill="none"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                      <motion.path
+                        className="text-indigo-500"
+                        strokeWidth="3.5"
+                        strokeDasharray={`${card.pct}, 100`}
+                        strokeLinecap="round"
+                        stroke="currentColor"
+                        fill="none"
+                        d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center text-[9px] font-black text-slate-500 dark:text-slate-400">
+                      {Math.round(card.pct)}%
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
 
-            {/* Badges system */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-5">
+            {/* Achievements Trophy Room */}
+            <div className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-xl border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-5">
               <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
-                <Award className="w-4.5 h-4.5 mr-2 text-indigo-500" /> Unlockable Academic Trophy Room
+                <Award className="w-4.5 h-4.5 mr-2 text-indigo-500" /> Academic Trophy Room
               </h3>
               
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
                 {achievements.map((badge) => {
                   const unlocked = !!badge.unlockedAt;
                   return (
-                    <div 
+                    <motion.div 
                       key={badge.id}
-                      className={`p-4 rounded-2xl border flex items-center space-x-4 transition duration-150 ${
+                      whileHover={{ scale: 1.03 }}
+                      className={`p-4 rounded-3xl border flex items-center space-x-4 transition-all duration-300 ${
                         unlocked 
-                          ? "bg-amber-50/20 dark:bg-amber-950/10 border-amber-200/50 text-slate-800 dark:text-slate-200" 
-                          : "bg-slate-50/50 dark:bg-slate-800/40 border-slate-100 dark:border-slate-800 opacity-60"
+                          ? "bg-amber-500/5 dark:bg-amber-500/5 border-amber-400/40 text-slate-800 dark:text-slate-200 shadow-md shadow-amber-500/5" 
+                          : "bg-slate-50/50 dark:bg-slate-950/40 border-slate-100 dark:border-slate-800 opacity-60"
                       }`}
                     >
-                      <div className="text-3xl p-2.5 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700">
+                      <div className="text-3xl p-3 bg-white dark:bg-slate-900 rounded-2xl shadow-md border border-slate-150 dark:border-slate-800">
                         {badge.icon}
                       </div>
                       <div>
                         <div className="flex items-center space-x-2">
                           <span className="font-black text-xs block text-slate-800 dark:text-slate-100 leading-none">{badge.title}</span>
                           {unlocked && (
-                            <span className="text-[8px] bg-emerald-500 text-white font-bold px-1 py-0.5 rounded uppercase">UNLOCKED</span>
+                            <span className="text-[8px] bg-emerald-500 text-white font-black px-1.5 py-0.5 rounded uppercase tracking-wider">UNLOCKED</span>
                           )}
                         </div>
-                        <span className="text-[10px] text-slate-400 font-semibold block mt-1.5">{badge.description}</span>
+                        <span className="text-[10px] text-slate-400 font-semibold block mt-1.5 leading-normal">{badge.description}</span>
                         {!unlocked && (
-                          <span className="text-[9px] text-indigo-500 font-bold block mt-1">Reward: {badge.rewardCoins} gold</span>
+                          <span className="text-[9px] text-indigo-500 dark:text-indigo-400 font-bold block mt-1">Reward: {badge.rewardCoins} gold</span>
                         )}
                       </div>
-                    </div>
+                    </motion.div>
                   );
                 })}
               </div>
@@ -1168,7 +1927,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
             className="space-y-6"
           >
             {/* Avatars Grid */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
+            <div className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-xl border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
               <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
                 <UserPlus className="w-4.5 h-4.5 mr-2 text-indigo-500" /> Purchase Premium Avatars
               </h3>
@@ -1178,25 +1937,26 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                   const unlocked = unlockedAvatars.includes(av.emoji);
                   const active = selectedAvatar === av.emoji;
                   return (
-                    <div 
+                    <motion.div 
                       key={av.name}
+                      whileHover={{ y: -4 }}
                       className={`p-4 rounded-2xl border flex flex-col items-center justify-between text-center transition duration-150 ${
                         active 
-                          ? "bg-indigo-50/50 dark:bg-indigo-950/20 border-indigo-500 shadow-sm" 
-                          : "bg-slate-50/50 dark:bg-slate-900/40 border-slate-100 dark:border-slate-800"
+                          ? "bg-indigo-500/5 dark:bg-indigo-500/10 border-indigo-500 shadow-md" 
+                          : "bg-white/60 dark:bg-slate-950/60 border-slate-100 dark:border-slate-800"
                       }`}
                     >
-                      <div className="text-4xl">{av.emoji}</div>
+                      <div className="text-4xl filter drop-shadow-sm">{av.emoji}</div>
                       <span className="font-black text-[10px] text-slate-700 dark:text-slate-300 block mt-2 truncate max-w-full">{av.name}</span>
                       
                       <button
                         onClick={() => buyAvatar(av.emoji, av.cost, av.isGem)}
                         className={`w-full mt-3 py-1.5 rounded-xl font-black text-[10px] transition duration-150 flex items-center justify-center space-x-1 cursor-pointer ${
                           active 
-                            ? "bg-emerald-500 text-white" 
+                            ? "bg-emerald-600 text-white shadow-sm shadow-emerald-500/20" 
                             : unlocked 
-                            ? "bg-indigo-500 text-white" 
-                            : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:opacity-90"
+                            ? "bg-indigo-600 text-white" 
+                            : "bg-slate-150 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:opacity-90"
                         }`}
                       >
                         {active ? (
@@ -1205,19 +1965,19 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                           <span>Equip</span>
                         ) : (
                           <span className="flex items-center space-x-1">
-                            {av.isGem ? <Gem className="w-3 h-3 text-cyan-400" /> : <Coins className="w-3 h-3 text-amber-400" />}
+                            {av.isGem ? <Gem className="w-3.5 h-3.5 text-cyan-400" /> : <Coins className="w-3.5 h-3.5 text-amber-400" />}
                             <span>{av.cost}</span>
                           </span>
                         )}
                       </button>
-                    </div>
+                    </motion.div>
                   );
                 })}
               </div>
             </div>
 
             {/* Frames Grid */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
+            <div className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-xl border border-slate-100 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
               <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center">
                 <Award className="w-4.5 h-4.5 mr-2 text-indigo-500" /> Unlockable Border Profiles
               </h3>
@@ -1227,16 +1987,17 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                   const unlocked = unlockedFrames.includes(frame.id);
                   const active = selectedFrame === frame.id;
                   return (
-                    <div 
+                    <motion.div 
                       key={frame.id}
-                      className={`p-4 rounded-2xl border flex flex-col items-center justify-between text-center transition duration-150 ${
+                      whileHover={{ y: -4 }}
+                      className={`p-4 rounded-3xl border flex flex-col items-center justify-between text-center transition duration-150 ${
                         active 
-                          ? "bg-indigo-50/50 dark:bg-indigo-950/20 border-indigo-500 shadow-sm" 
-                          : "bg-slate-50/50 dark:bg-slate-900/40 border-slate-100 dark:border-slate-800"
+                          ? "bg-indigo-500/5 dark:bg-indigo-500/10 border-indigo-500 shadow-md" 
+                          : "bg-white/60 dark:bg-slate-950/60 border-slate-100 dark:border-slate-800"
                       }`}
                     >
                       {/* Preview frame */}
-                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center border-4 ${frame.style} bg-white dark:bg-slate-800`}>
+                      <div className={`w-12 h-12 rounded-xl flex items-center justify-center border-4 ${frame.style} bg-slate-900`}>
                         <span className="text-2xl">🎓</span>
                       </div>
                       <span className="font-black text-xs text-slate-700 dark:text-slate-300 block mt-2.5">{frame.name}</span>
@@ -1245,10 +2006,10 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                         onClick={() => buyFrame(frame.id, frame.cost, frame.isGem)}
                         className={`w-full mt-3 py-2 rounded-xl font-black text-xs transition duration-150 flex items-center justify-center space-x-1.5 cursor-pointer ${
                           active 
-                            ? "bg-emerald-500 text-white" 
+                            ? "bg-emerald-600 text-white shadow-sm" 
                             : unlocked 
-                            ? "bg-indigo-500 text-white" 
-                            : "bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 hover:opacity-90"
+                            ? "bg-indigo-600 text-white" 
+                            : "bg-slate-150 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:opacity-90"
                         }`}
                       >
                         {active ? (
@@ -1262,7 +2023,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                           </span>
                         )}
                       </button>
-                    </div>
+                    </motion.div>
                   );
                 })}
               </div>
@@ -1278,10 +2039,10 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
             exit={{ opacity: 0, y: -15 }}
             className="space-y-6 max-w-xl mx-auto"
           >
-            <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4">
+            <div className="bg-white/40 dark:bg-slate-900/40 backdrop-blur-xl border border-slate-100 dark:border-slate-800 rounded-3xl p-5 shadow-sm space-y-4">
               <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center justify-between">
                 <span>Class {profile.classGrade} Cognitive Leaderboard</span>
-                <span className="text-[10px] bg-amber-500/10 text-amber-600 px-2 py-0.5 rounded font-bold">Grade Top 10</span>
+                <span className="text-[10px] bg-amber-500/10 text-amber-600 px-2.5 py-1 rounded font-bold">Grade Top 10</span>
               </h3>
 
               <div className="space-y-2">
@@ -1330,7 +2091,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
                 })().map((participant) => (
                   <div 
                     key={participant.name}
-                    className={`flex items-center justify-between p-3 rounded-2xl border text-xs transition-all ${
+                    className={`flex items-center justify-between p-3.5 rounded-2xl border text-xs transition-all ${
                       participant.isUser 
                         ? "bg-amber-500/10 dark:bg-amber-500/15 border-amber-400 shadow-[0_2px_8px_rgba(245,158,11,0.08)] scale-[1.01] font-bold" 
                         : "bg-slate-50/50 dark:bg-slate-900/40 border-slate-100/80 dark:border-slate-800/60"
@@ -1356,6 +2117,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
         )}
 
       </AnimatePresence>
+    </div>
 
       {/* MODAL: Matchmaking Active Screen */}
       <AnimatePresence>
@@ -1609,6 +2371,18 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
               )}
 
               {/* LOGIC: Tic-Tac-Toe AI or Numeric Series Solver */}
+              {activeGameId === "syllabus_quest" && (
+                <SyllabusQuestGame 
+                  profile={profile}
+                  difficulty={difficulty}
+                  grade={mathGrade}
+                  onFinished={(score, max, acc) => handleGameFinished("syllabus_quest", score, max, acc)}
+                  synthSound={synthSound}
+                  onAddNotification={onAddNotification}
+                  onClose={closeGame}
+                />
+              )}
+
               {activeGameId === "tic_tac_ai" && (
                 <TicTacToeAIGame 
                   difficulty={difficulty}
@@ -1657,7 +2431,7 @@ export default function EducationalGames({ profile, onAwardXP, onAddNotification
         )}
       </AnimatePresence>
 
-    </div>
+    </>
   );
 }
 
@@ -3131,11 +3905,44 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
   const [correctStreak, setCorrectStreak] = useState(0);
   const [incorrectStreak, setIncorrectStreak] = useState(0);
 
+  // Redesign state additions
+  const [splash, setSplash] = useState<"none" | "correct" | "wrong">("none");
+  const [shakeTrigger, setShakeTrigger] = useState(false);
+  const [scoreParticles, setScoreParticles] = useState<{ id: number; text: string }[]>([]);
+  const [questionHistory, setQuestionHistory] = useState<("correct" | "wrong" | "unanswered")[]>(() => 
+    Array.from({ length: 10 }).map(() => "unanswered")
+  );
+
+  // Keyboard Shortcuts (1, 2, 3, 4 or A, B, C, D)
+  useEffect(() => {
+    if (mode === "select" || gameFinished || !currentQuestion || selectedOpt) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const key = e.key;
+      let optIndex = -1;
+      
+      if (["1", "2", "3", "4"].includes(key)) {
+        optIndex = parseInt(key) - 1;
+      } else if (["a", "b", "c", "d"].includes(key.toLowerCase())) {
+        const charMap: Record<string, number> = { a: 0, b: 1, c: 2, d: 3 };
+        optIndex = charMap[key.toLowerCase()];
+      }
+      
+      if (optIndex >= 0 && optIndex < currentQuestion.options.length) {
+        handleSelectOption(currentQuestion.options[optIndex]);
+      }
+    };
+    
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [mode, gameFinished, currentQuestion, selectedOpt]);
+
   // Generate question
   const loadNextQuestion = (stepIdx: number, diffLevel: DifficultyLevel) => {
     setSelectedOpt(null);
     setShowExplanation(false);
     setShowHint(false);
+    setSplash("none");
     
     const q = generateGeometryQuestion(gradeNum, diffLevel, stepIdx, history);
     setCurrentQuestion(q);
@@ -3158,6 +3965,7 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
     setIncorrectStreak(0);
     setGameFinished(false);
     setHistory([]);
+    setQuestionHistory(Array.from({ length: 10 }).map(() => "unanswered"));
 
     synthSound(600, "sine", 0.1);
     setTimeout(() => synthSound(800, "sine", 0.15), 80);
@@ -3183,6 +3991,11 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
           handleSelectOption("__timeout__");
           return 0;
         }
+        if (prev <= 5) {
+          synthSound(1000, "sine", 0.05); // high pitch tick for urgency
+        } else {
+          synthSound(400, "sine", 0.02); // gentle ticking
+        }
         return prev - 1;
       });
     }, 1000);
@@ -3197,8 +4010,15 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
 
     const isCorrect = opt === currentQuestion?.correctAnswer;
 
+    // Update history tracking
+    setQuestionHistory(prev => {
+      const next = [...prev];
+      next[currentStep] = isCorrect ? "correct" : "wrong";
+      return next;
+    });
+
     if (isCorrect) {
-      // Calculate score value. In practice mode, hints decrease question points by 50%. In quiz mode, there's a 1.5x multiplier!
+      setSplash("correct");
       let points = 10;
       if (mode === "practice" && showHint) {
         points = 5;
@@ -3208,15 +4028,18 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
       setScore(prev => prev + points);
       setCorrectStreak(prev => prev + 1);
       setIncorrectStreak(0);
-      synthSound(880, "sine", 0.2);
+      
+      // Add a sparkling floating reward particle
+      setScoreParticles(prev => [...prev, { id: Date.now(), text: `+${points} PTS` }]);
+      synthSound(880, "sine", 0.1);
+      setTimeout(() => synthSound(1320, "sine", 0.15), 60);
 
       // Adaptive difficulty logic (only in Practice mode)
       if (mode === "practice") {
         if (correctStreak + 1 >= 2) {
-          // Increase difficulty level
           if (activeDiff === "easy") {
             setActiveDiff("medium");
-            onFinished && synthSound(900, "sine", 0.1); // subtle level-up feedback sound
+            synthSound(900, "sine", 0.1);
           } else if (activeDiff === "medium") {
             setActiveDiff("hard");
           } else if (activeDiff === "hard") {
@@ -3226,6 +4049,9 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
         }
       }
     } else {
+      setSplash("wrong");
+      setShakeTrigger(true);
+      setTimeout(() => setShakeTrigger(false), 500);
       setWrongAnswers(prev => prev + 1);
       setIncorrectStreak(prev => prev + 1);
       setCorrectStreak(0);
@@ -3234,7 +4060,6 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
       // Adaptive difficulty logic
       if (mode === "practice") {
         if (incorrectStreak + 1 >= 2) {
-          // Decrease difficulty level
           if (activeDiff === "expert") {
             setActiveDiff("hard");
           } else if (activeDiff === "hard") {
@@ -3250,7 +4075,6 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
 
   const handleNext = () => {
     if (currentStep >= 9) {
-      // Game Over
       setGameFinished(true);
       setTimerActive(false);
       synthSound(900, "sine", 0.4);
@@ -3263,221 +4087,390 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
 
   const collectRewardsAndExit = () => {
     const accuracy = Math.round(((10 - wrongAnswers) / 10) * 100);
-    // In quiz mode we payout higher, in Learn mode we give small baseline rewards
     let finalScore = score;
     if (mode === "learn") {
-      finalScore = 20; // baseline static score for full learn completion
+      finalScore = 20;
     }
     onFinished(finalScore, 100, accuracy);
   };
 
+  // Timer Radial Ring Dimensions
+  const radius = 18;
+  const circumference = 2 * Math.PI * radius;
+  const strokeDashoffset = circumference - (timeLeft / 20) * circumference;
+
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-5 md:p-6 rounded-3xl shadow-sm space-y-6">
+    <div className="relative overflow-hidden bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-5 md:p-6 rounded-3xl shadow-xl transition duration-350">
       
+      {/* SCREEN FLASH FEEDBACK OVERLAYS */}
+      <AnimatePresence>
+        {splash === "correct" && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-emerald-500 z-10 pointer-events-none"
+          />
+        )}
+        {splash === "wrong" && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 0.12 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-rose-500 z-10 pointer-events-none"
+          />
+        )}
+      </AnimatePresence>
+
       {/* MODE SELECTOR SCREEN */}
       {mode === "select" && (
-        <div className="space-y-6 py-4">
+        <motion.div 
+          initial={{ opacity: 0, y: 15 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="space-y-6 py-4"
+        >
           <div className="text-center space-y-2">
-            <span className="text-3xl">📐</span>
-            <h3 className="text-lg font-black text-slate-800 dark:text-slate-100">Geometry Challenge</h3>
+            <span className="text-4xl filter drop-shadow">📐</span>
+            <h3 className="text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight">Geometry Challenge</h3>
             <p className="text-xs text-slate-400 font-semibold max-w-sm mx-auto leading-relaxed">
-              Master geometric proofs, diagrams, area formulas, angles, coordinates and volume modules inspired by Board Exams & Textbook syllabi (Classes 8–12).
+              Master geometric proofs, diagrams, area formulas, coordinates and volume modules inspired by Board Exams & Textbook syllabi (Classes 8–12).
             </p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Learn Mode */}
-            <button
+            <motion.button
+              whileHover={{ scale: 1.02, y: -2 }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => startSession("learn")}
-              className="p-5 bg-emerald-50/40 dark:bg-emerald-950/10 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl text-left transition duration-150 flex flex-col justify-between h-44 cursor-pointer"
+              className="p-5 bg-emerald-50/40 dark:bg-emerald-950/10 hover:bg-emerald-50 dark:hover:bg-emerald-950/20 border border-emerald-100 dark:border-emerald-900/30 rounded-2xl text-left transition duration-200 flex flex-col justify-between h-44 cursor-pointer shadow-sm hover:shadow"
             >
               <div className="space-y-1.5">
-                <span className="bg-emerald-100 dark:bg-emerald-900 text-emerald-600 dark:text-emerald-400 font-black text-[9px] px-2 py-0.5 rounded uppercase tracking-wider">LEARN</span>
+                <span className="bg-emerald-100 dark:bg-emerald-900/60 text-emerald-600 dark:text-emerald-400 font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider">LEARN</span>
                 <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">Study Guide Mode</h4>
                 <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
                   No timers, free hints, and detailed textbook solutions. Perfect for reviewing new syllabus items and building core concepts.
                 </p>
               </div>
               <span className="text-xs font-black text-emerald-600 dark:text-emerald-400 flex items-center mt-3">Start learning →</span>
-            </button>
+            </motion.button>
 
             {/* Practice Mode */}
-            <button
+            <motion.button
+              whileHover={{ scale: 1.02, y: -2 }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => startSession("practice")}
-              className="p-5 bg-indigo-50/40 dark:bg-indigo-950/10 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/30 rounded-2xl text-left transition duration-150 flex flex-col justify-between h-44 cursor-pointer"
+              className="p-5 bg-indigo-50/40 dark:bg-indigo-950/10 hover:bg-indigo-50 dark:hover:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/30 rounded-2xl text-left transition duration-200 flex flex-col justify-between h-44 cursor-pointer shadow-sm hover:shadow"
             >
               <div className="space-y-1.5">
-                <span className="bg-indigo-100 dark:bg-indigo-900 text-indigo-600 dark:text-indigo-400 font-black text-[9px] px-2 py-0.5 rounded uppercase tracking-wider">PRACTICE</span>
+                <span className="bg-indigo-100 dark:bg-indigo-900/60 text-indigo-600 dark:text-indigo-400 font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider">PRACTICE</span>
                 <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">Adaptive Challenge</h4>
                 <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
                   Our system scales difficulty dynamically based on your correct/incorrect streaks. Hints available but decrease points.
                 </p>
               </div>
               <span className="text-xs font-black text-indigo-600 dark:text-indigo-400 flex items-center mt-3">Start practice →</span>
-            </button>
+            </motion.button>
 
             {/* Timed Quiz */}
-            <button
+            <motion.button
+              whileHover={{ scale: 1.02, y: -2 }}
+              whileTap={{ scale: 0.98 }}
               onClick={() => startSession("quiz")}
-              className="p-5 bg-rose-50/40 dark:bg-rose-950/10 hover:bg-rose-50 dark:hover:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 rounded-2xl text-left transition duration-150 flex flex-col justify-between h-44 cursor-pointer"
+              className="p-5 bg-rose-50/40 dark:bg-rose-950/10 hover:bg-rose-50 dark:hover:bg-rose-950/20 border border-rose-100 dark:border-rose-900/30 rounded-2xl text-left transition duration-200 flex flex-col justify-between h-44 cursor-pointer shadow-sm hover:shadow"
             >
               <div className="space-y-1.5">
-                <span className="bg-rose-100 dark:bg-rose-900 text-rose-600 dark:text-rose-400 font-black text-[9px] px-2 py-0.5 rounded uppercase tracking-wider">QUIZ</span>
+                <span className="bg-rose-100 dark:bg-rose-900/60 text-rose-600 dark:text-rose-400 font-black text-[9px] px-2 py-0.5 rounded-full uppercase tracking-wider">QUIZ</span>
                 <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">Timed Arena</h4>
                 <p className="text-[10px] text-slate-400 font-semibold leading-relaxed">
                   Strict 20-second countdown timer per question! No hints allowed. Standard high score multiplier payouts for expert performance.
                 </p>
               </div>
               <span className="text-xs font-black text-rose-600 dark:text-rose-400 flex items-center mt-3">Start quiz (1.5x Multiplier) →</span>
-            </button>
+            </motion.button>
           </div>
-        </div>
+        </motion.div>
       )}
 
       {/* GAME ONGOING SCREEN */}
       {mode !== "select" && !gameFinished && currentQuestion && (
-        <div className="space-y-5">
-          {/* Header Progress Bar */}
-          <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/40 px-4 py-2.5 rounded-2xl">
-            <div className="flex items-center space-x-2">
-              <span className="text-[10px] font-black uppercase text-indigo-500 bg-indigo-50 dark:bg-indigo-950/50 px-2 py-0.5 rounded">
-                Question {currentStep + 1} / 10
-              </span>
-              <span className="text-[10px] font-bold text-slate-400">
-                Grade {gradeNum} Syllabus
+        <motion.div 
+          animate={shakeTrigger ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}}
+          transition={{ duration: 0.4 }}
+          className="space-y-5"
+        >
+          {/* Header Progress and Stats Hub */}
+          <div className="flex justify-between items-center bg-slate-50 dark:bg-slate-800/40 px-4 py-3 rounded-2xl border border-slate-100 dark:border-slate-800/20 relative">
+            
+            <div className="flex flex-col space-y-1">
+              <div className="flex items-center space-x-2">
+                <span className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/50 px-2 py-0.5 rounded-full">
+                  Step {currentStep + 1} of 10
+                </span>
+                <span className="text-[10px] font-bold text-slate-400">
+                  Grade {gradeNum} CBSE
+                </span>
+              </div>
+              
+              {/* ACCESSIBILITY STATEMENT / METRIC */}
+              <span className="text-[8px] text-slate-400 font-semibold uppercase tracking-wider">
+                Keyboard inputs [1-4] or [A-D] enabled
               </span>
             </div>
 
+            {/* Timed Circular Progress Ring & Score display */}
             <div className="flex items-center space-x-4">
               {mode === "quiz" && (
-                <div className="flex items-center space-x-1.5 text-rose-500 font-black text-xs animate-pulse">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>⏳ {timeLeft}s</span>
+                <div className="relative w-10 h-10 flex items-center justify-center">
+                  <svg className="w-10 h-10 transform -rotate-90">
+                    <circle 
+                      cx="20" cy="20" r={radius} 
+                      className="stroke-slate-200 dark:stroke-slate-800" 
+                      strokeWidth="2.5" fill="transparent" 
+                    />
+                    <motion.circle 
+                      cx="20" cy="20" r={radius} 
+                      className={`${timeLeft <= 5 ? "stroke-rose-500" : timeLeft <= 10 ? "stroke-amber-500" : "stroke-indigo-500"}`}
+                      strokeWidth="2.5" fill="transparent"
+                      strokeDasharray={circumference}
+                      animate={{ strokeDashoffset }}
+                      transition={{ duration: 0.9, ease: "linear" }}
+                    />
+                  </svg>
+                  <span className={`absolute text-[11px] font-black ${timeLeft <= 5 ? "text-rose-500 animate-pulse" : "text-slate-700 dark:text-slate-300"}`}>
+                    {timeLeft}s
+                  </span>
                 </div>
               )}
+              
               {opponentName && (
                 <div className="text-right text-[10px]">
                   <span className="text-slate-400 block font-semibold">OPPONENT SCORE</span>
                   <span className="font-black text-purple-600">{(opponentScore || 0) * 10} Pts</span>
                 </div>
               )}
-              <div className="text-right">
-                <span className="text-[9px] text-slate-400 block font-semibold">SCORE</span>
-                <span className="text-xs font-black text-amber-500">{score} Pts</span>
+
+              {/* Score counter with floating animations */}
+              <div className="text-right relative">
+                <span className="text-[9px] text-slate-400 block font-bold tracking-widest uppercase">SCORE</span>
+                <motion.span 
+                  key={score}
+                  initial={{ scale: 0.7, color: "#f59e0b" }}
+                  animate={{ scale: 1, color: "#d97706" }}
+                  className="text-sm font-black text-amber-500 flex items-center justify-end"
+                >
+                  {score} <span className="text-[10px] ml-0.5">Pts</span>
+                </motion.span>
+                
+                {/* Floating XP Gain Labels */}
+                <AnimatePresence>
+                  {scoreParticles.map((p) => (
+                    <motion.span
+                      key={p.id}
+                      initial={{ opacity: 1, y: 0, scale: 0.8 }}
+                      animate={{ opacity: 0, y: -25, scale: 1.1 }}
+                      exit={{ opacity: 0 }}
+                      className="absolute right-0 top-0 text-emerald-500 font-extrabold text-[10px] tracking-widest pointer-events-none"
+                    >
+                      {p.text}
+                    </motion.span>
+                  ))}
+                </AnimatePresence>
               </div>
             </div>
           </div>
 
-          {/* Dynamic Interactive SVG Vector Diagram */}
-          <div className="p-4 bg-slate-50 dark:bg-slate-950/20 border border-slate-100 dark:border-slate-800/60 rounded-3xl flex items-center justify-center min-h-[160px]">
-            <GeometryDiagram shapeType={currentQuestion.diagramData.shapeType} params={currentQuestion.diagramData.params} />
+          {/* Premium Progress Beads Track */}
+          <div className="flex justify-between items-center space-x-1 px-1">
+            {questionHistory.map((status, idx) => {
+              const isActive = idx === currentStep;
+              return (
+                <div 
+                  key={idx}
+                  className="relative flex-1 h-2 rounded-full overflow-hidden bg-slate-100 dark:bg-slate-800"
+                >
+                  <motion.div 
+                    initial={false}
+                    animate={{
+                      backgroundColor: status === "correct" 
+                        ? "rgb(16, 185, 129)" 
+                        : status === "wrong" 
+                          ? "rgb(239, 68, 68)" 
+                          : isActive 
+                            ? "rgb(99, 102, 241)" 
+                            : "rgba(148, 163, 184, 0.2)",
+                      scale: isActive ? 1 : 0.95
+                    }}
+                    className="absolute inset-0 rounded-full"
+                  />
+                  {isActive && (
+                    <motion.div 
+                      layoutId="activeBead" 
+                      className="absolute inset-0 bg-indigo-500 opacity-30 animate-ping rounded-full" 
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Dynamic Interactive SVG Vector Diagram - REDESIGNED & EXPANDED */}
+          <div className="p-6 bg-slate-50 dark:bg-slate-950/30 border border-slate-150 dark:border-slate-800 rounded-3xl flex flex-col items-center justify-center min-h-[250px] relative shadow-inner group overflow-hidden">
+            <div className="absolute top-2.5 left-3 text-[9px] font-bold text-slate-400 uppercase tracking-widest pointer-events-none">
+              Interactive 2D Vector CAD Grid
+            </div>
+            <motion.div 
+              key={currentStep}
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1.05, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 100 }}
+              className="w-full flex justify-center items-center h-48"
+            >
+              <GeometryDiagram shapeType={currentQuestion.diagramData.shapeType} params={currentQuestion.diagramData.params} />
+            </motion.div>
           </div>
 
           {/* Question Text */}
-          <div className="space-y-1">
-            <span className="text-[9px] font-black text-indigo-500 uppercase tracking-widest block">
-              {currentQuestion.type} challenge ({activeDiff})
+          <div className="space-y-1.5 px-1">
+            <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest block">
+              {currentQuestion.type} challenge • difficulty: {activeDiff}
             </span>
-            <p className="text-sm font-extrabold text-slate-800 dark:text-slate-100 leading-relaxed">
+            <p className="text-base font-extrabold text-slate-800 dark:text-slate-100 leading-relaxed tracking-tight">
               {currentQuestion.questionText}
             </p>
           </div>
 
           {/* Hint trigger (Not available in Timed Quiz) */}
           {mode !== "quiz" && (
-            <div>
+            <div className="px-1">
               {!showHint ? (
-                <button
+                <motion.button
+                  whileHover={{ scale: 1.01 }}
+                  whileTap={{ scale: 0.99 }}
                   type="button"
                   onClick={() => {
                     setShowHint(true);
                     setHintsUsed(prev => prev + 1);
                     synthSound(500, "sine", 0.08);
                   }}
-                  className="text-[10px] font-bold text-indigo-500 hover:text-indigo-600 flex items-center space-x-1 border border-indigo-100 dark:border-indigo-900/30 px-3 py-1.5 rounded-xl bg-indigo-50/20 hover:bg-indigo-50/40 transition cursor-pointer"
+                  className="text-[10px] font-black text-indigo-500 hover:text-indigo-600 flex items-center space-x-1 border border-indigo-100 dark:border-indigo-900/30 px-3.5 py-2 rounded-xl bg-indigo-50/20 hover:bg-indigo-50/40 transition cursor-pointer"
                 >
                   <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Use Hint {mode === "practice" && "(Scores 50% points)"}</span>
-                </button>
+                  <span>Use Concept Hint {mode === "practice" && "(Decreases scores by 50%)"}</span>
+                </motion.button>
               ) : (
-                <div className="p-3 bg-amber-50/40 dark:bg-amber-950/10 border border-amber-200/40 dark:border-amber-900/30 rounded-xl text-[10px] text-amber-800 dark:text-amber-300 font-semibold leading-relaxed">
+                <motion.div 
+                  initial={{ opacity: 0, y: 5 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="p-3.5 bg-amber-50/40 dark:bg-amber-950/10 border border-amber-200/40 dark:border-amber-900/30 rounded-xl text-xs text-amber-800 dark:text-amber-300 font-semibold leading-relaxed"
+                >
                   💡 <span className="font-extrabold">Formula/Concept Hint:</span> {currentQuestion.hint}
-                </div>
+                </motion.div>
               )}
             </div>
           )}
 
-          {/* Options grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-            {currentQuestion.options.map((opt: string) => {
+          {/* Redesigned Premium Options Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 pt-1 px-1">
+            {currentQuestion.options.map((opt: string, optIdx: number) => {
               const isSelected = selectedOpt === opt;
               const isCorrectOpt = opt === currentQuestion.correctAnswer;
-              let btnClass = "bg-white dark:bg-slate-850 hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-150 dark:border-slate-800 text-slate-800 dark:text-slate-100";
+              
+              const kbLabels = ["A", "B", "C", "D"];
+              
+              let btnClass = "bg-white dark:bg-slate-850 hover:bg-slate-50 dark:hover:bg-slate-800 border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-100 shadow-sm";
               
               if (selectedOpt) {
                 if (isSelected) {
                   btnClass = isCorrectOpt 
-                    ? "bg-emerald-500 text-white border-emerald-500" 
-                    : "bg-rose-500 text-white border-rose-500";
+                    ? "bg-emerald-500 text-white border-emerald-500 shadow-lg shadow-emerald-500/20 scale-98" 
+                    : "bg-rose-500 text-white border-rose-500 shadow-lg shadow-rose-500/20 scale-98";
                 } else if (isCorrectOpt) {
-                  btnClass = "bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 border-emerald-300";
+                  btnClass = "bg-emerald-500/25 text-emerald-800 dark:text-emerald-300 border-emerald-400";
                 } else {
-                  btnClass = "bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-850 opacity-40";
+                  btnClass = "bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-850 opacity-30 scale-95";
                 }
               }
 
               return (
-                <button
+                <motion.button
                   key={opt}
+                  whileHover={!selectedOpt ? { scale: 1.015, y: -1 } : {}}
+                  whileTap={!selectedOpt ? { scale: 0.985 } : {}}
                   type="button"
                   onClick={() => handleSelectOption(opt)}
                   disabled={!!selectedOpt}
-                  className={`p-3.5 border rounded-2xl text-xs font-black transition duration-150 text-left flex items-center justify-between min-h-[48px] ${
-                    !selectedOpt ? "hover:border-indigo-400 active:scale-[0.98] cursor-pointer" : ""
+                  className={`p-4 border rounded-2xl text-xs font-black transition duration-200 text-left flex items-center justify-between min-h-[52px] ${
+                    !selectedOpt ? "hover:border-indigo-400 cursor-pointer" : ""
                   } ${btnClass}`}
                 >
-                  <span>{opt}</span>
+                  <div className="flex items-center space-x-3">
+                    {/* KEYBOARD SHORTCUT BADGE FOR ACCESSIBILITY */}
+                    <span className={`w-5 h-5 flex items-center justify-center rounded-lg text-[9px] font-mono border transition ${
+                      selectedOpt 
+                        ? (isSelected ? "bg-white/20 border-white/30 text-white" : "bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-400")
+                        : "bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-400"
+                    }`}>
+                      {kbLabels[optIdx]}
+                    </span>
+                    <span>{opt}</span>
+                  </div>
                   {selectedOpt && isCorrectOpt && <Check className="w-4 h-4 text-current shrink-0 ml-2" />}
                   {selectedOpt && isSelected && !isCorrectOpt && <X className="w-4 h-4 text-current shrink-0 ml-2" />}
-                </button>
+                </motion.button>
               );
             })}
           </div>
 
-          {/* Step-by-Step Textbook Explanation Block */}
+          {/* Textbook Explanation with Smooth Spring Block */}
           {showExplanation && (
-            <div className="space-y-4 pt-1 animate-fadeIn">
-              <div className="p-4 bg-indigo-50/40 dark:bg-indigo-950/15 border border-indigo-100/50 dark:border-indigo-900/30 rounded-2xl text-left space-y-2">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ type: "spring", stiffness: 120 }}
+              className="space-y-4 pt-1"
+            >
+              <div className="p-4 bg-indigo-50/40 dark:bg-indigo-950/15 border border-indigo-100/50 dark:border-indigo-900/30 rounded-2xl text-left space-y-2 shadow-sm">
                 <div className="flex items-center space-x-2 text-indigo-700 dark:text-indigo-300">
                   <CheckCircle2 className="w-4 h-4 shrink-0" />
-                  <span className="font-extrabold text-xs">Textbook Explanation:</span>
+                  <span className="font-extrabold text-xs tracking-tight">Textbook Explanation:</span>
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-semibold font-sans">
                   {selectedOpt === "__timeout__" && (
-                    <span className="text-rose-500 font-extrabold block mb-1">⏳ Time is Up!</span>
+                    <span className="text-rose-500 font-extrabold block mb-1">⏳ Time is Up! (20s Exceeded)</span>
                   )}
                   {currentQuestion.explanation}
                 </p>
               </div>
 
-              <button
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
                 type="button"
                 onClick={handleNext}
-                className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black rounded-2xl shadow-md transition cursor-pointer flex items-center justify-center space-x-1"
+                className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black rounded-2xl shadow-md transition cursor-pointer flex items-center justify-center space-x-1"
               >
                 <span>{currentStep >= 9 ? "Finish Challenge" : "Next Question"} →</span>
-              </button>
-            </div>
+              </motion.button>
+            </motion.div>
           )}
-        </div>
+        </motion.div>
       )}
 
-      {/* GAME FINISHED SCREEN */}
+      {/* GAME FINISHED SCREEN - REDESIGNED */}
       {gameFinished && (
-        <div className="text-center py-6 space-y-6 max-w-sm mx-auto">
-          <div className="w-20 h-20 bg-amber-50 dark:bg-amber-950/20 text-amber-500 rounded-full flex items-center justify-center mx-auto text-4xl shadow-inner border border-amber-100 dark:border-amber-900/30 animate-bounce">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center py-6 space-y-6 max-w-sm mx-auto"
+        >
+          <motion.div 
+            animate={{ rotate: [0, 10, -10, 10, 0], scale: [1, 1.15, 1] }}
+            transition={{ duration: 1.2, repeat: Infinity, repeatDelay: 2 }}
+            className="w-20 h-20 bg-amber-50 dark:bg-amber-950/20 text-amber-500 rounded-full flex items-center justify-center mx-auto text-4xl shadow-inner border border-amber-100 dark:border-amber-900/30"
+          >
             🏆
-          </div>
+          </motion.div>
 
           <div className="space-y-2">
             <h3 className="text-lg font-black text-slate-800 dark:text-slate-100">Challenge Completed!</h3>
@@ -3488,28 +4481,30 @@ function GeometryChallengeGame({ difficulty, grade, onFinished, opponentScore, o
 
           {/* Accuracy Stats Widget */}
           <div className="grid grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-800/40 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
-            <div>
-              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Accuracy</span>
+            <div className="border-r border-slate-200 dark:border-slate-700">
+              <span className="text-[9px] text-slate-400 block font-bold uppercase">Accuracy</span>
               <span className="text-base font-black text-emerald-500 block mt-0.5">
                 {Math.round(((10 - wrongAnswers) / 10) * 100)}%
               </span>
             </div>
             <div>
-              <span className="text-[9px] text-slate-400 block font-semibold uppercase">Total Score</span>
+              <span className="text-[9px] text-slate-400 block font-bold uppercase">Total Score</span>
               <span className="text-base font-black text-amber-500 block mt-0.5">
                 {score} Pts
               </span>
             </div>
           </div>
 
-          <button
+          <motion.button
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
             type="button"
             onClick={collectRewardsAndExit}
-            className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black rounded-2xl shadow-lg transition active:scale-[0.98] cursor-pointer"
+            className="w-full py-4 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-black rounded-2xl shadow-lg transition cursor-pointer"
           >
             Collect Board Rewards & Exit
-          </button>
-        </div>
+          </motion.button>
+        </motion.div>
       )}
 
     </div>
@@ -4171,9 +5166,14 @@ function PatternMemoryGame({ difficulty, onFinished, opponentScore, synthSound }
   const [flashingTile, setFlashingTile] = useState<number | null>(null);
   const [timer, setTimer] = useState(20);
   const [hasUsedHint, setHasUsedHint] = useState(false);
-  const [gameState, setGameState] = useState<"start" | "ready" | "flashing" | "playing" | "incorrect" | "gameover" | "success">("start");
+  const [gameState, setGameState] = useState<"start" | "ready" | "countdown" | "flashing" | "playing" | "incorrect" | "gameover" | "success">("start");
   const [correctTaps, setCorrectTaps] = useState(0);
   const [totalTaps, setTotalTaps] = useState(0);
+
+  // REDESIGN METRIC & VISUAL STATES
+  const [countdownVal, setCountdownVal] = useState("");
+  const [screenShake, setScreenShake] = useState(false);
+  const [tileGlows, setTileGlows] = useState<Record<number, boolean>>({});
 
   // Stats / High score management
   const [localHigh, setLocalHigh] = useState<number>(0);
@@ -4208,31 +5208,45 @@ function PatternMemoryGame({ difficulty, onFinished, opponentScore, synthSound }
     synthSound(300, "sine", 0.1);
   };
 
+  // Animated countdown sequence
+  const triggerCountdown = async () => {
+    setGameState("countdown");
+    const cd = ["3", "2", "1", "GO!"];
+    for (const val of cd) {
+      setCountdownVal(val);
+      synthSound(val === "GO!" ? 800 : 500, "sine", 0.08);
+      await new Promise(resolve => setTimeout(resolve, 550));
+    }
+    setCountdownVal("");
+    playPattern(pattern);
+  };
+
   // Trigger flash animation for pattern
   const playPattern = async (seq: number[]) => {
     setIsDisplaying(true);
     setGameState("flashing");
     setPlayerPattern([]);
     
-    // speed gets faster with round
     const flashSpeed = Math.max(160, 600 - (round - 1) * 45);
     const gapSpeed = flashSpeed / 2;
 
     for (let i = 0; i < seq.length; i++) {
       const tileIndex = seq[i];
-      // flash on
       setFlashingTile(tileIndex);
+      setTileGlows(prev => ({ ...prev, [tileIndex]: true }));
+      
+      // Scale frequency up beautifully based on index for harmonic flow
       synthSound(400 + (tileIndex % gridSize) * 80 + Math.floor(tileIndex / gridSize) * 40, "sine", flashSpeed / 1000 - 0.05);
       await new Promise(resolve => setTimeout(resolve, flashSpeed));
       
-      // flash off
       setFlashingTile(null);
+      setTileGlows(prev => ({ ...prev, [tileIndex]: false }));
       await new Promise(resolve => setTimeout(resolve, gapSpeed));
     }
 
     setIsDisplaying(false);
     setGameState("playing");
-    setTimer(15 + round); // generous timer based on sequence length
+    setTimer(15 + round);
   };
 
   // Replay pattern hint
@@ -4249,9 +5263,11 @@ function PatternMemoryGame({ difficulty, onFinished, opponentScore, synthSound }
     const interval = setInterval(() => {
       setTimer(prev => {
         if (prev <= 1) {
-          // Time out! Counts as an error
           handleMistake("timeout");
           return 0;
+        }
+        if (prev <= 4) {
+          synthSound(900, "sawtooth", 0.04); // alarming ticks
         }
         return prev - 1;
       });
@@ -4261,15 +5277,16 @@ function PatternMemoryGame({ difficulty, onFinished, opponentScore, synthSound }
   }, [gameState, isDisplaying, pattern, round]);
 
   const handleMistake = (type: "timeout" | "wrong") => {
-    synthSound(130, "sawtooth", 0.3);
+    setScreenShake(true);
+    setTimeout(() => setScreenShake(false), 500);
+    synthSound(130, "sawtooth", 0.35);
     setCombo(0);
+    
     setLives(prev => {
       const nextLives = prev - 1;
       if (nextLives <= 0) {
-        // Game Over!
         setGameState("gameover");
         const finalAcc = totalTaps > 0 ? Math.round((correctTaps / totalTaps) * 100) : 0;
-        // Save high score if beaten
         if (score > localHigh) {
           localStorage.setItem(`studymate_pm_highscore_${difficulty}`, String(score));
           setLocalHigh(score);
@@ -4287,13 +5304,10 @@ function PatternMemoryGame({ difficulty, onFinished, opponentScore, synthSound }
     });
   };
 
-  // When state is "ready", give player a brief countdown or start button
+  // When state is "ready", trigger countdown
   useEffect(() => {
     if (gameState === "ready") {
-      const timeout = setTimeout(() => {
-        playPattern(pattern);
-      }, 1000);
-      return () => clearTimeout(timeout);
+      triggerCountdown();
     }
   }, [gameState, pattern]);
 
@@ -4313,178 +5327,282 @@ function PatternMemoryGame({ difficulty, onFinished, opponentScore, synthSound }
       setCombo(newCombo);
       setMaxCombo(prev => Math.max(prev, newCombo));
 
-      // play note
-      synthSound(500 + playerPattern.length * 60, "sine", 0.08);
+      // Visual brief ripple glow on the clicked tile
+      setTileGlows(prev => ({ ...prev, [index]: true }));
+      setTimeout(() => {
+        setTileGlows(prev => ({ ...prev, [index]: false }));
+      }, 150);
+
+      // reward pitch gets dynamically higher based on combo! Premium sound effect scaling.
+      synthSound(500 + playerPattern.length * 60 + newCombo * 20, "sine", 0.09);
 
       // Check if finished pattern
       if (newPlayerPat.length === pattern.length) {
-        // Success Round!
         setGameState("success");
         const roundPoints = round * 15 + Math.floor(newCombo * 1.5);
         setScore(prev => prev + roundPoints);
         
-        synthSound(880, "sine", 0.15);
-        synthSound(1100, "sine", 0.15);
+        synthSound(880, "sine", 0.1);
+        setTimeout(() => synthSound(1320, "sine", 0.15), 80);
 
         // Next round prep
         setTimeout(() => {
           setRound(r => r + 1);
           setHasUsedHint(false); // reset hint for new round
-          
-          // add another step to pattern
           setPattern(prev => [...prev, Math.floor(Math.random() * totalTiles)]);
           setGameState("ready");
-        }, 1200);
+        }, 2200); // giving 2.2 seconds to enjoy the Level Complete celebration banner!
       }
     } else {
-      // Mistake
       handleMistake("wrong");
     }
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-5 md:p-6 rounded-3xl shadow-sm text-center space-y-5">
-      {gameState === "start" && (
-        <div className="py-8 space-y-4">
-          <div className="w-16 h-16 bg-pink-100 dark:bg-pink-950/40 text-pink-500 rounded-2xl flex items-center justify-center mx-auto text-3xl animate-bounce">
-            🔲
-          </div>
-          <div>
-            <h4 className="text-xl font-black text-slate-800 dark:text-slate-100">Pattern Memory Grid</h4>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-              Watch the grid tiles light up, remember the exact sequence, and tap them in order. Each level adds one more step!
-            </p>
-          </div>
-          
-          <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl max-w-xs mx-auto text-left text-xs space-y-1.5 border border-slate-100 dark:border-slate-800">
-            <div className="flex justify-between">
-              <span className="text-slate-400 font-semibold">DIFFICULTY:</span>
-              <span className="font-black text-pink-500 uppercase">{difficulty}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400 font-semibold">GRID SCALE:</span>
-              <span className="font-bold">{gridSize}x{gridSize} ({totalTiles} tiles)</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400 font-semibold">HIGH SCORE:</span>
-              <span className="font-bold text-amber-500">{localHigh} Pts</span>
-            </div>
-          </div>
-
-          <button
-            onClick={startGame}
-            className="w-full max-w-xs py-3 px-6 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-black rounded-2xl shadow-md hover:opacity-90 active:scale-98 transition-all cursor-pointer flex items-center justify-center space-x-2"
+    <div 
+      className={`bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 p-5 md:p-6 rounded-3xl shadow-xl text-center space-y-5 transition duration-300 relative overflow-hidden ${
+        screenShake ? "ring-2 ring-rose-500/50" : ""
+      }`}
+    >
+      {/* SCREEN SHAKE ANIMATION ON MISTAKE */}
+      <AnimatePresence>
+        {gameState === "start" && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="py-8 space-y-4"
           >
-            <Play className="w-5 h-5 fill-current" />
-            <span>START RECALL</span>
-          </button>
-        </div>
-      )}
-
-      {gameState !== "start" && (
-        <div className="space-y-4">
-          {/* Top Status Indicators */}
-          <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl text-xs font-bold text-slate-500 border border-slate-100 dark:border-slate-800/20">
-            <div className="flex flex-col items-center justify-center">
-              <span className="text-[9px] text-slate-400">ROUND</span>
-              <span className="text-sm font-black text-slate-800 dark:text-slate-100">{round}</span>
+            <div className="w-16 h-16 bg-pink-100 dark:bg-pink-950/40 text-pink-500 rounded-2xl flex items-center justify-center mx-auto text-3xl animate-bounce shadow">
+              🔲
             </div>
-            <div className="flex flex-col items-center justify-center border-x border-slate-200 dark:border-slate-800">
-              <span className="text-[9px] text-slate-400">LIVES</span>
-              <span className="text-sm tracking-wider font-semibold text-rose-500">
-                {"❤️".repeat(lives)}{"🖤".repeat(3 - lives)}
-              </span>
+            <div>
+              <h4 className="text-xl font-black text-slate-800 dark:text-slate-100 tracking-tight">Pattern Memory Grid</h4>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 leading-relaxed">
+                Watch the grid tiles light up, remember the exact sequence, and tap them in order. Each level adds one more step!
+              </p>
             </div>
-            <div className="flex flex-col items-center justify-center">
-              <span className="text-[9px] text-slate-400">TIME</span>
-              <span className={`text-sm font-black transition-colors ${timer <= 4 ? "text-rose-500 animate-pulse" : "text-amber-500"}`}>
-                {gameState === "playing" ? `${timer}s` : "--"}
-              </span>
+            
+            <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-2xl max-w-xs mx-auto text-left text-xs space-y-1.5 border border-slate-100 dark:border-slate-800">
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold">DIFFICULTY:</span>
+                <span className="font-black text-pink-500 uppercase tracking-widest">{difficulty}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold">GRID SCALE:</span>
+                <span className="font-extrabold text-slate-700 dark:text-slate-300">{gridSize}x{gridSize} ({totalTiles} tiles)</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400 font-bold">HIGH SCORE:</span>
+                <span className="font-black text-amber-500">{localHigh} Pts</span>
+              </div>
             </div>
-          </div>
 
-          {/* Score & Combo */}
-          <div className="flex justify-between items-center px-2">
-            <div className="text-left">
-              <span className="text-[10px] text-slate-400 font-semibold block uppercase">SCORE</span>
-              <span className="text-lg font-black text-amber-500">{score} <span className="text-xs text-slate-400 font-semibold">Pts</span></span>
-            </div>
-            {combo > 0 && (
-              <motion.div 
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                className="bg-purple-100 dark:bg-purple-950/40 text-purple-600 dark:text-purple-400 text-xs font-black py-1 px-3 rounded-full flex items-center space-x-1 border border-purple-200 dark:border-purple-900/30 shadow-sm"
-              >
-                <Zap className="w-3.5 h-3.5 fill-current" />
-                <span>COMBO x{combo}</span>
-              </motion.div>
-            )}
-          </div>
-
-          {/* Main Visual Hint Overlay */}
-          <div className="h-6 flex items-center justify-center text-xs font-extrabold">
-            {gameState === "ready" && <span className="text-indigo-500 animate-pulse">Get ready...</span>}
-            {gameState === "flashing" && <span className="text-purple-600 dark:text-purple-400 animate-pulse flex items-center space-x-1.5"><span>🔮</span> <span>Watch pattern carefully...</span></span>}
-            {gameState === "playing" && <span className="text-emerald-500">Your turn! Repeat the pattern</span>}
-            {gameState === "incorrect" && <span className="text-rose-500 animate-bounce">❌ Oops! Incorrect step</span>}
-            {gameState === "success" && <span className="text-emerald-500 flex items-center space-x-1"><span>✨</span> <span>Excellent! Level Clear!</span></span>}
-            {gameState === "gameover" && <span className="text-rose-600 font-black tracking-widest uppercase">GAME OVER</span>}
-          </div>
-
-          {/* Grid Layout Container */}
-          <div 
-            className="grid mx-auto gap-2 bg-slate-50 dark:bg-slate-950/40 p-3 rounded-3xl border border-slate-100 dark:border-slate-800/40 max-w-[300px]"
-            style={{
-              gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))`
-            }}
-          >
-            {Array.from({ length: totalTiles }).map((_, idx) => {
-              const isFlashing = flashingTile === idx;
-              const isCorrectInput = playerPattern.includes(idx);
-              const isLastPressed = playerPattern[playerPattern.length - 1] === idx;
-
-              return (
-                <button
-                  key={idx}
-                  onClick={() => handleTileClick(idx)}
-                  disabled={gameState !== "playing" || isDisplaying}
-                  className={`
-                    aspect-square rounded-2xl transition-all duration-150 relative overflow-hidden select-none cursor-pointer border
-                    ${isFlashing 
-                      ? "bg-purple-500 border-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.7)] scale-95" 
-                      : isCorrectInput && isLastPressed
-                        ? "bg-emerald-400 dark:bg-emerald-500/80 border-emerald-300 shadow-[0_0_10px_rgba(52,211,153,0.5)] scale-95"
-                        : "bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/80 active:scale-95 border-slate-100 dark:border-slate-800"
-                    }
-                  `}
-                  id={`pm-tile-${idx}`}
-                >
-                  <span className="absolute inset-0 flex items-center justify-center text-[10px] font-mono opacity-0 hover:opacity-10 dark:text-slate-400">
-                    {idx + 1}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Utility Action Buttons */}
-          <div className="flex space-x-3 max-w-[300px] mx-auto pt-2">
-            <button
-              onClick={handleReplayHint}
-              disabled={hasUsedHint || gameState !== "playing" || isDisplaying}
-              className={`flex-1 py-2 px-3 rounded-2xl font-bold text-xs flex items-center justify-center space-x-1 border shadow-sm transition-all cursor-pointer
-                ${hasUsedHint || gameState !== "playing" || isDisplaying
-                  ? "bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-400 cursor-not-allowed opacity-50"
-                  : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-purple-600 dark:text-purple-400"
-                }
-              `}
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={startGame}
+              className="w-full max-w-xs py-3.5 px-6 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-black rounded-2xl shadow-lg hover:opacity-95 cursor-pointer flex items-center justify-center space-x-2"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Replay Hint {hasUsedHint ? "(0/1)" : "(1/1)"}</span>
-            </button>
-          </div>
-        </div>
-      )}
+              <Play className="w-4 h-4 fill-current" />
+              <span>START RECALL</span>
+            </motion.button>
+          </motion.div>
+        )}
+
+        {gameState !== "start" && (
+          <motion.div 
+            animate={screenShake ? { x: [-8, 8, -6, 6, -3, 3, 0] } : {}}
+            transition={{ duration: 0.4 }}
+            className="space-y-4 relative"
+          >
+            {/* Countdown Screen Overlay */}
+            <AnimatePresence>
+              {gameState === "countdown" && countdownVal && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.3 }}
+                  animate={{ opacity: 1, scale: 1.3 }}
+                  exit={{ opacity: 0, scale: 1.8 }}
+                  transition={{ type: "spring", stiffness: 180 }}
+                  className="absolute inset-0 z-30 flex items-center justify-center bg-white/70 dark:bg-slate-900/80 backdrop-blur-sm rounded-2xl"
+                >
+                  <span className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-indigo-500 select-none drop-shadow-md animate-pulse">
+                    {countdownVal}
+                  </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Level Success celebratory star popping Overlay */}
+            <AnimatePresence>
+              {gameState === "success" && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 1.1 }}
+                  className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-gradient-to-b from-indigo-900/90 to-purple-950/95 backdrop-blur-md rounded-3xl border border-indigo-500/30 p-6 shadow-2xl"
+                >
+                  <motion.div 
+                    initial={{ y: -30, rotate: -15 }}
+                    animate={{ y: 0, rotate: 0, scale: [1, 1.2, 1] }}
+                    transition={{ type: "spring", duration: 1.2 }}
+                    className="text-6xl mb-3 drop-shadow"
+                  >
+                    ✨👑✨
+                  </motion.div>
+                  <h3 className="text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-400 to-rose-400">Level {round} Cleared!</h3>
+                  <p className="text-[11px] text-indigo-200 mt-1 font-semibold">Perfect pattern matching! Adding round bonus multipliers...</p>
+                  
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.5 }}
+                    className="mt-4 bg-white/10 px-4 py-2 rounded-full border border-white/10 font-black text-xs text-amber-300"
+                  >
+                    +{round * 15} Standard + Combo Bonus
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Top Status Indicators with cracked heart lives */}
+            <div className="grid grid-cols-3 gap-2 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-2xl text-xs font-bold text-slate-500 border border-slate-100 dark:border-slate-800/20 shadow-sm">
+              <div className="flex flex-col items-center justify-center">
+                <span className="text-[9px] text-slate-400 uppercase font-black">ROUND</span>
+                <span className="text-base font-black text-slate-800 dark:text-slate-100">{round}</span>
+              </div>
+              
+              {/* Premium pulsating cracked heart system */}
+              <div className="flex flex-col items-center justify-center border-x border-slate-200 dark:border-slate-800">
+                <span className="text-[9px] text-slate-400 uppercase font-black">LIVES</span>
+                <div className="flex items-center space-x-1.5 text-base mt-0.5">
+                  {Array.from({ length: 3 }).map((_, i) => {
+                    const active = i < lives;
+                    return (
+                      <motion.span
+                        key={i}
+                        animate={active ? { scale: [1, 1.15, 1] } : { scale: 1, rotate: [0, 15, -15, 0] }}
+                        transition={active ? { repeat: Infinity, duration: 1.5, delay: i * 0.15 } : {}}
+                        className="inline-block"
+                      >
+                        {active ? "❤️" : "🖤"}
+                      </motion.span>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="flex flex-col items-center justify-center">
+                <span className="text-[9px] text-slate-400 uppercase font-black">TIME LIMIT</span>
+                <span className={`text-base font-black transition-colors ${timer <= 4 ? "text-rose-500 animate-pulse font-mono" : "text-amber-500 font-mono"}`}>
+                  {gameState === "playing" ? `${timer}s` : "--"}
+                </span>
+              </div>
+            </div>
+
+            {/* Score & Combo */}
+            <div className="flex justify-between items-center px-1">
+              <div className="text-left">
+                <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">SCORE</span>
+                <motion.span 
+                  key={score}
+                  initial={{ scale: 0.8, color: "#f59e0b" }}
+                  animate={{ scale: 1, color: "#e11d48" }}
+                  className="text-xl font-black text-amber-500 flex items-center"
+                >
+                  {score} <span className="text-xs text-slate-400 font-bold ml-1">Pts</span>
+                </motion.span>
+              </div>
+
+              {combo > 0 && (
+                <motion.div 
+                  initial={{ scale: 0.4, rotate: -20 }}
+                  animate={{ scale: 1, rotate: 0 }}
+                  className="bg-gradient-to-r from-rose-500 to-pink-500 text-white text-[10px] font-black py-1 px-3.5 rounded-full flex items-center space-x-1 border border-pink-400/30 shadow-md animate-pulse shadow-pink-500/20"
+                >
+                  <Zap className="w-3.5 h-3.5 fill-current text-yellow-300" />
+                  <span>BURNING COMBO x{combo}</span>
+                </motion.div>
+              )}
+            </div>
+
+            {/* Main Visual Hint Overlay */}
+            <div className="h-7 flex items-center justify-center text-xs font-black tracking-tight">
+              {gameState === "ready" && <span className="text-indigo-500 animate-pulse">Initializing grid cells...</span>}
+              {gameState === "flashing" && <span className="text-purple-600 dark:text-purple-400 animate-pulse flex items-center space-x-1.5"><span>🔮</span> <span className="tracking-wide">Watch the flash sequence carefully...</span></span>}
+              {gameState === "playing" && <span className="text-emerald-500 flex items-center space-x-1"><span>🟢</span> <span>Your turn! Tap the exact tiles.</span></span>}
+              {gameState === "incorrect" && <span className="text-rose-500 animate-bounce">❌ Wrong Step! Resetting...</span>}
+              {gameState === "gameover" && <span className="text-rose-600 font-black tracking-widest uppercase">COGNITIVE LIMIT REACHED (GAME OVER)</span>}
+            </div>
+
+            {/* Grid Layout Container - REDESIGNED & ANIMATED */}
+            <motion.div 
+              initial={{ rotateY: 90, opacity: 0 }}
+              animate={{ rotateY: 0, opacity: 1 }}
+              transition={{ type: "spring", stiffness: 120, delay: 0.2 }}
+              className="grid mx-auto gap-2.5 bg-slate-50 dark:bg-slate-950/40 p-4 rounded-3xl border border-slate-100 dark:border-slate-800/40 max-w-[320px] shadow-inner perspective"
+              style={{
+                gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))`
+              }}
+            >
+              {Array.from({ length: totalTiles }).map((_, idx) => {
+                const isFlashing = flashingTile === idx;
+                const isCorrectInput = playerPattern.includes(idx);
+                const isLastPressed = playerPattern[playerPattern.length - 1] === idx;
+                const glowing = tileGlows[idx];
+
+                return (
+                  <motion.button
+                    key={idx}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.93 }}
+                    onClick={() => handleTileClick(idx)}
+                    disabled={gameState !== "playing" || isDisplaying}
+                    className={`
+                      aspect-square rounded-2xl transition-all duration-150 relative overflow-hidden select-none cursor-pointer border
+                      ${isFlashing 
+                        ? "bg-gradient-to-br from-purple-500 to-indigo-600 border-purple-300 shadow-[0_0_18px_rgba(168,85,247,0.85)]" 
+                        : isCorrectInput && isLastPressed
+                          ? "bg-gradient-to-br from-emerald-400 to-teal-500 border-emerald-300 shadow-[0_0_15px_rgba(52,211,153,0.7)]"
+                          : glowing
+                            ? "bg-indigo-400 border-indigo-300 shadow-[0_0_12px_rgba(99,102,241,0.6)]"
+                            : "bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/80 border-slate-200 dark:border-slate-800"
+                      }
+                    `}
+                    id={`pm-tile-${idx}`}
+                  >
+                    {/* Glowing highlight lens */}
+                    {(isFlashing || glowing || (isCorrectInput && isLastPressed)) && (
+                      <div className="absolute inset-0 bg-white/20 animate-pulse pointer-events-none" />
+                    )}
+                    <span className="absolute inset-0 flex items-center justify-center text-[10px] font-mono opacity-0 group-hover:opacity-10 dark:text-slate-400">
+                      {idx + 1}
+                    </span>
+                  </motion.button>
+                );
+              })}
+            </motion.div>
+
+            {/* Utility Action Buttons */}
+            <div className="flex space-x-3 max-w-[320px] mx-auto pt-2">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={handleReplayHint}
+                disabled={hasUsedHint || gameState !== "playing" || isDisplaying}
+                className={`flex-1 py-3 px-3 rounded-2xl font-black text-xs flex items-center justify-center space-x-1.5 border shadow-sm transition-all cursor-pointer
+                  ${hasUsedHint || gameState !== "playing" || isDisplaying
+                    ? "bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-400 cursor-not-allowed opacity-50 shadow-none"
+                    : "bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-purple-600 dark:text-purple-400"
+                  }
+                `}
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Replay Flash Hint {hasUsedHint ? "(0/1)" : "(1/1)"}</span>
+              </motion.button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
