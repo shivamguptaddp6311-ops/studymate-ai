@@ -12,7 +12,6 @@ const ESSENTIAL_STORAGE_KEYS = [
   "studymate_refresh_token",
   "studymate_dark_mode",
   "studymate_text_size",
-  "studymate_high_contrast",
   "studymate_ai_provider",
   "studymate_ai_timeout",
   "studymate_permissions_store",
@@ -236,9 +235,6 @@ export default function App() {
   const [textSize, setTextSize] = useState<"sm" | "md" | "lg">(() => {
     return (localStorage.getItem("studymate_text_size") as "sm" | "md" | "lg") || "md";
   });
-  const [highContrast, setHighContrast] = useState<boolean>(() => {
-    return localStorage.getItem("studymate_high_contrast") === "true";
-  });
 
   useEffect(() => {
     const root = document.documentElement;
@@ -256,16 +252,6 @@ export default function App() {
     root.classList.add(`text-size-${textSize}`);
     localStorage.setItem("studymate_text_size", textSize);
   }, [textSize]);
-
-  useEffect(() => {
-    const root = document.documentElement;
-    if (highContrast) {
-      root.classList.add("high-contrast");
-    } else {
-      root.classList.remove("high-contrast");
-    }
-    localStorage.setItem("studymate_high_contrast", String(highContrast));
-  }, [highContrast]);
 
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
@@ -1578,16 +1564,22 @@ export default function App() {
         <div className="flex items-center space-x-2">
           <button 
             onClick={handleToggleDarkMode}
-            className="p-1.5 bg-slate-50 dark:bg-slate-800 rounded-xl text-sm"
+            className="p-1.5 bg-slate-50 dark:bg-slate-800 rounded-xl text-sm cursor-pointer"
           >
             {darkMode ? "☀️" : "🌙"}
           </button>
           
           <button 
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-1.5 bg-slate-50 dark:bg-slate-800 rounded-xl text-slate-600 dark:text-slate-400"
+            onClick={() => setCurrentTab("settings")}
+            className={`p-1.5 rounded-xl transition cursor-pointer ${
+              currentTab === "settings"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "bg-slate-50 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:text-indigo-600"
+            }`}
+            title="Settings"
+            aria-label="Settings"
           >
-            {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+            <Settings className="w-4 h-4" />
           </button>
         </div>
       </header>
@@ -1677,18 +1669,18 @@ export default function App() {
               <span className="text-[10px] uppercase font-extrabold">{textSize}</span>
             </button>
 
-            {/* Quick High Contrast toggle */}
+            {/* Quick Settings button */}
             <button 
-              onClick={() => setHighContrast(!highContrast)}
+              onClick={() => setCurrentTab("settings")}
               className={`p-2 border rounded-xl shadow-sm transition text-xs font-semibold cursor-pointer flex items-center space-x-1 ${
-                highContrast 
+                currentTab === "settings" 
                   ? "bg-indigo-600 border-indigo-600 text-white" 
-                  : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50"
+                  : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
               }`}
-              title="Toggle High Contrast Mode"
-              aria-label="Toggle High Contrast Mode"
+              title="Open Settings"
+              aria-label="Open Settings"
             >
-              <Contrast className="w-4 h-4" />
+              <Settings className="w-4 h-4" />
             </button>
 
             {/* Desktop Theme Toggle */}
@@ -1998,8 +1990,6 @@ export default function App() {
               onDeleteAccount={handleDeleteAccount}
               textSize={textSize}
               onChangeTextSize={setTextSize}
-              highContrast={highContrast}
-              onToggleHighContrast={() => setHighContrast(!highContrast)}
             />
           </Suspense>
         )}

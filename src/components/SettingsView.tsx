@@ -23,8 +23,6 @@ interface SettingsViewProps {
   onDeleteAccount: () => Promise<void>;
   textSize: "sm" | "md" | "lg";
   onChangeTextSize: (size: "sm" | "md" | "lg") => void;
-  highContrast: boolean;
-  onToggleHighContrast: () => void;
 }
 
 // Interactive Premium Switch Component using motion springs
@@ -57,9 +55,7 @@ export default function SettingsView({
   onTriggerSync,
   onDeleteAccount,
   textSize,
-  onChangeTextSize,
-  highContrast,
-  onToggleHighContrast
+  onChangeTextSize
 }: SettingsViewProps) {
   // Category states
   const [activeCategory, setActiveCategory] = useState<string>("account");
@@ -476,18 +472,6 @@ export default function SettingsView({
                       <p className="text-[9px] text-slate-400">
                         Adjust text scaling parameters across active chat modules, study dashboard checklists and notes editors.
                       </p>
-                    </div>
-
-                    {/* High Contrast Mode toggle */}
-                    <div className="p-4 bg-slate-50 dark:bg-slate-850/30 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center justify-between">
-                      <div className="space-y-0.5">
-                        <span className="text-xs font-black text-slate-800 dark:text-slate-200 flex items-center gap-1">
-                          <Contrast className="w-4 h-4 text-indigo-500" />
-                          Increase Screen Contrast
-                        </span>
-                        <p className="text-[9px] text-slate-400">Optimizes readability by maximizing panel borders and text saturation levels.</p>
-                      </div>
-                      <PremiumSwitch checked={highContrast} onChange={onToggleHighContrast} />
                     </div>
 
                   </div>
@@ -1000,15 +984,6 @@ export default function SettingsView({
                       </div>
                       <PremiumSwitch checked={reducedMotion} onChange={() => setReducedMotion(!reducedMotion)} />
                     </div>
-
-                    {/* High Contrast info box */}
-                    <div className="p-4 rounded-2xl border border-cyan-500/20 bg-cyan-500/5 space-y-2 text-xs">
-                      <h4 className="font-extrabold text-slate-800 dark:text-slate-200">Adaptive Contrast Layouts</h4>
-                      <p className="text-[10px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                        To quickly scale color contrast modes on AMOLED display structures, toggle contrast toggles under the **Appearance** category list option.
-                      </p>
-                    </div>
-
                   </div>
                 </div>
               )}
@@ -1121,10 +1096,6 @@ export default function SettingsView({
                       <div className="flex justify-between py-1.5">
                         <span>Text Scaling Factor</span>
                         <span className="font-bold text-slate-800 dark:text-slate-200 capitalize">{textSize}</span>
-                      </div>
-                      <div className="flex justify-between py-1.5">
-                        <span>High Contrast Mode</span>
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{highContrast ? "Enabled" : "Disabled"}</span>
                       </div>
                       <div className="flex justify-between py-1.5">
                         <span>Cloud Database Sync</span>

@@ -1700,6 +1700,28 @@ app.get("/api/chat/messages", requireAuth, async (req, res) => {
   }
 });
 
+// 2.1 Fetch registered real community users
+app.get("/api/chat/registered-users", requireAuth, async (req, res) => {
+  try {
+    const users = await firebaseDB.getAllUsers();
+    const realUsers = users
+      .filter(u => !u.isBanned)
+      .map(u => ({
+        email: u.email,
+        username: u.username || u.email.split("@")[0],
+        avatar: u.avatar || "👤",
+        level: u.level || 1,
+        badge: u.badge || "Member",
+        status: u.isBanned ? "offline" : "online",
+        lastActive: (u as any).lastActive || new Date().toISOString(),
+        classGrade: (u as any).classGrade || "10th CBSE"
+      }));
+    res.json(realUsers);
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to fetch real registered users." });
+  }
+});
+
 // 3. Post a message, validating constraints and using Gemini for strict OCR/Safety moderation
 app.post("/api/chat/message", requireAuth, async (req, res) => {
   try {

@@ -116,133 +116,41 @@ export default function CommunityChat({
   const [globalMessages, setGlobalMessages] = useState<Message[]>([]);
   const [classMessages, setClassMessages] = useState<Message[]>(() => {
     const saved = localStorage.getItem("sm_chat_class");
-    return saved ? JSON.parse(saved) : [
-      { 
-        id: "c0", 
-        userEmail: "teacher@studymate.ai", 
-        username: "Dr. Sharma (Physics Faculty)", 
-        avatar: "👨‍🏫", 
-        level: 12, 
-        badge: "Grandmaster", 
-        text: "📌 IMPORTANT: Physics Board Revision Paper & Formula Sheets uploaded for CBSE 2026! Check pinned messages.", 
-        country: "India", 
-        timestamp: new Date(Date.now() - 7200000).toISOString(), 
-        isDeleted: false, 
-        reportsCount: 0,
-        isPinned: true,
-        reactions: [
-          { emoji: "🔥", count: 18, users: ["rahul@gmail.com"] },
-          { emoji: "🎓", count: 12, users: [] }
-        ]
-      },
-      { 
-        id: "c1", 
-        userEmail: "rahul@gmail.com", 
-        username: "Rahul Mehta", 
-        avatar: "⚡", 
-        level: 4, 
-        badge: "Scholar", 
-        text: "Does anyone have the simplified derivation notes for Gauss's Law in Electrostatics?", 
-        country: "India", 
-        timestamp: new Date(Date.now() - 3600000).toISOString(), 
-        isDeleted: false, 
-        reportsCount: 0,
-        reactions: [
-          { emoji: "💡", count: 5, users: [] }
-        ]
-      },
-      { 
-        id: "c2", 
-        userEmail: "priya@gmail.com", 
-        username: "Priya Sharma", 
-        avatar: "🌸", 
-        level: 6, 
-        badge: "Top Scholar", 
-        text: "Here is my handwritten summary diagram! Super easy to memorize.", 
-        country: "India", 
-        timestamp: new Date(Date.now() - 1800000).toISOString(), 
-        isDeleted: false, 
-        reportsCount: 0,
-        attachment: {
-          type: "image",
-          name: "Gauss_Law_Summary.png",
-          url: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=600&q=80"
-        },
-        reactions: [
-          { emoji: "❤️", count: 14, users: [] },
-          { emoji: "👏", count: 9, users: [] }
-        ]
-      }
-    ];
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return parsed.filter((m: any) => !["teacher@studymate.ai", "rahul@gmail.com", "priya@gmail.com"].includes(m.userEmail));
+    } catch (e) {
+      return [];
+    }
   });
 
   // Friend Requests State
   const [friendRequests, setFriendRequests] = useState<FriendRequest[]>(() => {
     const saved = localStorage.getItem("sm_chat_friend_requests");
-    return saved ? JSON.parse(saved) : [
-      {
-        id: "req_ananya",
-        fromEmail: "ananya@gmail.com",
-        fromUsername: "Ananya Gupta",
-        fromAvatar: "🌸",
-        fromLevel: 5,
-        fromBadge: "Top Scholar",
-        timestamp: new Date(Date.now() - 1800000).toISOString(),
-        status: "pending"
-      }
-    ];
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return parsed.filter((r: any) => !["ananya@gmail.com"].includes(r.fromEmail));
+    } catch (e) {
+      return [];
+    }
   });
 
-  // Friends List (Pre-populated with 3 friends so selecting between 2+ friends works out-of-the-box)
+  // Friends List (Loaded dynamically from real registered users)
   const [friendsList, setFriendsList] = useState<FriendUser[]>(() => {
     const saved = localStorage.getItem("sm_chat_friends_list");
-    return saved ? JSON.parse(saved) : [
-      {
-        id: "f1",
-        email: "aditi@gmail.com",
-        username: "Aditi Sharma",
-        avatar: "🌟",
-        level: 5,
-        status: "online",
-        statusText: "Studying Organic Chemistry",
-        badge: "Topper",
-        unread: true,
-        messages: [
-          { id: "fm1", userEmail: "aditi@gmail.com", username: "Aditi Sharma", avatar: "🌟", level: 5, text: "Hey! Ready for our 25-min Pomodoro chemistry study sprint?", timestamp: new Date(Date.now() - 3600000).toISOString(), isDeleted: false, reportsCount: 0, reactions: [{ emoji: "🚀", count: 2, users: [] }] }
-        ]
-      },
-      {
-        id: "f2",
-        email: "rohan@gmail.com",
-        username: "Rohan Roy",
-        avatar: "⚡",
-        level: 4,
-        status: "offline",
-        statusText: "Last seen 2h ago",
-        badge: "Euler Jr.",
-        unread: false,
-        messages: [
-          { id: "fm2", userEmail: "rohan@gmail.com", username: "Rohan Roy", avatar: "⚡", level: 4, text: "Dude, that integration substitution trick you shared was brilliant!", timestamp: new Date(Date.now() - 86400000).toISOString(), isDeleted: false, reportsCount: 0, reactions: [{ emoji: "💯", count: 1, users: [] }] }
-        ]
-      },
-      {
-        id: "f3",
-        email: "vikram@gmail.com",
-        username: "Vikram Singh",
-        avatar: "📐",
-        level: 6,
-        status: "online",
-        statusText: "Solving Physics Numerical Set",
-        badge: "Physics Ace",
-        unread: false,
-        messages: [
-          { id: "fm3", userEmail: "vikram@gmail.com", username: "Vikram Singh", avatar: "📐", level: 6, text: "Let me know if you want the PDF for Gauss's Law revision notes!", timestamp: new Date(Date.now() - 43200000).toISOString(), isDeleted: false, reportsCount: 0 }
-        ]
-      }
-    ];
+    if (!saved) return [];
+    try {
+      const parsed = JSON.parse(saved);
+      return parsed.filter((f: any) => !["aditi@gmail.com", "rohan@gmail.com", "vikram@gmail.com"].includes(f.email));
+    } catch (e) {
+      return [];
+    }
   });
 
-  const [activeFriendId, setActiveFriendId] = useState<string>("f1");
+  const [registeredUsers, setRegisteredUsers] = useState<ChatUser[]>([]);
+  const [activeFriendId, setActiveFriendId] = useState<string>("");
   const [showFriendRequestsModal, setShowFriendRequestsModal] = useState(false);
 
   // Local state managers
@@ -527,12 +435,6 @@ export default function CommunityChat({
 
     setFriendRequests(prev => [...prev, newReq]);
     handleAddNotification("📩 Request Sent", `Friend request sent to @${targetUsername}!`, "success");
-
-    // Auto accept simulation so user can test private chatting immediately
-    setTimeout(() => {
-      handleAddNotification("🎉 Request Accepted!", `@${targetUsername} accepted your friend request! You can now chat in Friends Section.`, "success");
-      handleAcceptFriendRequest(newReq.id, targetEmail, targetUsername, targetAvatar, targetLevel);
-    }, 2000);
   };
 
   const handleAcceptFriendRequest = (reqId: string, email: string, username: string, avatar: string, level: number) => {
