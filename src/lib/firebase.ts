@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
   getAuth, 
@@ -9,14 +10,16 @@ import {
   onAuthStateChanged
 } from "firebase/auth";
 
-// Direct loading of Firebase configurations from the provisioned config file
+import appletConfig from "../../firebase-applet-config.json";
+
+// Environment variable overrides or provisioned config file
 const firebaseConfig = {
-  apiKey: "AIzaSyAI2RTMVcclJkxDhGNjBJAWhEmZCf22fKs",
-  authDomain: "academic-transducer-s8t0d.firebaseapp.com",
-  projectId: "academic-transducer-s8t0d",
-  storageBucket: "academic-transducer-s8t0d.firebasestorage.app",
-  messagingSenderId: "703730099531",
-  appId: "1:703730099531:web:af099caa21c98a6e2634ce"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || appletConfig.apiKey,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || appletConfig.authDomain,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || appletConfig.projectId,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || appletConfig.storageBucket,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || appletConfig.messagingSenderId,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || appletConfig.appId,
 };
 
 // Singleton initialization pattern

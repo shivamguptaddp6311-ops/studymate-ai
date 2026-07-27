@@ -329,12 +329,15 @@ export const DynamicIslandAI: React.FC<DynamicIslandAIProps> = ({
               {/* Status Audio Visualizer Wave / Progress Line */}
               {isListening ? (
                 <div className="flex items-center justify-center gap-1 py-2">
-                  {waveHeights.map((h, i) => (
-                    <motion.div
+                  {[40, 70, 30, 90, 50, 80, 40].map((baseH, i) => (
+                    <div
                       key={i}
-                      className="w-1.5 bg-gradient-to-t from-emerald-500 to-teal-300 rounded-full"
-                      style={{ height: `${Math.max(12, h)}px` }}
-                      transition={{ type: "spring", stiffness: 300, damping: 15 }}
+                      className="w-1.5 bg-gradient-to-t from-emerald-500 to-teal-300 rounded-full animate-pulse"
+                      style={{
+                        height: `${baseH}%`,
+                        animationDuration: `${0.4 + (i % 3) * 0.2}s`,
+                        animationDelay: `${i * 0.08}s`
+                      }}
                     />
                   ))}
                 </div>

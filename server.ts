@@ -10,8 +10,8 @@ import compression from "compression";
 import { rateLimit } from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { Type } from "@google/genai";
-import { executeAIRequest, getConfiguredProviders, AIProvider, AIMessage, parseJsonResponse } from "./server/aiService";
-import { shouldSearchWeb, executeWebSearch } from "./server/webSearch";
+import { executeAIRequest, getConfiguredProviders, getConfiguredImageProviders, generateImageWithFallback, executeImageGenRequest, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter } from "./server/aiService";
+import { shouldSearchWeb, executeWebSearch, compressContext, generateCitationsContext } from "./server/webSearch";
 import { firebaseDB, runAutomatedMigration, ChatUser, ChatMessage, ChatReport, AdminLog, SyncData, UserMemory } from "./server/firebase";
 import { getQuestions } from "./server/questionService";
 import {
@@ -56,18 +56,39 @@ let JWT_SECRET = process.env.JWT_SECRET;
 let JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
 let DB_KEY = process.env.DB_ENCRYPTION_KEY;
 
-// Validate environment variables on boot, fall back to safe defaults in development
+// Validate environment variables on boot, fail fast in production or generate dynamic 256-bit key in development
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
-  console.warn("[Server] WARNING: JWT_SECRET is missing, empty, or too short. Falling back to development default key.");
-  JWT_SECRET = "dev_default_jwt_secret_key_at_least_32_characters_long_for_security";
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("CRITICAL SECURITY ERROR: JWT_SECRET environment variable is required and must be at least 32 characters long.");
+  }
+  JWT_SECRET = crypto.randomBytes(32).toString("hex");
+  console.warn("[Server] WARNING: JWT_SECRET is missing. Generated a volatile 256-bit key for development.");
 }
+
 if (!JWT_REFRESH_SECRET || JWT_REFRESH_SECRET.length < 32) {
-  console.warn("[Server] WARNING: JWT_REFRESH_SECRET is missing, empty, or too short. Falling back to development default key.");
-  JWT_REFRESH_SECRET = "dev_default_jwt_refresh_secret_key_at_least_32_characters_long_for_security";
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("CRITICAL SECURITY ERROR: JWT_REFRESH_SECRET environment variable is required and must be at least 32 characters long.");
+  }
+  JWT_REFRESH_SECRET = crypto.randomBytes(32).toString("hex");
+  console.warn("[Server] WARNING: JWT_REFRESH_SECRET is missing. Generated a volatile 256-bit key for development.");
 }
+
 if (!DB_KEY || DB_KEY.length < 16) {
-  console.warn("[Server] WARNING: DB_ENCRYPTION_KEY is missing, empty, or too short. Falling back to development default key.");
-  DB_KEY = "dev_default_db_encryption_key_of_16_characters";
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("CRITICAL SECURITY ERROR: DB_ENCRYPTION_KEY environment variable is required and must be at least 16 characters long.");
+  }
+  DB_KEY = crypto.randomBytes(32).toString("hex");
+  console.warn("[Server] WARNING: DB_ENCRYPTION_KEY is missing. Generated a volatile 256-bit key for development.");
+}
+
+function isAdminEmail(email: string | null | undefined): boolean {
+  if (!email) return false;
+  const normalized = email.toLowerCase().trim();
+  const adminEmails = (process.env.ADMIN_EMAILS || "shivamguptaddp6312@gmail.com")
+    .split(",")
+    .map(e => e.trim().toLowerCase())
+    .filter(Boolean);
+  return adminEmails.includes(normalized);
 }
 
 // --- Database Encryption at Rest Helpers ---
@@ -508,9 +529,17 @@ const authLimiter = rateLimit({
 // Auto-Session Guest Token Endpoint for Seamless Access
 app.post("/api/auth/guest-token", authLimiter, async (req, res) => {
   try {
-    const rawEmail = req.body?.email || req.query?.email || "shivamguptaddp6312@gmail.com";
-    const emailNorm = rawEmail.toString().toLowerCase().trim();
-    const finalEmail = (emailNorm.includes("@") && emailNorm.includes(".")) ? emailNorm : "shivamguptaddp6312@gmail.com";
+    const rawEmail = req.body?.email || req.query?.email;
+    let finalEmail: string;
+
+    if (rawEmail && typeof rawEmail === "string" && rawEmail.includes("@") && rawEmail.includes(".")) {
+      finalEmail = rawEmail.toLowerCase().trim();
+    } else {
+      // Priority 1 Rule 1: Guest authentication must generate a unique anonymous identity.
+      const guestId = crypto.randomBytes(6).toString("hex");
+      finalEmail = `guest_${guestId}@guest.studymate.ai`;
+    }
+
     const uid = finalEmail.replace(/[^a-zA-Z0-9]/g, "_");
     const isAdmin = isAdminEmail(finalEmail);
     const token = createAccessToken({ email: finalEmail, isAdmin, uid });
@@ -520,7 +549,7 @@ app.post("/api/auth/guest-token", authLimiter, async (req, res) => {
     if (!user) {
       user = {
         email: finalEmail,
-        username: finalEmail.split("@")[0],
+        username: finalEmail.startsWith("guest_") ? `Guest_${finalEmail.split("@")[0].slice(-6)}` : finalEmail.split("@")[0],
         avatar: "🎓",
         level: 1,
         joinDate: new Date().toDateString(),
@@ -1117,6 +1146,123 @@ JSON schema to match:
   }
 });
 
+// GET configured AI providers for text and image generation
+app.get("/api/ai/providers", (req, res) => {
+  res.json({
+    textProviders: getConfiguredProviders(),
+    imageProviders: getConfiguredImageProviders()
+  });
+});
+
+// Centralized AI Router Endpoint
+app.post("/api/ai/route", requireAuth, async (req, res) => {
+  const controller = new AbortController();
+  req.on("close", () => {
+    controller.abort();
+  });
+
+  try {
+    const { taskType, prompt, messages, systemInstruction, image, category, aspectRatio, quality, preferredProvider, responseSchema, temperature, timeoutMs, metadata } = req.body;
+
+    if (prompt && typeof prompt !== "string") {
+      return res.status(400).json({ error: "Invalid prompt format." });
+    }
+    if (prompt && detectPromptInjection(prompt)) {
+      return res.status(400).json({ error: "Potential prompt injection attempt detected. Please revise query." });
+    }
+
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    const lockKey = `${emailNorm}:${req.path}:${(prompt || "").substring(0, 30)}`;
+
+    const result = await withDuplicatePrevention(lockKey, async () => {
+      return await AIRouter.route({
+        taskType,
+        prompt,
+        messages,
+        systemInstruction,
+        image,
+        category,
+        aspectRatio,
+        quality,
+        preferredProvider,
+        responseSchema,
+        temperature,
+        timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+        signal: controller.signal,
+        metadata
+      });
+    });
+
+    res.json(result);
+  } catch (error: any) {
+    if (error.message?.includes("timed out")) {
+      return res.status(504).json({ error: error.message });
+    }
+    if (error.message?.includes("cancelled") || controller.signal.aborted) {
+      return res.status(499).json({ error: "Request was cancelled." });
+    }
+    if (error.message?.includes("in progress")) {
+      return res.status(409).json({ error: "A request with identical payload is currently processing." });
+    }
+    console.error("AI Router route error:", error);
+    res.status(500).json({ error: error.message || "AI Router failed to process request." });
+  }
+});
+
+// AI Image & Diagram Generation Route (Multi-Provider Fallback: Gemini -> OpenAI -> Fal.ai)
+app.post("/api/ai/generate-image", requireAuth, async (req, res) => {
+  const controller = new AbortController();
+  req.on("close", () => {
+    controller.abort();
+  });
+
+  try {
+    const { prompt, category, aspectRatio = "1:1", quality = "standard", provider = "auto", timeoutMs } = req.body;
+
+    if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+      return res.status(400).json({ error: "A valid non-empty prompt string is required." });
+    }
+
+    if (prompt.length > 2000) {
+      return res.status(400).json({ error: "Prompt exceeds maximum allowed character limit of 2,000." });
+    }
+
+    if (detectPromptInjection(prompt)) {
+      return res.status(400).json({ error: "Potential prompt injection attempt detected. Please refine your image prompt." });
+    }
+
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    const lockKey = `${emailNorm}:${req.path}:${prompt.trim().substring(0, 50)}`;
+
+    const imageResult = await withDuplicatePrevention(lockKey, async () => {
+      return await generateImageWithFallback({
+        prompt,
+        category,
+        aspectRatio,
+        quality,
+        preferredProvider: provider as any,
+        signal: controller.signal
+      });
+    });
+
+    res.json(imageResult);
+  } catch (error: any) {
+    if (error.message?.includes("timed out")) {
+      console.warn("AI Image Generation timeout:", error.message);
+      return res.status(504).json({ error: error.message });
+    }
+    if (error.message?.includes("cancelled") || controller.signal.aborted) {
+      console.warn("AI Image Generation request cancelled by user.");
+      return res.status(499).json({ error: "Request was cancelled." });
+    }
+    if (error.message?.includes("in progress")) {
+      return res.status(409).json({ error: "An image generation request with identical prompt is already processing." });
+    }
+    console.error("AI Image Generation error:", error);
+    res.status(500).json({ error: error.message || "Failed to generate AI image." });
+  }
+});
+
 // 2. Interactive Tutor Chat - Follow-up and conversation with full memory & reasoning
 app.post("/api/gemini/chat", requireAuth, async (req, res) => {
   const controller = new AbortController();
@@ -1191,20 +1337,39 @@ app.post("/api/gemini/chat", requireAuth, async (req, res) => {
           searchSources = searchResult.results.map(r => ({ title: r.title, url: r.url }));
 
           if (searchResult.results.length > 0) {
-            const contextStr = searchResult.results
-              .map((r, idx) => `[Source ${idx + 1}] Title: ${r.title}\nURL: ${r.url}\nContent: ${r.content}`)
-              .join("\n\n");
+            let contextStr = "";
+            if (searchResult.chunks && searchResult.chunks.length > 0) {
+              contextStr = compressContext(searchResult.chunks, 3500);
+            } else {
+              contextStr = searchResult.results
+                .map((r, idx) => {
+                  let srcHeader = `[Source ${idx + 1}] Title: ${r.title}\nURL: ${r.url}`;
+                  if (r.publishedDate) srcHeader += `\nPublished Date: ${r.publishedDate}`;
+                  if (r.scrapedWithFirecrawl) srcHeader += `\nExtraction: Extracted via Firecrawl Clean Scraper`;
+                  return `${srcHeader}\nContent:\n${r.content}`;
+                })
+                .join("\n\n---\n\n");
+            }
 
-            webSearchContext = `=== LIVE REAL-TIME WEB SEARCH DATA ===
+            const citationsStr = generateCitationsContext(searchResult.results);
+
+            webSearchContext = `=== LIVE REAL-TIME HYBRID RETRIEVAL DATA ===
 Search Query: "${searchQuery}"
-Results:
+Intent Category: ${searchResult.intent}
+Sources Used: ${searchResult.sourceUsed}
+
+=== HIGH-VALUE VERIFIED EVIDENCE ===
 ${contextStr}
 
-[Search Guidelines]:
-1. Carefully read and synthesize the live search results.
-2. Formulate a natural, unified answer without copying raw snippets verbatim.
-3. Explicitly state in your reply that the response includes live web search information.
-4. Do NOT render raw URLs inside your text body.`;
+=== CITATIONS LIST ===
+${citationsStr}
+
+[Hybrid Retrieval Guidelines]:
+1. Synthesize answer clearly using the verified evidence provided above.
+2. Include inline citations matching source index tags (e.g. [1], [2]) when referencing facts.
+3. State explicitly in your reply that the response includes live web search information.
+4. Do NOT render raw markdown links in the main text body unless providing formal references.
+5. If sources contradict each other, note the discrepancy clearly without inventing unbacked claims.`;
           }
         } catch (err: any) {
           console.error("[WebSearch] Search pipeline failed completely:", err);
@@ -1370,6 +1535,43 @@ app.delete("/api/ai/memory", requireAuth, async (req, res) => {
     res.json({ success: true, memory });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to reset user memory." });
+  }
+});
+
+// Production Multi-Provider AI Image Generator (Gemini -> OpenAI -> Fal.ai)
+app.get("/api/ai/image-providers", requireAuth, (req, res) => {
+  res.json({ providers: getConfiguredImageProviders() });
+});
+
+app.post("/api/ai/generate-image", requireAuth, async (req, res) => {
+  const controller = new AbortController();
+  req.on("close", () => {
+    controller.abort();
+  });
+
+  try {
+    const { prompt, category, aspectRatio, quality, preferredProvider } = req.body;
+
+    if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+      return res.status(400).json({ error: "Prompt is required." });
+    }
+
+    const result = await generateImageWithFallback({
+      prompt: prompt.trim(),
+      category,
+      aspectRatio,
+      quality,
+      preferredProvider,
+      signal: controller.signal
+    });
+
+    res.json(result);
+  } catch (error: any) {
+    if (error.message?.includes("cancelled") || controller.signal.aborted) {
+      return res.status(499).json({ error: "Request was cancelled." });
+    }
+    console.error("AI Image Generation error:", error);
+    res.status(500).json({ error: error.message || "Failed to generate image." });
   }
 });
 
@@ -1617,13 +1819,6 @@ The response should be JSON structured strictly like this:
 // ----------------------------------------------------
 // GLOBAL COMMUNITY CHAT ROUTES (SSE & REST API)
 // ----------------------------------------------------
-
-// Admin matching constraint: shivamguptaddp6312@gmail.com is the primary bootstrapped admin
-function isAdminEmail(email: string | null | undefined): boolean {
-  if (!email) return false;
-  const normalized = email.toLowerCase().trim();
-  return normalized === "shivamguptaddp6312@gmail.com";
-}
 
 // Helper to broadcast event to all SSE streams
 function broadcastToSSE(type: string, data: any) {
@@ -2293,6 +2488,9 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 // VITE AND STATIC ASSET SERVING MIDDLEWARE
 // ----------------------------------------------------
 
+import { WebSocketServer } from "ws";
+import { setupLiveTutorWebSocket } from "./server/liveTutor";
+
 let serverInstance: any;
 
 async function start() {
@@ -2312,6 +2510,22 @@ async function start() {
 
   serverInstance = app.listen(PORT, "0.0.0.0", () => {
     console.log(`StudyMate server listening on http://0.0.0.0:${PORT}`);
+  });
+
+  const wss = new WebSocketServer({ noServer: true });
+  setupLiveTutorWebSocket(wss);
+
+  serverInstance.on("upgrade", (request: any, socket: any, head: any) => {
+    try {
+      const pathname = new URL(request.url, `http://${request.headers.host || 'localhost'}`).pathname;
+      if (pathname === "/api/live-tutor") {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+          wss.emit("connection", ws, request);
+        });
+      }
+    } catch (e) {
+      console.error("Error during HTTP upgrade:", e);
+    }
   });
 }
 

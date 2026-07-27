@@ -2,18 +2,101 @@ import { firebaseDB, UserMemory, ChatUser, SyncData } from "./firebase";
 import { AIMessage } from "./aiService";
 import { GoogleGenAI } from "@google/genai";
 
-// Cache for runtime memory in-memory for speed
+// LRU / TTL Cache for user memory in Node.js memory
 const memoryCache = new Map<string, { memory: UserMemory; timestamp: number }>();
-const MEMORY_CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+const MEMORY_CACHE_TTL = 3 * 60 * 1000; // 3 minutes TTL
+
+// Trivial casual phrases to ignore for long-term memory extraction
+const TRIVIAL_PHRASES = new Set([
+  "hi", "hello", "hey", "hola", "ok", "okay", "k", "sure", "thanks", "thank you",
+  "thx", "got it", "cool", "nice", "awesome", "great", "good", "lol", "haha",
+  "yes", "no", "yep", "nope", "bye", "goodbye", "see ya", "brb", "what's up",
+  "how are you", "who are you", "good morning", "good night", "sorry", "please"
+]);
+
+// Prompt injection keywords to strip from long-term memory facts
+const PROMPT_INJECTION_PATTERNS = [
+  /ignore\s+(all\s+)?(previous|prior)\s+instructions/gi,
+  /system\s*prompt/gi,
+  /you\s+are\s+now\s+a/gi,
+  /override\s+rules/gi,
+  /<script.*?>.*?<\/script>/gi,
+  /eval\s*\(.*?\)/gi
+];
 
 /**
- * 1. RUNTIME DATE & TIME
- * Generates exact live date, time, timezone, and explicit year instructions.
+ * Sanitize fact strings to prevent prompt injections or malformed text before saving/injecting.
+ */
+export function sanitizeFact(text: string): string {
+  if (!text || typeof text !== "string") return "";
+  let clean = text.trim();
+
+  // Strip prompt injection attempts
+  PROMPT_INJECTION_PATTERNS.forEach(pattern => {
+    clean = clean.replace(pattern, "[redacted]");
+  });
+
+  // Normalize whitespace & cap maximum length per individual fact
+  clean = clean.replace(/\s+/g, " ").substring(0, 300).trim();
+  return clean;
+}
+
+/**
+ * Calculates Token / Word Jaccard Similarity between two text strings to detect duplicates.
+ */
+export function calculateJaccardSimilarity(str1: string, str2: string): number {
+  const words1 = new Set(str1.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 2));
+  const words2 = new Set(str2.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(w => w.length > 2));
+
+  if (words1.size === 0 || words2.size === 0) return 0;
+
+  const intersection = new Set([...words1].filter(x => words2.has(x)));
+  const union = new Set([...words1, ...words2]);
+
+  return intersection.size / union.size;
+}
+
+/**
+ * Deduplicates and updates facts array.
+ * Replaces older contradicting facts if a newer fact updates the same topic.
+ */
+export function normalizeAndDeduplicateFacts(existingFacts: string[], newFacts: string[]): string[] {
+  let result = [...existingFacts];
+
+  for (const rawNewFact of newFacts) {
+    const cleanFact = sanitizeFact(rawNewFact);
+    if (!cleanFact || cleanFact.length < 5) continue;
+
+    let isDuplicateOrUpdated = false;
+
+    for (let i = 0; i < result.length; i++) {
+      const existing = result[i];
+      const similarity = calculateJaccardSimilarity(existing, cleanFact);
+
+      if (similarity > 0.65) {
+        // High similarity: update with the newer, potentially more specific fact
+        result[i] = cleanFact;
+        isDuplicateOrUpdated = true;
+        break;
+      }
+    }
+
+    if (!isDuplicateOrUpdated) {
+      result.push(cleanFact);
+    }
+  }
+
+  // Cap total facts to 40 items max
+  return result.slice(-40);
+}
+
+/**
+ * 1. RUNTIME DATE & TIME INFORMATION
+ * Generates live date, time, timezone, and explicit year instructions.
  */
 export function getRuntimeInfo(): string {
   const now = new Date();
   
-  // Formatters for precise runtime components
   const dateStr = now.toLocaleDateString("en-US", {
     weekday: "long",
     year: "numeric",
@@ -89,8 +172,7 @@ export function getUserProfileContext(user: ChatUser | null, syncData: SyncData 
 }
 
 /**
- * 3. LONG-TERM MEMORY RETRIEVAL
- * Loads user memories from Firestore / Fallback DB.
+ * 3. LONG-TERM MEMORY RETRIEVAL WITH CACHING
  */
 export async function getOrLoadUserMemory(uid: string, email: string): Promise<UserMemory> {
   const cacheKey = uid.trim() || email.toLowerCase().trim();
@@ -101,8 +183,14 @@ export async function getOrLoadUserMemory(uid: string, email: string): Promise<U
 
   const existing = await firebaseDB.getUserMemory(uid, email);
   if (existing) {
-    memoryCache.set(cacheKey, { memory: existing, timestamp: Date.now() });
-    return existing;
+    const memory: UserMemory = {
+      facts: (existing.facts || []).map(sanitizeFact).filter(f => f.length > 0),
+      summary: existing.summary || "",
+      learningsAndGoals: (existing.learningsAndGoals || []).map(sanitizeFact).filter(f => f.length > 0),
+      lastUpdated: existing.lastUpdated || new Date().toISOString()
+    };
+    memoryCache.set(cacheKey, { memory, timestamp: Date.now() });
+    return memory;
   }
 
   const emptyMemory: UserMemory = {
@@ -116,39 +204,78 @@ export async function getOrLoadUserMemory(uid: string, email: string): Promise<U
   return emptyMemory;
 }
 
-export function formatLongTermMemoryContext(memory: UserMemory, currentMessage = ""): string {
-  const parts: string[] = [];
+/**
+ * Rank and retrieve relevant long-term memories based on current query.
+ */
+export function searchAndRankMemories(memory: UserMemory, currentMessage = "", maxFacts = 15): {
+  relevantFacts: string[];
+  relevantGoals: string[];
+  summary: string;
+} {
+  const queryLower = currentMessage.toLowerCase().trim();
+  const keywords = queryLower.split(/\s+/).filter(w => w.length > 2);
 
-  if (memory.facts && memory.facts.length > 0) {
-    // Select facts, prioritizing relevant ones if currentMessage provided
-    let relevantFacts = memory.facts;
-    if (currentMessage.trim().length > 0) {
-      const lower = currentMessage.toLowerCase();
-      const keywords = lower.split(/\s+/).filter(w => w.length > 3);
-      
-      const scored = memory.facts.map(fact => {
-        const factLower = fact.toLowerCase();
-        let score = 0;
-        keywords.forEach(kw => {
-          if (factLower.includes(kw)) score++;
-        });
-        return { fact, score };
-      });
+  // Score facts based on keyword overlap and core relevance
+  let factsWithScore = (memory.facts || []).map(fact => {
+    const factLower = fact.toLowerCase();
+    let score = 0;
 
-      scored.sort((a, b) => b.score - a.score);
-      // Keep all high relevance + up to 15 general facts
-      relevantFacts = scored.map(s => s.fact).slice(0, 20);
+    // High priority terms (name, grade, exam, target, preference) get bonus base score
+    if (/name|class|grade|exam|board|subject|stream/i.test(fact)) {
+      score += 2;
     }
 
+    keywords.forEach(kw => {
+      if (factLower.includes(kw)) {
+        score += 3;
+      }
+    });
+
+    return { fact, score };
+  });
+
+  factsWithScore.sort((a, b) => b.score - a.score);
+
+  const relevantFacts = factsWithScore.slice(0, maxFacts).map(item => item.fact);
+
+  // Score goals
+  let goalsWithScore = (memory.learningsAndGoals || []).map(goal => {
+    const goalLower = goal.toLowerCase();
+    let score = 0;
+    keywords.forEach(kw => {
+      if (goalLower.includes(kw)) score += 3;
+    });
+    return { goal, score };
+  });
+
+  goalsWithScore.sort((a, b) => b.score - a.score);
+  const relevantGoals = goalsWithScore.slice(0, 10).map(item => item.goal);
+
+  return {
+    relevantFacts,
+    relevantGoals,
+    summary: memory.summary || ""
+  };
+}
+
+/**
+ * Format Long-Term Memory Context for System Prompt Injection.
+ */
+export function formatLongTermMemoryContext(memory: UserMemory, currentMessage = ""): string {
+  const { relevantFacts, relevantGoals, summary } = searchAndRankMemories(memory, currentMessage);
+
+  const parts: string[] = [];
+
+  if (relevantFacts.length > 0) {
     parts.push(`- Remembered User Facts & Preferences:\n  * ` + relevantFacts.join("\n  * "));
   }
 
-  if (memory.learningsAndGoals && memory.learningsAndGoals.length > 0) {
-    parts.push(`- Long-Term Learning Goals & Progress:\n  * ` + memory.learningsAndGoals.join("\n  * "));
+  if (relevantGoals.length > 0) {
+    parts.push(`- Long-Term Learning Goals & Progress:\n  * ` + relevantGoals.join("\n  * "));
   }
 
-  if (memory.summary && memory.summary.trim().length > 0) {
-    parts.push(`- Past Interactions Summary: ${memory.summary}`);
+  if (summary && summary.trim().length > 0) {
+    parts.push(`- Past Interactions Summary: ${summary}`);
   }
 
   if (parts.length === 0) {
@@ -159,8 +286,8 @@ export function formatLongTermMemoryContext(memory: UserMemory, currentMessage =
 }
 
 /**
- * 4. CONTEXT COMPRESSION & HISTORY MANAGEMENT
- * Keeps recent 20-30 messages untouched. Summarizes older turns if history is large.
+ * 4. CONTEXT COMPRESSION & SLIDING WINDOW SHORT-TERM HISTORY MANAGEMENT
+ * Keeps recent messages (15-20 turns) untouched. Summarizes older turns efficiently to minimize tokens.
  */
 export function prepareConversationHistory(rawHistory: any[]): {
   compressedSummary: string;
@@ -184,26 +311,27 @@ export function prepareConversationHistory(rawHistory: any[]): {
     return { compressedSummary: "", recentMessages: [] };
   }
 
-  // If history <= 25 messages, keep all of them untouched
-  if (validTurns.length <= 25) {
+  // Sliding window: If history <= 20 messages, keep all untouched
+  const MAX_RECENT_TURNS = 20;
+  if (validTurns.length <= MAX_RECENT_TURNS) {
     return { compressedSummary: "", recentMessages: validTurns };
   }
 
-  // Splice older messages (all except recent 20)
-  const olderTurns = validTurns.slice(0, validTurns.length - 20);
-  const recentTurns = validTurns.slice(validTurns.length - 20);
+  // Split older messages from recent window
+  const olderTurns = validTurns.slice(0, validTurns.length - MAX_RECENT_TURNS);
+  const recentTurns = validTurns.slice(validTurns.length - MAX_RECENT_TURNS);
 
-  // Generate a concise text summary of older turns
+  // Generate a structured, token-optimized summary of older turns
   const summaryLines: string[] = [];
   olderTurns.forEach(turn => {
-    const prefix = turn.role === "user" ? "User asked/stated:" : "AI responded:";
-    const snippet = turn.content.length > 150 ? turn.content.substring(0, 150) + "..." : turn.content;
+    const prefix = turn.role === "user" ? "User:" : "AI:";
+    const snippet = turn.content.length > 120 ? turn.content.substring(0, 120) + "..." : turn.content;
     summaryLines.push(`${prefix} ${snippet}`);
   });
 
   const compressedSummary = `=== EARLY CONVERSATION SUMMARY (MESSAGES 1 to ${olderTurns.length}) ===
 ${summaryLines.join("\n")}
-[Note: The above is a compressed summary of earlier turns in this chat session to optimize context size without losing context.]`;
+[Note: The above is a token-optimized compressed summary of earlier turns in this chat session to preserve memory context without exceeding context windows.]`;
 
   return {
     compressedSummary,
@@ -213,7 +341,7 @@ ${summaryLines.join("\n")}
 
 /**
  * 5. MEMORY RETRIEVAL TRIGGERS
- * Detects recall signals like "remember", "continue", "as I said earlier", "same as before", "you forgot".
+ * Detects explicit recall triggers in user prompts.
  */
 export function detectMemoryRetrievalTriggers(message: string): string {
   if (!message || typeof message !== "string") return "";
@@ -236,8 +364,28 @@ You MUST carefully cross-reference the Long-Term Recalled Memory and Recent Conv
 }
 
 /**
- * 6. AUTOMATED MEMORY EXTRACTION IN BACKGROUND
- * Scans user message & AI response to extract key facts, preferences, corrections, and goals.
+ * Check if a user message is trivial or casual filler that should NOT be extracted as long-term facts.
+ */
+export function isTrivialMessage(message: string): boolean {
+  if (!message) return true;
+  const clean = message.trim().toLowerCase().replace(/[^\w\s]/g, "");
+
+  if (clean.length < 3) return true;
+  if (TRIVIAL_PHRASES.has(clean)) return true;
+
+  // Single word or two word trivial greetings
+  const words = clean.split(/\s+/);
+  if (words.length <= 2 && words.every(w => TRIVIAL_PHRASES.has(w))) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * 6. AUTOMATED INTELLIGENT MEMORY EXTRACTION IN BACKGROUND
+ * Scans user message & AI response to extract key facts, preferences, corrections, and goals,
+ * then saves deduplicated memories to Firestore.
  */
 export async function extractAndSaveMemoriesInBackground(
   uid: string,
@@ -247,51 +395,56 @@ export async function extractAndSaveMemoriesInBackground(
 ): Promise<void> {
   if (!userMessage || userMessage.trim().length < 5) return;
 
+  // Ignore trivial casual filler messages
+  if (isTrivialMessage(userMessage)) {
+    return;
+  }
+
   try {
     const lower = userMessage.toLowerCase();
+
     const isFactTrigger = [
       "remember that", "remember:", "i am in", "my name is", "my goal is", "i prefer",
       "i like", "i hate", "i am studying", "my exam is", "i live in", "my favourite",
       "i am preparing for", "correcting you", "you got that wrong", "actually,"
     ].some(k => lower.includes(k));
 
-    if (!isFactTrigger && userMessage.length < 30) {
-      return; // Skip simple casual messages
+    if (!isFactTrigger && userMessage.length < 25) {
+      return; // Skip non-trigger short messages
     }
 
     const memory = await getOrLoadUserMemory(uid, email);
+    const extractedFacts: string[] = [];
 
-    // Fast heuristic extraction for common direct facts
-    const newFacts: string[] = [];
-
+    // Fast direct heuristic extraction for explicit "remember that" or "remember:"
     if (lower.includes("remember that") || lower.includes("remember:")) {
       const factStr = userMessage.replace(/remember\s+that:?/i, "").trim();
-      if (factStr.length > 5 && !memory.facts.includes(factStr)) {
-        newFacts.push(factStr);
+      if (factStr.length > 5) {
+        extractedFacts.push(factStr);
       }
     }
 
     if (lower.includes("my goal is") || lower.includes("i want to achieve")) {
       const goalStr = userMessage.trim();
       if (!memory.learningsAndGoals.includes(goalStr)) {
-        memory.learningsAndGoals.push(goalStr);
+        memory.learningsAndGoals.push(sanitizeFact(goalStr));
       }
     }
 
-    // Direct LLM extraction pass if explicit fact trigger or correction detected
+    // LLM Extraction pass if explicit fact trigger or correction detected
     if (isFactTrigger) {
       const apiKey = process.env.GEMINI_API_KEY;
       if (apiKey && apiKey.length > 5) {
         try {
           const ai = new GoogleGenAI({ apiKey });
-          const prompt = `Extract any long-term user facts, academic background, goals, study habits, or preferences stated in this message.
+          const prompt = `Extract long-term user personal facts, academic background, exam goals, study habits, or specific preferences stated in this user message.
 Format as 1-2 concise bullet facts (e.g. "User is preparing for CBSE Class 10 math exam in March"). If no clear personal facts are stated, respond with "NONE".
 
 User Message: "${userMessage}"`;
 
           const res = await Promise.race([
             ai.models.generateContent({
-              model: "gemini-3.6-flash",
+              model: "gemini-2.5-flash",
               contents: [{ role: "user", parts: [{ text: prompt }] }],
               config: { temperature: 0.1, maxOutputTokens: 100 }
             }),
@@ -299,11 +452,13 @@ User Message: "${userMessage}"`;
           ]);
 
           if (res && res.text) {
-            const lines = res.text.split("\n").map(l => l.replace(/^[*\-\d.\s]+/, "").trim()).filter(l => l.length > 5 && !l.includes("NONE"));
+            const lines = res.text
+              .split("\n")
+              .map(l => l.replace(/^[*\-\d.\s]+/, "").trim())
+              .filter(l => l.length > 5 && !l.includes("NONE"));
+
             lines.forEach(fact => {
-              if (!memory.facts.includes(fact)) {
-                newFacts.push(fact);
-              }
+              extractedFacts.push(fact);
             });
           }
         } catch (e) {
@@ -312,15 +467,18 @@ User Message: "${userMessage}"`;
       }
     }
 
-    if (newFacts.length > 0) {
-      // Merge unique facts
-      const updatedFacts = Array.from(new Set([...memory.facts, ...newFacts])).slice(-40); // cap at 40 key facts
+    if (extractedFacts.length > 0) {
+      // Deduplicate and merge facts
+      const updatedFacts = normalizeAndDeduplicateFacts(memory.facts, extractedFacts);
       memory.facts = updatedFacts;
       memory.lastUpdated = new Date().toISOString();
 
       await firebaseDB.saveUserMemory(uid, memory);
-      memoryCache.set(uid.trim() || email.toLowerCase().trim(), { memory, timestamp: Date.now() });
-      console.log(`[MemoryService] Saved ${newFacts.length} new facts for user ${email}`);
+      
+      const cacheKey = uid.trim() || email.toLowerCase().trim();
+      memoryCache.set(cacheKey, { memory, timestamp: Date.now() });
+
+      console.log(`[MemoryService] Saved ${extractedFacts.length} new/updated facts for user ${email}`);
     }
   } catch (err) {
     console.warn("[MemoryService] Background memory extraction exception:", err);

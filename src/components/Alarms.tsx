@@ -253,7 +253,7 @@ export default function Alarms({
   const [showChallenge, setShowChallenge] = useState(false);
   const [playingAudio, setPlayingAudio] = useState(false);
 
-  // Dynamic ticking state to trigger countdown UI refreshes smoothly
+function CountdownTimerBadge({ nextTriggerMs }: { nextTriggerMs: number }) {
   const [, setTick] = useState(0);
   useEffect(() => {
     const interval = setInterval(() => {
@@ -261,6 +261,13 @@ export default function Alarms({
     }, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  return (
+    <strong className="font-mono text-white animate-pulse">
+      {getRemainingTimeString(nextTriggerMs)}
+    </strong>
+  );
+}
 
   useEffect(() => {
     if (triggeredAlarm) {
@@ -633,7 +640,7 @@ export default function Alarms({
                 </span>
               </div>
               <p className="text-xs text-indigo-200 font-medium">
-                ⏱️ Inactive timer ticking: <strong className="font-mono text-white animate-pulse">{getRemainingTimeString(nextUpcoming.nextTriggerMs)}</strong>
+                ⏱️ Inactive timer ticking: <CountdownTimerBadge nextTriggerMs={nextUpcoming.nextTriggerMs} />
               </p>
             </div>
 

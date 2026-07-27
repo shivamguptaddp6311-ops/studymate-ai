@@ -5,7 +5,6 @@ const config: CapacitorConfig = {
   appName: 'StudyMate AI',
   webDir: 'dist',
   server: {
-    url: 'https://ais-dev-7trcurr3ybqbdmvjkvx3x7-634393143987.asia-southeast1.run.app',
     cleartext: true
   },
   android: {

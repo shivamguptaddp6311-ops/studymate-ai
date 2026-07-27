@@ -236,11 +236,6 @@ export default function Dashboard({
     const randomIndex = Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length);
     setQuote(MOTIVATIONAL_QUOTES[randomIndex]);
 
-    // Live clock ticks
-    const interval = setInterval(() => {
-      setTime(new Date());
-    }, 1000);
-
     // Permission popup trigger once
     const hasAsked = localStorage.getItem(permissionKey) === "true" || localStorage.getItem("studymate_permissions_requested") === "true";
     if (!hasAsked) {
@@ -248,12 +243,9 @@ export default function Dashboard({
         setShowPermissionsModal(true);
       }, 1200);
       return () => {
-        clearInterval(interval);
         clearTimeout(timer);
       };
     }
-
-    return () => clearInterval(interval);
   }, [profile.fullName, permissionKey]);
 
   const pendingTasks = tasks.filter((t) => !t.completed);
@@ -269,6 +261,24 @@ export default function Dashboard({
 
   // Timetable events for today
   const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function LiveClockBadge() {
+  const [time, setTime] = useState(() => new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTime(new Date());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-300 bg-indigo-500/20 border border-indigo-400/30 px-3 py-1 rounded-full backdrop-blur-md flex items-center gap-1.5">
+      <Clock className="w-3 h-3 text-indigo-400" />
+      {formatDate(time)} &bull; {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+    </span>
+  );
+}
   const currentDayName = daysOfWeek[time.getDay()];
   const todayTimetable = timetable.filter((item) => item.day === currentDayName);
 
@@ -404,10 +414,7 @@ export default function Dashboard({
           <div className="space-y-4 flex-1 text-left flex flex-col justify-between">
             <div>
               <div className="flex flex-wrap items-center gap-2 mb-2">
-                <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-300 bg-indigo-500/20 border border-indigo-400/30 px-3 py-1 rounded-full backdrop-blur-md flex items-center gap-1.5">
-                  <Clock className="w-3 h-3 text-indigo-400" />
-                  {formatDate(time)} &bull; {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                </span>
+                <LiveClockBadge />
                 <span className="text-[10px] font-extrabold uppercase tracking-widest text-amber-300 bg-amber-500/20 border border-amber-400/30 px-3 py-1 rounded-full backdrop-blur-md flex items-center gap-1">
                   <Sparkle className="w-3 h-3 text-amber-400 animate-spin" style={{ animationDuration: "6s" }} />
                   Level {profile.level} Student

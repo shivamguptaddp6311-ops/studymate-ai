@@ -6,3 +6,6 @@ coverage/
 *.log
 .env*
 !.env.example
+server_chat_db*.json
+server_question_pool.json
+*.bak

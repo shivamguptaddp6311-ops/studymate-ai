@@ -9,11 +9,11 @@
 body {
   font-family: var(--font-sans);
   transition: background-color 0.3s ease, color 0.3s ease;
-  background-color: #0f172a;
-  background-image: radial-gradient(rgba(147, 51, 234, 0.08) 1.5px, transparent 1.5px), radial-gradient(rgba(59, 130, 246, 0.05) 1.5px, transparent 1.5px);
+  background-color: #f8fafc;
+  background-image: radial-gradient(rgba(147, 51, 234, 0.04) 1.5px, transparent 1.5px), radial-gradient(rgba(59, 130, 246, 0.03) 1.5px, transparent 1.5px);
   background-position: 0 0, 12px 12px;
   background-size: 24px 24px;
-  color: #f8fafc;
+  color: #0f172a;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -170,69 +170,35 @@ a:active {
 /* Flagship Color Palette: Deep Navy Dark Mode (#070b18) */
 html.dark,
 html.dark body {
-  background-color: #070b18 !important;
-  color: #f8fafc !important;
-  background-image: radial-gradient(rgba(168, 85, 247, 0.07) 1.5px, transparent 1.5px), radial-gradient(rgba(59, 130, 246, 0.05) 1.5px, transparent 1.5px) !important;
-  background-size: 28px 28px !important;
+  background-color: #070b18;
+  color: #f8fafc;
+  background-image: radial-gradient(rgba(168, 85, 247, 0.07) 1.5px, transparent 1.5px), radial-gradient(rgba(59, 130, 246, 0.05) 1.5px, transparent 1.5px);
+  background-size: 28px 28px;
 }
 
-/* Flagship Frosted Glass Surface Cards with Very Subtle Translucent White Borders */
-html.dark .bg-white,
-html.dark .bg-slate-900,
-html.dark .bg-slate-800,
-html.dark [class*="bg-slate-900/"],
-html.dark [class*="bg-slate-800/"] {
-  background-color: rgba(13, 21, 38, 0.75) !important;
-  border-color: rgba(255, 255, 255, 0.1) !important;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35) !important;
-  backdrop-filter: blur(16px) !important;
-}
-
-/* Hover state glow for Frosted Glass cards */
-html.dark .bg-white:hover,
-html.dark .bg-slate-900:hover {
-  border-color: rgba(255, 255, 255, 0.2) !important;
-  box-shadow: 0 12px 40px rgba(147, 51, 234, 0.15) !important;
-}
-
-/* Primary Purple Gradient Overrides */
-html.dark .bg-indigo-600,
-html.dark .bg-indigo-500,
-html.dark .bg-purple-600 {
-  background-image: linear-gradient(to right, #9333ea, #6366f1, #7e22ce) !important;
-  color: #ffffff !important;
-  border-color: rgba(255, 255, 255, 0.2) !important;
-}
-
-html.dark .text-indigo-600,
-html.dark .text-indigo-500,
-html.dark .text-indigo-400,
-html.dark .text-purple-400 {
-  color: #c084fc !important;
-}
-
-html.dark .border-indigo-100,
-html.dark .border-slate-100,
-html.dark .border-slate-200,
-html.dark .border-slate-700,
-html.dark .border-slate-800 {
-  border-color: rgba(255, 255, 255, 0.1) !important;
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 html.dark input, 
 html.dark select, 
 html.dark textarea {
-  background-color: rgba(10, 16, 30, 0.85) !important;
-  border-color: rgba(255, 255, 255, 0.12) !important;
-  color: #f8fafc !important;
+  background-color: rgba(10, 16, 30, 0.85);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
 }
 
 html.dark input:focus, 
 html.dark select:focus, 
 html.dark textarea:focus {
-  border-color: #c084fc !important;
+  border-color: #c084fc;
   outline: none;
-  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.35) !important;
+  box-shadow: 0 0 0 2px rgba(168, 85, 247, 0.35);
 }
 
 /* High Contrast Mode Styles */

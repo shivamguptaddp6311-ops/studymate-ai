@@ -229,3 +229,49 @@ export function enhanceImageForOCR(base64Src: string): Promise<string> {
     img.src = base64Src;
   });
 }
+
+/**
+ * Rotates a base64 image by specified degrees (90, 180, 270) using canvas.
+ */
+export function rotateBase64Image(base64Src: string, degrees: number): Promise<string> {
+  const normDegrees = ((degrees % 360) + 360) % 360;
+  if (normDegrees === 0) return Promise.resolve(base64Src);
+
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          resolve(base64Src);
+          return;
+        }
+
+        if (normDegrees === 90 || normDegrees === 270) {
+          canvas.width = img.naturalHeight;
+          canvas.height = img.naturalWidth;
+        } else {
+          canvas.width = img.naturalWidth;
+          canvas.height = img.naturalHeight;
+        }
+
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.rotate((normDegrees * Math.PI) / 180);
+        ctx.drawImage(img, -img.naturalWidth / 2, -img.naturalHeight / 2);
+
+        resolve(canvas.toDataURL("image/jpeg", 0.88));
+      } catch (err) {
+        console.error("[ImageOptimizer] Rotation error:", err);
+        resolve(base64Src);
+      }
+    };
+    img.onerror = () => resolve(base64Src);
+    img.src = base64Src;
+  });
+}
+

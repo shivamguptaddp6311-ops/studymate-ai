@@ -7,6 +7,11 @@ interface ConfettiProps {
 
 export default function Confetti({ active, onComplete }: ConfettiProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const onCompleteRef = useRef(onComplete);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  }, [onComplete]);
 
   useEffect(() => {
     if (!active) return;
@@ -33,7 +38,7 @@ export default function Confetti({ active, onComplete }: ConfettiProps) {
       opacity: number;
     }> = [];
 
-    // Create 120 confetti particles centered in the middle screen bursting up
+    // Create 150 confetti particles
     for (let i = 0; i < 150; i++) {
       particles.push({
         x: canvas.width / 2,
@@ -83,7 +88,7 @@ export default function Confetti({ active, onComplete }: ConfettiProps) {
       if (activeCount > 0 && frames < 120) {
         animationFrameId = requestAnimationFrame(update);
       } else {
-        if (onComplete) onComplete();
+        if (onCompleteRef.current) onCompleteRef.current();
       }
     };
 
@@ -101,7 +106,7 @@ export default function Confetti({ active, onComplete }: ConfettiProps) {
       cancelAnimationFrame(animationFrameId);
       window.removeEventListener("resize", handleResize);
     };
-  }, [active, onComplete]);
+  }, [active]);
 
   if (!active) return null;
 
