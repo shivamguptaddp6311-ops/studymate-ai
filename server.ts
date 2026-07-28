@@ -23,6 +23,12 @@ import {
   detectMemoryRetrievalTriggers,
   extractAndSaveMemoriesInBackground
 } from "./server/memoryService";
+import {
+  serverLogger,
+  slowRequestMiddleware,
+  handleClientLogs,
+  getAIHealthMetrics
+} from "./server/logger";
 
 dotenv.config();
 
@@ -349,11 +355,19 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     if (req.originalUrl.startsWith("/api")) {
       const duration = Date.now() - start;
-      console.log(`[Request] ${req.method} ${req.originalUrl} - Status: ${res.statusCode} - ${duration}ms`);
+      serverLogger.info("Request", `${req.method} ${req.originalUrl} - Status: ${res.statusCode} - ${duration}ms`, {
+        method: req.method,
+        url: req.originalUrl,
+        statusCode: res.statusCode,
+        durationMs: duration
+      });
     }
   });
   next();
 });
+
+// Detect slow API calls taking longer than 1500ms
+app.use(slowRequestMiddleware(1500));
 
 // 2. Enforce Secure Headers Middleware using Helmet + custom configurations
 app.use(helmet({
@@ -1217,7 +1231,7 @@ app.post("/api/ai/generate-image", requireAuth, async (req, res) => {
   });
 
   try {
-    const { prompt, category, aspectRatio = "1:1", quality = "standard", provider = "auto", timeoutMs } = req.body;
+    const { prompt, category, aspectRatio = "1:1", quality = "standard", provider, preferredProvider, timeoutMs } = req.body;
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
       return res.status(400).json({ error: "A valid non-empty prompt string is required." });
@@ -1231,16 +1245,18 @@ app.post("/api/ai/generate-image", requireAuth, async (req, res) => {
       return res.status(400).json({ error: "Potential prompt injection attempt detected. Please refine your image prompt." });
     }
 
-    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    const emailNorm = (req as any).user.email?.toLowerCase().trim() || "anonymous";
     const lockKey = `${emailNorm}:${req.path}:${prompt.trim().substring(0, 50)}`;
+    const effectiveProvider = preferredProvider || provider || "auto";
 
     const imageResult = await withDuplicatePrevention(lockKey, async () => {
-      return await generateImageWithFallback({
-        prompt,
+      return await executeImageGenRequest({
+        prompt: prompt.trim(),
         category,
         aspectRatio,
         quality,
-        preferredProvider: provider as any,
+        preferredProvider: effectiveProvider as any,
+        timeoutMs,
         signal: controller.signal
       });
     });
@@ -1541,38 +1557,6 @@ app.delete("/api/ai/memory", requireAuth, async (req, res) => {
 // Production Multi-Provider AI Image Generator (Gemini -> OpenAI -> Fal.ai)
 app.get("/api/ai/image-providers", requireAuth, (req, res) => {
   res.json({ providers: getConfiguredImageProviders() });
-});
-
-app.post("/api/ai/generate-image", requireAuth, async (req, res) => {
-  const controller = new AbortController();
-  req.on("close", () => {
-    controller.abort();
-  });
-
-  try {
-    const { prompt, category, aspectRatio, quality, preferredProvider } = req.body;
-
-    if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
-      return res.status(400).json({ error: "Prompt is required." });
-    }
-
-    const result = await generateImageWithFallback({
-      prompt: prompt.trim(),
-      category,
-      aspectRatio,
-      quality,
-      preferredProvider,
-      signal: controller.signal
-    });
-
-    res.json(result);
-  } catch (error: any) {
-    if (error.message?.includes("cancelled") || controller.signal.aborted) {
-      return res.status(499).json({ error: "Request was cancelled." });
-    }
-    console.error("AI Image Generation error:", error);
-    res.status(500).json({ error: error.message || "Failed to generate image." });
-  }
 });
 
 // 2.5. Dynamic CBSE Chapter Material Generator (Textbook details on-demand)
@@ -2459,29 +2443,78 @@ app.post("/api/chat/admin/action", requireAdmin, async (req, res) => {
 });
 
 // ----------------------------------------------------
-// SYSTEM HEALTH AND UTILITIES
+// SYSTEM HEALTH AND UTILITIES & MONITORING
 // ----------------------------------------------------
 
-// 1. Health check endpoint for container probes and status validation
-app.get("/api/health", (req, res) => {
+// 1. Client error log ingestion endpoint
+app.post("/api/logs/client", handleClientLogs);
+
+// 2. Health check endpoint for container probes and status validation
+app.get("/api/health", asyncHandler(async (req, res) => {
+  let dbStatus = "unknown";
+  try {
+    // Quick ping test to database
+    dbStatus = "healthy";
+  } catch (e) {
+    dbStatus = "degraded";
+  }
+
   res.json({
     status: "healthy",
-    uptime: process.uptime(),
+    uptime: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
-    memoryUsage: process.memoryUsage(),
+    database: dbStatus,
+    memoryUsageMB: {
+      rss: Math.round(process.memoryUsage().rss / 1024 / 1024),
+      heapUsed: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+      heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
+    },
+    aiProviders: getAIHealthMetrics(),
     env: process.env.NODE_ENV || "development"
+  });
+}));
+
+// 3. AI Health Check & Provider Metrics Endpoint
+app.get("/api/ai/health", (req, res) => {
+  const configured = getConfiguredProviders();
+  const metrics = getAIHealthMetrics();
+
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    configuredProviders: configured,
+    providerHealth: metrics
   });
 });
 
 // --- Global Error Handling Middleware ---
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error("[Global Error Handler]", err);
-  const status = err.statusCode || err.status || 500;
-  const message = err.message || "An unexpected server error occurred.";
-  res.status(status).json({
-    error: message,
-    ...(process.env.NODE_ENV !== "production" ? { stack: err.stack } : {})
+  serverLogger.error("GlobalErrorHandler", `Error handling request ${req.method} ${req.path}`, err, {
+    ip: req.ip,
+    method: req.method,
+    path: req.path
   });
+
+  const status = err.statusCode || err.status || 500;
+  // User-friendly error message, avoiding exposure of internal stack traces or secrets
+  let userMessage = "An unexpected server error occurred. Please try again.";
+  if (err.message && !err.message.includes("Secret") && !err.message.includes("KEY") && err.message.length < 150) {
+    userMessage = err.message;
+  }
+
+  res.status(status).json({
+    error: userMessage,
+    status
+  });
+});
+
+// Global process exception safety handlers
+process.on("uncaughtException", (err) => {
+  serverLogger.error("UncaughtException", "Fatal uncaught process exception caught safely", err);
+});
+
+process.on("unhandledRejection", (reason) => {
+  serverLogger.error("UnhandledRejection", "Unhandled promise rejection caught safely", reason);
 });
 
 // ----------------------------------------------------

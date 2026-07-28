@@ -48,14 +48,6 @@
         "banReason": {
           "type": "string",
           "description": "Reason for suspension"
-        },
-        "passwordHash": {
-          "type": "string",
-          "description": "PBKDF2 password hash"
-        },
-        "passwordSalt": {
-          "type": "string",
-          "description": "PBKDF2 salt"
         }
       },
       "required": ["email", "username", "avatar", "level"]

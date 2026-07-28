@@ -112,7 +112,7 @@ export const PremiumErrorCard: React.FC<PremiumErrorCardProps> = ({
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.96, y: -12 }}
       transition={{ type: "spring", stiffness: 350, damping: 28 }}
-      className={`relative w-full overflow-hidden rounded-[2.5rem] bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800/80 shadow-2xl backdrop-blur-2xl ${
+      className={`relative w-full overflow-hidden rounded-[2.5rem] bg-white/80 dark:bg-[#0c1326]/80 border border-white/60 dark:border-white/15 shadow-[0_20px_50px_rgba(0,0,0,0.1)] dark:shadow-[0_25px_60px_rgba(0,0,0,0.6)] backdrop-blur-3xl before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/80 dark:before:via-white/20 before:to-transparent ${
         compact ? "p-5 sm:p-6 max-w-xl mx-auto" : "p-6 sm:p-10 max-w-2xl mx-auto"
       } ${className}`}
     >
@@ -123,7 +123,7 @@ export const PremiumErrorCard: React.FC<PremiumErrorCardProps> = ({
         
         {/* Friendly Illustration Badge */}
         <div className="relative">
-          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-3xl bg-slate-100/80 dark:bg-slate-800/80 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-center shadow-lg relative overflow-hidden group">
+          <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-3xl bg-white/60 dark:bg-slate-800/60 border border-white/80 dark:border-white/12 flex items-center justify-center shadow-lg relative overflow-hidden group backdrop-blur-xl">
             <div className="absolute inset-0 bg-gradient-to-tr from-indigo-500/10 via-purple-500/10 to-pink-500/10 opacity-70 group-hover:opacity-100 transition" />
             <motion.div
               animate={{ rotate: [0, -5, 5, 0], scale: [1, 1.05, 1] }}
@@ -140,7 +140,7 @@ export const PremiumErrorCard: React.FC<PremiumErrorCardProps> = ({
 
         {/* Content Typography */}
         <div className="space-y-2 max-w-lg">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider border shadow-xs ${meta.badgeBg}">
+          <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider border shadow-xs ${meta.badgeBg}`}>
             <HelpCircle className="w-3.5 h-3.5" />
             <span>StudyMate Diagnostic</span>
           </div>

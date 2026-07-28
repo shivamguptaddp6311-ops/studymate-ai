@@ -36,7 +36,7 @@ export function PromptInput({
     <div className="p-2 sm:p-3 bg-white/40 dark:bg-slate-950/40 backdrop-blur-md border-t border-white/20 dark:border-slate-800/60 flex-shrink-0 z-20 relative w-full pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
       <form 
         onSubmit={onSend}
-        className="bg-white/90 dark:bg-slate-900/90 backdrop-blur-2xl border border-white/50 dark:border-slate-800/90 shadow-[0_15px_40px_rgba(0,0,0,0.12)] rounded-full p-1.5 sm:p-2 mx-auto w-full max-w-4xl flex items-center space-x-2"
+        className="bg-white/85 dark:bg-[#0c1326]/85 backdrop-blur-3xl border border-white/70 dark:border-white/15 shadow-[0_16px_48px_rgba(0,0,0,0.12)] dark:shadow-[0_20px_50px_rgba(0,0,0,0.6)] rounded-full p-1.5 sm:p-2 mx-auto w-full max-w-4xl flex items-center space-x-2 relative before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/80 dark:before:via-white/20 before:to-transparent"
       >
         {/* SINGLE PLUS ICON BUTTON WITH POPUP ATTACHMENT MENU */}
         <div className="relative pl-1">

@@ -1,5 +1,5 @@
 import React from "react";
-import { Brain, Maximize2, Minimize2, Trash2, Plus, MessageSquare, ChevronDown, Mic, Radio } from "lucide-react";
+import { Brain, Maximize2, Minimize2, Trash2, Plus, MessageSquare, ChevronDown, Mic, Radio, Sparkles } from "lucide-react";
 import { StudyMateBrainLogo } from "../NavIcons";
 import { UserProfile } from "../../types";
 import { ChatSession } from "./types";
@@ -17,6 +17,9 @@ interface ChatHeaderProps {
   onCreateNewChat: () => void;
   onDeleteCurrentChat: () => void;
   onOpenLiveVoiceTutor?: () => void;
+  onOpenNotebookLMStudio?: () => void;
+  onOpenImageGenerator?: () => void;
+  activeDocumentCount?: number;
 }
 
 export function ChatHeader({
@@ -31,10 +34,13 @@ export function ChatHeader({
   onOpenSessionsMenu,
   onCreateNewChat,
   onDeleteCurrentChat,
-  onOpenLiveVoiceTutor
+  onOpenLiveVoiceTutor,
+  onOpenNotebookLMStudio,
+  onOpenImageGenerator,
+  activeDocumentCount
 }: ChatHeaderProps) {
   return (
-    <div className="p-3 md:p-4 border-b border-white/20 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-2xl flex items-center justify-between flex-shrink-0 z-30 shadow-xs relative gap-2">
+    <div className="p-3 md:p-4 border-b border-white/60 dark:border-white/12 bg-white/75 dark:bg-[#0c1326]/75 backdrop-blur-2xl flex items-center justify-between flex-shrink-0 z-30 shadow-xs relative gap-2 before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/80 dark:before:via-white/20 before:to-transparent">
       {/* Brand Logo & Active Session Indicator */}
       <div className="flex items-center space-x-3 min-w-0">
         <div className="relative shrink-0">
@@ -72,6 +78,24 @@ export function ChatHeader({
 
       {/* Action Toolbar */}
       <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+        {/* NotebookLM AI PDF Studio Button */}
+        {onOpenNotebookLMStudio && (
+          <button
+            type="button"
+            onClick={onOpenNotebookLMStudio}
+            className="px-2.5 py-1.5 sm:px-3 sm:py-2 bg-gradient-to-r from-purple-600 via-indigo-600 to-indigo-700 hover:from-purple-500 hover:to-indigo-600 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center space-x-1.5 cursor-pointer shrink-0 border border-purple-400/30"
+            title="Launch NotebookLM AI PDF Chat & Document Studio"
+          >
+            <Brain className="w-3.5 h-3.5 text-amber-300" />
+            <span className="hidden xs:inline">NotebookLM Studio</span>
+            {activeDocumentCount !== undefined && activeDocumentCount > 0 && (
+              <span className="px-1.5 py-0.2 text-[9px] bg-amber-400 text-slate-950 font-black rounded-full">
+                {activeDocumentCount}
+              </span>
+            )}
+          </button>
+        )}
+
         {/* Live AI Voice Tutor Button */}
         {onOpenLiveVoiceTutor && (
           <button
@@ -83,6 +107,19 @@ export function ChatHeader({
             <Mic className="w-3.5 h-3.5" />
             <span className="hidden xs:inline">Live Voice Tutor</span>
             <span className="w-2 h-2 rounded-full bg-emerald-300 animate-ping shrink-0" />
+          </button>
+        )}
+
+        {/* AI Image & Diagram Generator Button */}
+        {onOpenImageGenerator && (
+          <button
+            type="button"
+            onClick={onOpenImageGenerator}
+            className="px-2.5 py-1.5 sm:px-3 sm:py-2 bg-gradient-to-r from-pink-600 via-purple-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 text-white font-extrabold text-xs rounded-xl shadow-md transition flex items-center space-x-1.5 cursor-pointer shrink-0 border border-pink-400/30"
+            title="Launch AI Image & Diagram Studio"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+            <span className="hidden xs:inline">Image Generator</span>
           </button>
         )}
 
@@ -119,7 +156,7 @@ export function ChatHeader({
           title="Tailor explanations based on your Grade and weak subjects"
         >
           <Brain className="w-3.5 h-3.5" />
-          <span className="hidden md:inline">{usePersonalization ? `Class ${profile.classGrade || "10"} Mode` : "General"}</span>
+          <span className="hidden md:inline">{usePersonalization ? `Class ${profile?.classGrade || "10"} Mode` : "General"}</span>
         </button>
 
         {/* Full Screen Toggle */}

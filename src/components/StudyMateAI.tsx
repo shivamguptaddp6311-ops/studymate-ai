@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { UserProfile } from "../types";
 import { StudyMateAIProps, ChatMessage } from "./studymate-ai/types";
+import { Sparkles, X, BookOpen, Brain, Layers } from "lucide-react";
 
 // Hooks
 import { useChat } from "../hooks/useChat";
@@ -8,6 +9,8 @@ import { useVoice } from "../hooks/useVoice";
 import { useOCR } from "../hooks/useOCR";
 import { useAttachments } from "../hooks/useAttachments";
 import { useAI } from "../hooks/useAI";
+import { useNotebookLM } from "../hooks/useNotebookLM";
+import { buildDocumentContextPrompt } from "../utils/documentProcessor";
 
 // Components
 import { ChatHeader } from "./studymate-ai/ChatHeader";
@@ -19,6 +22,9 @@ import { OCRUploader } from "./studymate-ai/OCRUploader";
 import { ChatHistory } from "./studymate-ai/ChatHistory";
 import { AIErrorBoundary } from "./studymate-ai/AIErrorBoundary";
 import { LiveVoiceTutorModal } from "./studymate-ai/LiveVoiceTutorModal";
+import { NotebookLMStudio } from "./studymate-ai/NotebookLMStudio";
+import { NotebookDocumentViewer } from "./studymate-ai/NotebookDocumentViewer";
+import { ImageGenerator } from "./ImageGenerator";
 
 export function StudyMateAI({
   profile,
@@ -31,7 +37,18 @@ export function StudyMateAI({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showSessionsMenu, setShowSessionsMenu] = useState(false);
   const [showLiveVoiceTutor, setShowLiveVoiceTutor] = useState(false);
+  
+  // NotebookLM Studio State
+  const [showNotebookLMStudio, setShowNotebookLMStudio] = useState(false);
+  const [notebookViewMode, setNotebookViewMode] = useState<"studio" | "viewer">("studio");
+
+  // Image Generator Studio Modal State
+  const [showImageGeneratorModal, setShowImageGeneratorModal] = useState(false);
+
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Custom Hooks
+  const notebookLM = useNotebookLM();
 
   // Custom Hooks
   const { 
@@ -121,9 +138,11 @@ export function StudyMateAI({
   const {
     isLoading,
     isWebSearching,
+    isGeneratingImage,
     errorMessage,
     setErrorMessage,
     handleCancelRequest,
+    handleRetry,
     solveScannedQuestion,
     handleSendAI
   } = useAI();
@@ -218,12 +237,15 @@ export function StudyMateAI({
     setSelectedImage(null);
     setAttachedPdf(null);
 
+    const docContext = buildDocumentContextPrompt(notebookLM.documents, notebookLM.activeDocIds);
+
     handleSendAI({
       textToSend,
       userMessage,
       messages,
       profile,
       usePersonalization,
+      documentContextPrompt: docContext || undefined,
       onAddMessage: addMessage,
       onAwardXP
     });
@@ -235,7 +257,7 @@ export function StudyMateAI({
 
   return (
     <AIErrorBoundary onReset={deleteActiveChat}>
-      <div className={`flex flex-col flex-1 min-h-0 w-full bg-slate-50/50 dark:bg-slate-950/50 rounded-3xl overflow-hidden border border-white/20 dark:border-slate-800/80 shadow-2xl relative ${
+      <div className={`flex flex-col flex-1 min-h-0 w-full bg-white/80 dark:bg-[#0c1326]/75 backdrop-blur-3xl rounded-[32px] overflow-hidden border border-white/60 dark:border-white/12 shadow-[0_20px_50px_rgba(0,0,0,0.12)] dark:shadow-[0_25px_60px_rgba(0,0,0,0.65)] relative before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/80 dark:before:via-white/20 before:to-transparent ${
         isFullScreen ? "fixed inset-0 z-50 rounded-none border-none h-dvh w-screen" : "h-full"
       }`}>
         {/* Fixed Header */}
@@ -252,6 +274,9 @@ export function StudyMateAI({
           onCreateNewChat={() => createNewSession()}
           onDeleteCurrentChat={() => setShowClearConfirm(true)}
           onOpenLiveVoiceTutor={() => setShowLiveVoiceTutor(true)}
+          onOpenNotebookLMStudio={() => setShowNotebookLMStudio(true)}
+          onOpenImageGenerator={() => setShowImageGeneratorModal(true)}
+          activeDocumentCount={notebookLM.activeDocIds.length}
         />
 
         {/* Scrollable Messages Area */}
@@ -260,8 +285,10 @@ export function StudyMateAI({
           messages={messages}
           isLoading={isLoading}
           isWebSearching={isWebSearching}
+          isGeneratingImage={isGeneratingImage}
           errorMessage={errorMessage}
           onClearError={() => setErrorMessage(null)}
+          onRetryRequest={handleRetry}
           onCancelRequest={handleCancelRequest}
           onCopyText={(text) => {
             navigator.clipboard.writeText(text);
@@ -273,6 +300,11 @@ export function StudyMateAI({
           speakingMsgId={speakingMsgId}
           suggestions={getDynamicSuggestions()}
           onSelectSuggestion={(text) => setInputText(text)}
+          onJumpToCitation={(docName, pageNumber, snippet) => {
+            notebookLM.jumpToCitation(docName, pageNumber, snippet);
+            setShowNotebookLMStudio(true);
+            setNotebookViewMode("viewer");
+          }}
         />
 
         {/* Attachment Banners */}
@@ -296,7 +328,14 @@ export function StudyMateAI({
           attachedPdf={attachedPdf}
           onRemovePdf={() => setAttachedPdf(null)}
           pdfFileInputRef={pdfFileInputRef}
-          onPdfFileSelect={(e) => handlePdfFileSelect(e, onAddNotification)}
+          onPdfFileSelect={(e) => {
+            handlePdfFileSelect(e, onAddNotification);
+            if (e.target.files) {
+              notebookLM.handleUploadFiles(e.target.files, (msg) => {
+                if (onAddNotification) onAddNotification("Document Processed", msg, "success");
+              });
+            }
+          }}
           showDriveModal={showDriveModal}
           setShowDriveModal={setShowDriveModal}
           driveUrlInput={driveUrlInput}
@@ -401,6 +440,116 @@ export function StudyMateAI({
           onClose={() => setShowLiveVoiceTutor(false)}
           userName={profile.nickname || profile.fullName || "Student"}
         />
+
+        {/* NotebookLM AI PDF Studio & Document Viewer Modal */}
+        {showNotebookLMStudio && (
+          <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md z-[150] p-2 sm:p-4 md:p-6 flex flex-col">
+            <div className="bg-slate-900 border border-slate-800 rounded-3xl flex-1 flex flex-col overflow-hidden max-w-7xl w-full mx-auto shadow-2xl">
+              {/* Modal Header */}
+              <div className="p-3 sm:p-4 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between">
+                <div className="flex items-center space-x-2 sm:space-x-3">
+                  <div className="p-2 bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 text-white rounded-xl shadow-md">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-white">NotebookLM AI Workspace</h3>
+
+                  {/* Tab Switcher */}
+                  <div className="flex bg-slate-800 p-1 rounded-xl space-x-1 ml-2">
+                    <button
+                      type="button"
+                      onClick={() => setNotebookViewMode("studio")}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        notebookViewMode === "studio"
+                          ? "bg-indigo-600 text-white shadow-md"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      AI Studio Tools
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setNotebookViewMode("viewer")}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
+                        notebookViewMode === "viewer"
+                          ? "bg-indigo-600 text-white shadow-md"
+                          : "text-slate-400 hover:text-white"
+                      }`}
+                    >
+                      Document Viewer
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setShowNotebookLMStudio(false)}
+                  className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-full transition cursor-pointer"
+                  title="Close Studio"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Modal Body */}
+              <div className="flex-1 overflow-hidden p-2 sm:p-4">
+                {notebookViewMode === "studio" ? (
+                  <NotebookLMStudio
+                    documents={notebookLM.documents}
+                    activeDocIds={notebookLM.activeDocIds}
+                    selectedDocId={notebookLM.selectedDocId}
+                    onSelectDocForView={(docId) => {
+                      notebookLM.setSelectedDocId(docId);
+                      setNotebookViewMode("viewer");
+                    }}
+                    onToggleDocActive={notebookLM.toggleDocActive}
+                    onSelectAllDocs={notebookLM.selectAllDocs}
+                    onDeselectAllDocs={notebookLM.deselectAllDocs}
+                    onDeleteDoc={notebookLM.handleDeleteDoc}
+                    onRenameDoc={notebookLM.handleRenameDoc}
+                    searchQuery={notebookLM.searchQuery}
+                    setSearchQuery={notebookLM.setSearchQuery}
+                    searchResults={notebookLM.searchResults}
+                    isUploadingDoc={notebookLM.isUploadingDoc}
+                    uploadError={notebookLM.uploadError}
+                    onUploadFiles={(files) => notebookLM.handleUploadFiles(files, (m) => onAddNotification?.("Document Uploaded", m, "success"))}
+                    docInputRef={notebookLM.docInputRef}
+                    activeStudioTool={notebookLM.activeStudioTool}
+                    isGeneratingStudio={notebookLM.isGeneratingStudio}
+                    studioOutputText={notebookLM.studioOutputText}
+                    studioFlashcards={notebookLM.studioFlashcards}
+                    studioQuiz={notebookLM.studioQuiz}
+                    studioMindMap={notebookLM.studioMindMap}
+                    onExecuteStudioTool={notebookLM.executeStudioTool}
+                    onJumpToCitation={(docName, pageNumber, snippet) => {
+                      notebookLM.jumpToCitation(docName, pageNumber, snippet);
+                      setNotebookViewMode("viewer");
+                    }}
+                    onSendToChat={(text) => {
+                      setInputText(text);
+                      setShowNotebookLMStudio(false);
+                    }}
+                  />
+                ) : (
+                  <NotebookDocumentViewer
+                    document={notebookLM.selectedDocument}
+                    currentPage={notebookLM.viewPageNumber}
+                    onPageChange={notebookLM.setViewPageNumber}
+                    highlightTerm={notebookLM.highlightTerm}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* AI Image Generator Modal */}
+        {showImageGeneratorModal && (
+          <div className="fixed inset-0 z-[120] bg-slate-950/80 backdrop-blur-md p-2 sm:p-4 md:p-6 flex items-center justify-center animate-in fade-in duration-200">
+            <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-6xl max-h-[92vh] overflow-y-auto shadow-2xl relative p-2 sm:p-4">
+              <ImageGenerator onClose={() => setShowImageGeneratorModal(false)} />
+            </div>
+          </div>
+        )}
       </div>
     </AIErrorBoundary>
   );

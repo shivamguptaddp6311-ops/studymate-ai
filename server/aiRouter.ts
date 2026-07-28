@@ -73,13 +73,24 @@ export function detectTaskType(options: AIRouterOptions): AITaskType {
   }
 
   const imageGenKeywords = [
-    "generate an image", "generate image", "create an image", "draw ", "draw a ",
-    "create a picture", "make a picture", "generate a diagram", "illustration of",
-    "create logo", "generate logo", "create poster", "generate poster", "render a 3d",
-    "digital art of", "photorealistic picture"
+    "generate image", "generate an image", "generate images",
+    "create image", "create an image", "create images",
+    "make an image", "make image", "make a picture", "make pictures",
+    "draw ", "draw a ", "draw an ", "draw me ", "draw a picture",
+    "photo of", "photograph of", "picture of", "pictures of",
+    "illustration of", "illustration", "illustrations",
+    "logo", "create logo", "generate logo", "design a logo", "design logo",
+    "wallpaper", "create wallpaper", "generate wallpaper", "design wallpaper",
+    "poster", "create poster", "generate poster", "design a poster", "design poster",
+    "diagram of", "generate diagram", "create diagram",
+    "painting of", "sketch of", "artwork of", "art of", "3d render of", "render an image",
+    "photorealistic picture", "digital art of", "vector art of"
   ];
   if (imageGenKeywords.some(kw => combinedText.includes(kw))) {
-    return "image_generation";
+    const isNegative = ["draw conclusion", "draw a conclusion", "draw conclusions", "draw inference", "draw inferences"].some(neg => combinedText.includes(neg));
+    if (!isNegative) {
+      return "image_generation";
+    }
   }
 
   const imageEditKeywords = [

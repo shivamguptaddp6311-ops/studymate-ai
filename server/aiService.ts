@@ -2,6 +2,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import crypto from "crypto";
 import { firebaseDB } from "./firebase";
+import { serverLogger, recordAIAttempt, recordAISuccess, recordAIFailure } from "./logger";
 
 dotenv.config();
 
@@ -449,18 +450,22 @@ export async function executeAIRequest(options: {
   let providerUsed: AIProvider = preferredProvider;
 
   try {
-    for (const provider of providersToTry) {
+    for (let i = 0; i < providersToTry.length; i++) {
+      const provider = providersToTry[i];
       if (signal?.aborted) {
         throw new Error("Request was cancelled by user.");
       }
+      const providerStartTime = Date.now();
+      recordAIAttempt(provider);
+
       try {
         // Validate support for document/PDF format
         if (isPdf && ["openai", "groq", "anthropic"].includes(provider)) {
-          console.info(`[AIService] Skipping provider ${provider} because PDF document input is only natively supported by Gemini/OpenRouter.`);
+          serverLogger.info("AIService", `Skipping provider [${provider}] for PDF document input (natively supported by Gemini/OpenRouter)`);
           continue;
         }
 
-        console.log(`[AIService] Attempting request using provider: ${provider}`);
+        serverLogger.info("AIService", `Attempting AI request using provider: [${provider}]`);
         let resultText = "";
         providerUsed = provider;
 
@@ -489,7 +494,9 @@ export async function executeAIRequest(options: {
           throw new Error(`Provider ${provider} returned an empty or invalid response.`);
         }
 
-        console.log(`[AIService] Successfully received response from provider: ${provider}`);
+        const providerDuration = Date.now() - providerStartTime;
+        recordAISuccess(provider, providerDuration);
+        serverLogger.info("AIService", `Successfully received response from provider: [${provider}] in ${providerDuration}ms`);
         
         // Save in cache
         responseCache.set(cacheKey, {
@@ -505,12 +512,17 @@ export async function executeAIRequest(options: {
         };
         break;
       } catch (err: any) {
+        const providerDuration = Date.now() - providerStartTime;
         const errMsg = err.message || String(err);
+        recordAIFailure(provider, errMsg);
+
         if (provider === "anthropic" && (errMsg.includes("credit balance") || errMsg.includes("Credit balance") || errMsg.includes("billing") || errMsg.includes("Billing") || errMsg.includes("status 400"))) {
-          console.info("[AIService] Disabling Anthropic provider dynamically due to credit balance/billing failure.");
+          serverLogger.warn("AIService", "Disabling Anthropic provider dynamically due to credit balance/billing failure.");
           isAnthropicDisabled = true;
         }
-        console.info(`[AIService] Provider ${provider} failed, attempting fallback:`, err.message || err);
+
+        const nextProvider = providersToTry[i + 1] || "none";
+        serverLogger.aiFallback(provider, nextProvider, errMsg, providerDuration);
         lastError = err;
         
         // Propagate immediate aborts
@@ -523,7 +535,7 @@ export async function executeAIRequest(options: {
     if (finalResult) {
       return finalResult;
     }
-    throw new Error(`All configured AI Providers failed. Last error: ${lastError?.message || lastError}`);
+    throw new Error(`All configured AI Providers failed to respond. Please try again shortly.`);
   } catch (err: any) {
     lastError = err;
     throw err;
@@ -978,23 +990,11 @@ async function callAnthropic(
 
 export interface GenerateImageOptions {
   prompt: string;
-  category?:
-    | "text-to-image"
-    | "educational-diagram"
-    | "biology"
-    | "chemistry"
-    | "physics"
-    | "geography"
-    | "mindmap"
-    | "flowchart"
-    | "chart"
-    | "ai-art"
-    | "logo"
-    | "icon"
-    | "poster";
+  category?: string;
   aspectRatio?: "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
   quality?: "standard" | "hd";
   preferredProvider?: "auto" | "gemini" | "openai" | "fal";
+  timeoutMs?: number;
   signal?: AbortSignal;
 }
 
@@ -1008,67 +1008,103 @@ export interface GenerateImageResult {
 const imageCache = new Map<string, { imageUrl: string; providerUsed: "gemini" | "openai" | "fal"; timestamp: number }>();
 const IMAGE_CACHE_TTL_MS = 30 * 60 * 1000;
 
-export function enhancePromptByCategory(prompt: string, category?: string): string {
+export function enhancePromptForCategory(prompt: string, category?: string, quality?: string): string {
   if (!prompt || typeof prompt !== "string") return "";
-  const cleanPrompt = prompt.trim();
-  switch (category) {
+  const base = prompt.trim();
+  const qualitySuffix = quality === "hd" ? ", ultra high definition, 8k resolution, crisp vector rendering, highly detailed" : "";
+
+  switch (category?.toLowerCase().replace(/\s+/g, "-")) {
+    case "educational-diagrams":
     case "educational-diagram":
-      return `High quality educational diagram, white background, crisp vector styling, clearly labeled components, informative educational graphic: ${cleanPrompt}`;
+      return `Clear academic textbook diagram, labeled educational illustration, clean white background, vector graphic style, accurate and professional: ${base}${qualitySuffix}`;
+    case "biology-diagrams":
     case "biology":
-      return `Detailed scientific biology illustration, anatomical precision, clean white vector background, labeled scientific diagram: ${cleanPrompt}`;
+      return `Accurate scientific biology diagram, anatomy and organ systems, clearly labeled parts, high contrast educational illustration: ${base}${qualitySuffix}`;
+    case "chemistry-illustrations":
     case "chemistry":
-      return `Chemistry scientific diagram, molecular structures and laboratory glassware visual illustration, crisp vector style: ${cleanPrompt}`;
+      return `Detailed chemistry molecular structure, chemical reaction mechanism diagram, laboratory glassware, clean scientific illustration: ${base}${qualitySuffix}`;
+    case "physics-diagrams":
     case "physics":
-      return `Physics visual diagram, force vectors, field lines and physical principles annotated clearly, white background: ${cleanPrompt}`;
+      return `Physics optics, mechanics, or circuit vector diagram, clear force vectors and labeled parameters, educational textbook style: ${base}${qualitySuffix}`;
+    case "geography-maps":
     case "geography":
-      return `Detailed geography map graphic, topographic features, clean legend and regional details, high resolution: ${cleanPrompt}`;
+      return `Detailed geographical map illustration, topography, rivers, boundaries, cartographic labels, clean layout: ${base}${qualitySuffix}`;
+    case "mind-maps":
     case "mindmap":
-      return `Structured colorful mind map diagram, central concept node with organized branching subtopics, modern UI infographic style: ${cleanPrompt}`;
+      return `Visually structured mind map, central concept with branching topic nodes, clean typography, color-coded branches, high legibility: ${base}${qualitySuffix}`;
+    case "flowcharts":
     case "flowchart":
-      return `Clean modern flowchart diagram, clear process nodes, directional arrows, organized step-by-step logic layout: ${cleanPrompt}`;
+      return `Clean algorithmic flowchart, process diagram with decision nodes, arrows, structured workflow layout, high contrast: ${base}${qualitySuffix}`;
+    case "charts":
     case "chart":
-      return `High resolution infographic data chart, clear metrics visual typography, modern corporate design: ${cleanPrompt}`;
+      return `Clean infographics data chart, bar chart or pie graph, clear labels and legend, modern presentation design: ${base}${qualitySuffix}`;
     case "ai-art":
-      return `Cinematic AI masterpiece artwork, vibrant digital painting, 8k resolution, artistic lighting: ${cleanPrompt}`;
+      return `Stunning artistic masterpiece, expressive lighting, rich colors, intricate details, artistic concept: ${base}${qualitySuffix}`;
+    case "logos":
     case "logo":
-      return `Minimalist modern vector logo design, clean shapes, isolated white background, professional branding: ${cleanPrompt}`;
+      return `Minimalist modern logo design, clean vector graphic, solid flat colors, isolated on white background, iconic emblem: ${base}${qualitySuffix}`;
+    case "icons":
     case "icon":
-      return `Modern 3D flat app icon design, high contrast, clean centered graphic, isolated background: ${cleanPrompt}`;
+      return `App icon design, modern clean UI icon, flat design, smooth gradient, sharp outline, isolated on neutral background: ${base}${qualitySuffix}`;
+    case "posters":
     case "poster":
-      return `Graphic design educational poster, bold visual layout, balanced typography, vibrant color scheme: ${cleanPrompt}`;
+      return `Eye-catching promotional poster design, strong typography, dramatic layout, vibrant color palette, high impact: ${base}${qualitySuffix}`;
     default:
-      return cleanPrompt;
+      return `${base}${qualitySuffix}`;
   }
 }
+
+export const enhancePromptByCategory = enhancePromptForCategory;
 
 export async function generateImageGemini(
   prompt: string,
   aspectRatio = "1:1",
   quality = "standard",
-  signal?: AbortSignal
-): Promise<string> {
+  signal?: AbortSignal,
+  timeoutMs = 45000
+): Promise<{ imageUrl: string; revisedPrompt?: string }> {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || !isValidKey(apiKey)) throw new Error("Gemini API key is not configured");
+  if (!apiKey || !isValidKey(apiKey)) {
+    throw new Error("GEMINI_API_KEY is not configured or is invalid");
+  }
 
+  let geminiRatio = "1:1";
+  if (aspectRatio === "16:9") geminiRatio = "16:9";
+  else if (aspectRatio === "9:16") geminiRatio = "9:16";
+  else if (aspectRatio === "3:4" || aspectRatio === "4:3") geminiRatio = aspectRatio;
+
+  // Try GoogleGenAI SDK first
   const gemini = getGeminiClient();
   if (gemini && typeof (gemini.models as any).generateImages === "function") {
     try {
-      const sdkRes = await (gemini.models as any).generateImages({
-        model: "imagen-3.0-generate-002",
-        prompt: prompt,
-        config: {
-          numberOfImages: 1,
-          outputMimeType: "image/jpeg",
-          aspectRatio: aspectRatio,
+      const sdkRes = await withTimeoutAndSignal(
+        async () => {
+          return await (gemini.models as any).generateImages({
+            model: "imagen-3.0-generate-002",
+            prompt,
+            config: {
+              numberOfImages: 1,
+              outputMimeType: "image/jpeg",
+              aspectRatio: geminiRatio,
+            },
+          });
         },
-      });
-      const b64 = sdkRes?.generatedImages?.[0]?.image?.imageBytes;
-      if (b64) return `data:image/jpeg;base64,${b64}`;
+        timeoutMs,
+        "Gemini Imagen SDK request timed out",
+        signal
+      );
+
+      const rawBytes = sdkRes?.generatedImages?.[0]?.image?.imageBytes;
+      if (rawBytes && typeof rawBytes === "string") {
+        const imageUrl = rawBytes.startsWith("data:") ? rawBytes : `data:image/jpeg;base64,${rawBytes}`;
+        return { imageUrl, revisedPrompt: prompt };
+      }
     } catch (e: any) {
-      console.warn("[AIService] Gemini SDK generateImages failed, falling back to REST API:", e.message);
+      serverLogger.warn("AIServiceImage", `Gemini SDK generateImages failed, trying REST API: ${e.message}`);
     }
   }
 
+  // Fallback to REST API predict endpoint
   const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
   const response = await fetchWithTimeout(url, {
     method: "POST",
@@ -1077,277 +1113,48 @@ export async function generateImageGemini(
       instances: [{ prompt }],
       parameters: {
         sampleCount: 1,
-        aspectRatio: aspectRatio,
+        aspectRatio: geminiRatio,
         outputOptions: { mimeType: "image/jpeg" }
       }
     }),
     signal
-  }, 35000);
+  }, timeoutMs);
 
   if (!response.ok) {
     const errText = await response.text().catch(() => "");
-    throw new Error(`Gemini Imagen HTTP ${response.status}: ${errText}`);
+    let errMsg = errText;
+    try {
+      const parsed = JSON.parse(errText);
+      if (parsed.error?.message) errMsg = parsed.error.message;
+    } catch (_) {}
+    throw new Error(`Gemini Imagen HTTP ${response.status}: ${errMsg}`);
   }
 
   const data = await response.json();
   const bytes = data?.predictions?.[0]?.bytesBase64Encoded;
-  if (!bytes) throw new Error("No image data returned from Gemini Imagen");
-  return `data:image/jpeg;base64,${bytes}`;
+  if (!bytes || typeof bytes !== "string") {
+    throw new Error("No valid base64 image data returned from Gemini Imagen");
+  }
+
+  const imageUrl = bytes.startsWith("data:") ? bytes : `data:image/jpeg;base64,${bytes}`;
+  return { imageUrl, revisedPrompt: prompt };
 }
 
 export async function generateImageOpenAI(
   prompt: string,
   aspectRatio = "1:1",
   quality = "standard",
-  signal?: AbortSignal
-): Promise<string> {
+  signal?: AbortSignal,
+  timeoutMs = 45000
+): Promise<{ imageUrl: string; revisedPrompt?: string }> {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey || !isValidKey(apiKey)) throw new Error("OpenAI API key is not configured");
-
-  let size = "1024x1024";
-  if (aspectRatio === "16:9" || aspectRatio === "4:3") size = "1792x1024";
-  else if (aspectRatio === "9:16" || aspectRatio === "3:4") size = "1024x1792";
-
-  const response = await fetchWithTimeout("https://api.openai.com/v1/images/generations", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: "dall-e-3",
-      prompt: prompt,
-      n: 1,
-      size: size,
-      quality: quality === "hd" ? "hd" : "standard",
-      response_format: "url"
-    }),
-    signal
-  }, 40000);
-
-  if (!response.ok) {
-    const errData = await response.json().catch(() => ({}));
-    throw new Error(`OpenAI DALL-E HTTP ${response.status}: ${errData.error?.message || response.statusText}`);
+  if (!apiKey || !isValidKey(apiKey)) {
+    throw new Error("OPENAI_API_KEY is not configured or is invalid");
   }
-
-  const data = await response.json();
-  const url = data?.data?.[0]?.url;
-  if (!url) throw new Error("No image URL returned from OpenAI DALL-E 3");
-  return url;
-}
-
-export async function generateImageFal(
-  prompt: string,
-  aspectRatio = "1:1",
-  quality = "standard",
-  signal?: AbortSignal
-): Promise<string> {
-  const apiKey = process.env.FAL_KEY || process.env.FAL_API_KEY;
-  if (!apiKey || !isValidKey(apiKey)) throw new Error("Fal.ai API key is not configured");
-
-  let imageSize = "square_hd";
-  if (aspectRatio === "16:9") imageSize = "landscape_16_9";
-  else if (aspectRatio === "9:16") imageSize = "portrait_16_9";
-  else if (aspectRatio === "4:3") imageSize = "landscape_4_3";
-  else if (aspectRatio === "3:4") imageSize = "portrait_4_3";
-
-  const response = await fetchWithTimeout("https://fal.run/fal-ai/flux/schnell", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": `Key ${apiKey.trim()}`
-    },
-    body: JSON.stringify({
-      prompt: prompt,
-      image_size: imageSize,
-      num_inference_steps: quality === "hd" ? 6 : 4,
-      enable_safety_checker: true
-    }),
-    signal
-  }, 35000);
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => "");
-    throw new Error(`Fal.ai HTTP ${response.status}: ${errText}`);
-  }
-
-  const data = await response.json();
-  const url = data?.images?.[0]?.url;
-  if (!url) throw new Error("No image URL returned from Fal.ai Flux");
-  return url;
-}
-
-export async function generateImageWithFallback(
-  options: GenerateImageOptions
-): Promise<GenerateImageResult> {
-  const { prompt, category, aspectRatio = "1:1", quality = "standard", preferredProvider = "auto", signal } = options;
-  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
-    throw new Error("Prompt is required for image generation.");
-  }
-
-  const enhancedPrompt = enhancePromptByCategory(prompt, category);
-  const cacheKey = `${enhancedPrompt}_${aspectRatio}_${quality}`;
-
-  const cached = imageCache.get(cacheKey);
-  if (cached && (Date.now() - cached.timestamp < IMAGE_CACHE_TTL_MS)) {
-    console.log(`[AIService Image] Cache HIT for prompt: "${enhancedPrompt.substring(0, 40)}..."`);
-    return {
-      imageUrl: cached.imageUrl,
-      providerUsed: cached.providerUsed,
-      revisedPrompt: enhancedPrompt,
-      cached: true
-    };
-  }
-
-  const configured = getConfiguredImageProviders();
-  const errors: string[] = [];
-
-  let providerQueue: ("gemini" | "openai" | "fal")[] = [];
-
-  if (preferredProvider !== "auto" && configured[preferredProvider]) {
-    providerQueue.push(preferredProvider);
-  }
-
-  // Priority: Gemini -> OpenAI -> Fal.ai
-  ["gemini", "openai", "fal"].forEach((p) => {
-    const prov = p as "gemini" | "openai" | "fal";
-    if (!providerQueue.includes(prov) && configured[prov]) {
-      providerQueue.push(prov);
-    }
-  });
-
-  if (providerQueue.length === 0) {
-    throw new Error("No image generation API key is configured. Please configure GEMINI_API_KEY, OPENAI_API_KEY, or FAL_KEY.");
-  }
-
-  for (const provider of providerQueue) {
-    try {
-      console.log(`[AIService Image] Attempting image generation with provider: ${provider}`);
-      let imageUrl = "";
-      if (provider === "gemini") {
-        imageUrl = await generateImageGemini(enhancedPrompt, aspectRatio, quality, signal);
-      } else if (provider === "openai") {
-        imageUrl = await generateImageOpenAI(enhancedPrompt, aspectRatio, quality, signal);
-      } else if (provider === "fal") {
-        imageUrl = await generateImageFal(enhancedPrompt, aspectRatio, quality, signal);
-      }
-
-      if (imageUrl) {
-        imageCache.set(cacheKey, {
-          imageUrl,
-          providerUsed: provider,
-          timestamp: Date.now()
-        });
-
-        return {
-          imageUrl,
-          providerUsed: provider,
-          revisedPrompt: enhancedPrompt
-        };
-      }
-    } catch (err: any) {
-      const errMsg = `${provider.toUpperCase()} failed: ${err.message || err}`;
-      console.warn(`[AIService Image] ${errMsg}`);
-      errors.push(errMsg);
-    }
-  }
-
-  throw new Error(`All image generation attempts failed:\n${errors.join("\n")}`);
-}
-
-// ----------------------------------------------------
-// AI IMAGE GENERATION ROUTER & PROVIDERS (Gemini, OpenAI, Fal.ai)
-// ----------------------------------------------------
-
-export function enhancePromptForCategory(prompt: string, category?: string, quality?: string): string {
-  let base = prompt.trim();
-  const qualitySuffix = quality === "hd" ? ", ultra high definition, 8k resolution, crisp vector rendering, highly detailed" : "";
-
-  switch (category) {
-    case "Educational Diagrams":
-      return `Clear academic textbook diagram, labeled educational illustration, clean white background, vector graphic style, accurate and professional: ${base}${qualitySuffix}`;
-    case "Biology Diagrams":
-      return `Accurate scientific biology diagram, anatomy and organ systems, clearly labeled parts, high contrast educational illustration: ${base}${qualitySuffix}`;
-    case "Chemistry Illustrations":
-      return `Detailed chemistry molecular structure, chemical reaction mechanism diagram, laboratory glassware, clean scientific illustration: ${base}${qualitySuffix}`;
-    case "Physics Diagrams":
-      return `Physics optics, mechanics, or circuit vector diagram, clear force vectors and labeled parameters, educational textbook style: ${base}${qualitySuffix}`;
-    case "Geography Maps":
-      return `Detailed geographical map illustration, topography, rivers, boundaries, cartographic labels, clean layout: ${base}${qualitySuffix}`;
-    case "Mind Maps":
-      return `Visually structured mind map, central concept with branching topic nodes, clean typography, color-coded branches, high legibility: ${base}${qualitySuffix}`;
-    case "Flowcharts":
-      return `Clean algorithmic flowchart, process diagram with decision nodes, arrows, structured workflow layout, high contrast: ${base}${qualitySuffix}`;
-    case "Charts":
-      return `Clean infographics data chart, bar chart or pie graph, clear labels and legend, modern presentation design: ${base}${qualitySuffix}`;
-    case "AI Art":
-      return `Stunning artistic masterpiece, expressive lighting, rich colors, intricate details, artistic concept: ${base}${qualitySuffix}`;
-    case "Logos":
-      return `Minimalist modern logo design, clean vector graphic, solid flat colors, isolated on white background, iconic emblem: ${base}${qualitySuffix}`;
-    case "Icons":
-      return `App icon design, modern clean UI icon, flat design, smooth gradient, sharp outline, isolated on neutral background: ${base}${qualitySuffix}`;
-    case "Posters":
-      return `Eye-catching promotional poster design, strong typography, dramatic layout, vibrant color palette, high impact: ${base}${qualitySuffix}`;
-    default:
-      return `${base}${qualitySuffix}`;
-  }
-}
-
-async function callGeminiImageGen(
-  prompt: string,
-  aspectRatio: string = "1:1",
-  timeoutMs?: number,
-  signal?: AbortSignal
-): Promise<string> {
-  const gemini = getGeminiClient();
-  if (!gemini) throw new Error("Gemini API key is not configured.");
-
-  let geminiRatio = "1:1";
-  if (aspectRatio === "16:9") geminiRatio = "16:9";
-  else if (aspectRatio === "9:16") geminiRatio = "9:16";
-  else if (aspectRatio === "3:4" || aspectRatio === "4:3") geminiRatio = aspectRatio;
-
-  return await retryWithBackoff(async () => {
-    return await withTimeoutAndSignal(
-      async (mergedSignal) => {
-        const response = await (gemini.models as any).generateImages({
-          model: "imagen-3.0-generate-002",
-          prompt,
-          config: {
-            numberOfImages: 1,
-            aspectRatio: geminiRatio,
-            outputMimeType: "image/jpeg",
-          }
-        });
-
-        if (response.generatedImages && response.generatedImages.length > 0) {
-          const imgObj = response.generatedImages[0];
-          if (imgObj.image?.imageBytes) {
-            return `data:image/jpeg;base64,${imgObj.image.imageBytes}`;
-          }
-        }
-        throw new Error("Gemini Image SDK returned empty response.");
-      },
-      timeoutMs || 45000,
-      "Gemini Image request timed out.",
-      signal
-    );
-  }, 2, 1000, undefined, signal);
-}
-
-async function callOpenAIImageGen(
-  prompt: string,
-  aspectRatio: string = "1:1",
-  quality: string = "standard",
-  timeoutMs?: number,
-  signal?: AbortSignal
-): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("OpenAI API key is not configured.");
 
   let size: "1024x1024" | "1024x1792" | "1792x1024" = "1024x1024";
-  if (aspectRatio === "9:16" || aspectRatio === "3:4") size = "1024x1792";
   if (aspectRatio === "16:9" || aspectRatio === "4:3") size = "1792x1024";
+  else if (aspectRatio === "9:16" || aspectRatio === "3:4") size = "1024x1792";
 
   return await retryWithBackoff(async () => {
     return await withTimeoutAndSignal(
@@ -1371,37 +1178,55 @@ async function callOpenAIImageGen(
 
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(`OpenAI DALL-E returned status ${response.status}: ${errData.error?.message || response.statusText}`);
+          throw new Error(`OpenAI DALL-E 3 HTTP ${response.status}: ${errData.error?.message || response.statusText}`);
         }
 
         const data = await response.json();
-        if (data.data?.[0]?.b64_json) {
-          return `data:image/png;base64,${data.data[0].b64_json}`;
+        const item = data.data?.[0];
+        if (!item) {
+          throw new Error("OpenAI DALL-E 3 returned empty data array.");
         }
-        if (data.data?.[0]?.url) {
-          return data.data[0].url;
+
+        let imageUrl = "";
+        if (item.b64_json) {
+          imageUrl = item.b64_json.startsWith("data:") ? item.b64_json : `data:image/png;base64,${item.b64_json}`;
+        } else if (item.url) {
+          imageUrl = item.url;
         }
-        throw new Error("OpenAI DALL-E returned no image content.");
+
+        if (!imageUrl) {
+          throw new Error("OpenAI DALL-E 3 returned no image URL or base64 data.");
+        }
+
+        return {
+          imageUrl,
+          revisedPrompt: item.revised_prompt || prompt
+        };
       },
-      timeoutMs || 50000,
-      "OpenAI DALL-E request timed out.",
+      timeoutMs,
+      "OpenAI DALL-E 3 request timed out.",
       signal
     );
-  }, 2, 1000, undefined, signal);
+  }, 1, 1000, undefined, signal);
 }
 
-async function callFalImageGen(
+export async function generateImageFal(
   prompt: string,
-  aspectRatio: string = "1:1",
-  timeoutMs?: number,
-  signal?: AbortSignal
-): Promise<string> {
+  aspectRatio = "1:1",
+  quality = "standard",
+  signal?: AbortSignal,
+  timeoutMs = 45000
+): Promise<{ imageUrl: string; revisedPrompt?: string }> {
   const falKey = process.env.FAL_KEY || process.env.FAL_API_KEY;
-  if (!falKey) throw new Error("Fal.ai API key is not configured.");
+  if (!falKey || !isValidKey(falKey)) {
+    throw new Error("FAL_KEY is not configured or is invalid");
+  }
 
   let image_size = "square_hd";
-  if (aspectRatio === "16:9" || aspectRatio === "4:3") image_size = "landscape_16_9";
-  if (aspectRatio === "9:16" || aspectRatio === "3:4") image_size = "portrait_16_9";
+  if (aspectRatio === "16:9") image_size = "landscape_16_9";
+  else if (aspectRatio === "9:16") image_size = "portrait_16_9";
+  else if (aspectRatio === "4:3") image_size = "landscape_4_3";
+  else if (aspectRatio === "3:4") image_size = "portrait_4_3";
 
   return await retryWithBackoff(async () => {
     return await withTimeoutAndSignal(
@@ -1410,12 +1235,13 @@ async function callFalImageGen(
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Key ${falKey}`
+            "Authorization": `Key ${falKey.trim()}`
           },
           body: JSON.stringify({
             prompt,
             image_size,
             num_images: 1,
+            num_inference_steps: quality === "hd" ? 6 : 4,
             enable_safety_checker: true
           }),
           signal: mergedSignal
@@ -1423,20 +1249,36 @@ async function callFalImageGen(
 
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(`Fal.ai API returned status ${response.status}: ${errData.detail || errData.error || response.statusText}`);
+          throw new Error(`Fal.ai FLUX HTTP ${response.status}: ${errData.detail || errData.error || response.statusText}`);
         }
 
         const data = await response.json();
-        if (data.images && data.images.length > 0 && data.images[0].url) {
-          return data.images[0].url;
+        let imageUrl = "";
+        if (data.images?.[0]?.url) {
+          imageUrl = data.images[0].url;
+        } else if (data.image?.url) {
+          imageUrl = data.image.url;
+        } else if (data.output?.[0]?.url) {
+          imageUrl = data.output[0].url;
+        } else if (data.images?.[0]?.b64) {
+          const b64 = data.images[0].b64;
+          imageUrl = b64.startsWith("data:") ? b64 : `data:image/jpeg;base64,${b64}`;
         }
-        throw new Error("Fal.ai returned no valid image URL.");
+
+        if (!imageUrl) {
+          throw new Error("Fal.ai FLUX returned no valid image URL.");
+        }
+
+        return {
+          imageUrl,
+          revisedPrompt: data.prompt || prompt
+        };
       },
-      timeoutMs || 45000,
+      timeoutMs,
       "Fal.ai image generation request timed out.",
       signal
     );
-  }, 2, 1000, undefined, signal);
+  }, 1, 1000, undefined, signal);
 }
 
 // Centralized AI Image Router with automatic fallback chain: Gemini -> OpenAI -> Fal.ai
@@ -1447,99 +1289,144 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
     aspectRatio = "1:1",
     quality = "standard",
     preferredProvider = "auto",
-    timeoutMs,
+    timeoutMs = 45000,
     signal
   } = options;
 
-  if (!prompt || !prompt.trim()) {
-    throw new Error("A prompt is required for image generation.");
+  if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+    throw new Error("A valid non-empty prompt string is required for image generation.");
   }
 
   const revisedPrompt = enhancePromptForCategory(prompt, category, quality);
+  const cacheKey = `${revisedPrompt}_${aspectRatio}_${quality}`;
+
+  const cached = imageCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < IMAGE_CACHE_TTL_MS)) {
+    serverLogger.info("AIServiceImage", `Cache HIT for prompt: "${revisedPrompt.substring(0, 40)}..."`);
+    return {
+      imageUrl: cached.imageUrl,
+      providerUsed: cached.providerUsed,
+      revisedPrompt
+    };
+  }
+
   const config = getConfiguredImageProviders();
 
-  // Strict fallback sequence requested: Gemini -> OpenAI -> Fal.ai
-  const fallbackOrder: AIImageProvider[] = ["gemini", "openai", "fal"];
-  let providersToTry: AIImageProvider[] = [];
+  // Strict fallback sequence: Gemini -> OpenAI -> Fal.ai
+  const fallbackOrder: ("gemini" | "openai" | "fal")[] = ["gemini", "openai", "fal"];
+  let providersToTry: ("gemini" | "openai" | "fal")[] = [];
 
-  if (preferredProvider !== "auto" && preferredProvider !== undefined) {
-    providersToTry.push(preferredProvider);
-    fallbackOrder.forEach(p => {
-      if (p !== preferredProvider) providersToTry.push(p);
-    });
-  } else {
-    providersToTry = [...fallbackOrder];
+  if (preferredProvider && preferredProvider !== "auto") {
+    if (config[preferredProvider]) {
+      providersToTry.push(preferredProvider);
+    } else {
+      serverLogger.warn("AIServiceImage", `Preferred provider '${preferredProvider}' is not configured. Falling back to auto-selection.`);
+    }
   }
 
-  // Filter based on configured keys
-  providersToTry = providersToTry.filter(p => config[p as keyof typeof config]);
+  fallbackOrder.forEach(p => {
+    if (!providersToTry.includes(p) && config[p]) {
+      providersToTry.push(p);
+    }
+  });
 
   if (providersToTry.length === 0) {
-    throw new Error("No Image Generation AI providers are configured. Please configure GEMINI_API_KEY, OPENAI_API_KEY, or FAL_KEY in Secrets Settings.");
+    const unconfigured = [
+      !config.gemini ? "GEMINI_API_KEY" : null,
+      !config.openai ? "OPENAI_API_KEY" : null,
+      !config.fal ? "FAL_KEY" : null,
+    ].filter(Boolean).join(", ");
+
+    throw new Error(`No image generation providers configured. Missing secrets: ${unconfigured || "GEMINI_API_KEY, OPENAI_API_KEY, FAL_KEY"}. Please configure at least one API key.`);
   }
 
-  let lastError: any = null;
+  const errors: string[] = [];
   const startTime = Date.now();
-  let providerUsed: AIImageProvider = preferredProvider;
+  let lastUsedProvider: AIImageProvider = providersToTry[0];
 
-  for (const provider of providersToTry) {
+  serverLogger.info("AIServiceImage", `[ImageGen Request Payload] Prompt: "${prompt.substring(0, 50)}...", Category: ${category || "General"}, AspectRatio: ${aspectRatio}, Quality: ${quality}, Preferred: ${preferredProvider}, Pipeline: [${providersToTry.join(" -> ")}]`);
+
+  for (let i = 0; i < providersToTry.length; i++) {
+    const provider = providersToTry[i];
+    lastUsedProvider = provider;
+    const providerStartTime = Date.now();
+    recordAIAttempt(provider);
+
     if (signal?.aborted) {
       throw new Error("Image generation request was cancelled by user.");
     }
+
     try {
-      console.log(`[AIService] Generating image using provider: ${provider}`);
-      providerUsed = provider;
-      let imageUrl = "";
+      serverLogger.info("AIServiceImage", `[Attempt ${i + 1}/${providersToTry.length}] Calling image provider: [${provider}]`);
+
+      let genResult: { imageUrl: string; revisedPrompt?: string } = { imageUrl: "" };
 
       if (provider === "gemini") {
-        imageUrl = await callGeminiImageGen(revisedPrompt, aspectRatio, timeoutMs, signal);
+        genResult = await generateImageGemini(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
       } else if (provider === "openai") {
-        imageUrl = await callOpenAIImageGen(revisedPrompt, aspectRatio, quality, timeoutMs, signal);
+        genResult = await generateImageOpenAI(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
       } else if (provider === "fal") {
-        imageUrl = await callFalImageGen(revisedPrompt, aspectRatio, timeoutMs, signal);
+        genResult = await generateImageFal(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
       }
 
-      if (!imageUrl) {
-        throw new Error(`Provider ${provider} returned empty image output.`);
+      if (!genResult.imageUrl || typeof genResult.imageUrl !== "string" || !genResult.imageUrl.trim()) {
+        throw new Error(`Provider [${provider}] returned an empty image payload.`);
       }
 
-      console.log(`[AIService] Successfully generated image with provider: ${provider}`);
+      const duration = Date.now() - providerStartTime;
+      recordAISuccess(provider, duration);
+      serverLogger.info("AIServiceImage", `Successfully generated image with provider [${provider}] in ${duration}ms. Payload size: ${genResult.imageUrl.length} chars`);
+
+      imageCache.set(cacheKey, {
+        imageUrl: genResult.imageUrl,
+        providerUsed: provider,
+        timestamp: Date.now()
+      });
 
       firebaseDB.saveAIRequestLog({
         id: `imglog-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
         provider,
         endpoint: "generate-image",
-        responseTimeMs: Date.now() - startTime,
+        responseTimeMs: duration,
         success: true,
         timestamp: new Date().toISOString()
-      }).catch(e => console.error("[AIService] Failed to write image request log:", e));
+      }).catch(e => console.error("[AIServiceImage] Failed to save AI request log:", e));
 
       return {
-        imageUrl,
+        imageUrl: genResult.imageUrl,
         providerUsed: provider,
-        revisedPrompt
+        revisedPrompt: genResult.revisedPrompt || revisedPrompt
       };
     } catch (err: any) {
-      console.warn(`[AIService] Image generation provider ${provider} failed, trying next provider:`, err.message || err);
-      lastError = err;
+      const duration = Date.now() - providerStartTime;
+      const errMsg = err.message || String(err);
+      recordAIFailure(provider, errMsg);
+
+      const nextProvider = providersToTry[i + 1] || "none";
+      serverLogger.aiFallback(provider, nextProvider, errMsg, duration);
+      errors.push(`[${provider.toUpperCase()}] ${errMsg}`);
+
       if (err?.name === "AbortError" || err?.message?.includes("cancelled") || signal?.aborted) {
-        throw err;
+        throw new Error("Image generation request was cancelled.");
       }
     }
   }
 
+  const totalDuration = Date.now() - startTime;
   firebaseDB.saveAIRequestLog({
     id: `imglog-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
-    provider: providerUsed,
+    provider: lastUsedProvider,
     endpoint: "generate-image",
-    responseTimeMs: Date.now() - startTime,
+    responseTimeMs: totalDuration,
     success: false,
-    error: lastError?.message || String(lastError),
+    error: errors.join(" | "),
     timestamp: new Date().toISOString()
-  }).catch(e => console.error("[AIService] Failed to write image request log:", e));
+  }).catch(e => console.error("[AIServiceImage] Failed to save AI request failure log:", e));
 
-  throw new Error(`All image generation providers failed. Last error: ${lastError?.message || lastError}`);
+  throw new Error(`All image generation attempts failed:\n${errors.join("\n")}`);
 }
+
+export const generateImageWithFallback = executeImageGenRequest;
 
 export { AIRouter } from "./aiRouter";
 export type { AITaskType, AIRouterOptions, AIRouterResult } from "./aiRouter";

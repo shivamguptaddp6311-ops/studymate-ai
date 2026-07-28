@@ -11,13 +11,15 @@ interface ChatMessageBubbleProps {
   onCopyText: (text: string) => void;
   onSpeakText: (text: string) => void;
   isSpeaking: boolean;
+  onJumpToCitation?: (docName: string, pageNumber: number) => void;
 }
 
 export const MessageBubble = React.memo(function MessageBubble({ 
   msg, 
   onCopyText, 
   onSpeakText,
-  isSpeaking 
+  isSpeaking,
+  onJumpToCitation
 }: ChatMessageBubbleProps) {
   const isUser = msg?.role === "user";
   const [copied, setCopied] = useState(false);
@@ -86,14 +88,18 @@ export const MessageBubble = React.memo(function MessageBubble({
           <div className="absolute top-0 left-0 w-36 h-36 bg-gradient-to-br from-indigo-500/10 via-purple-500/5 to-transparent blur-2xl pointer-events-none rounded-full" />
         )}
 
-        {/* Attached image preview */}
+        {/* Attached or Generated image preview */}
         {msg.image && (
-          <div className="mb-3.5 max-w-sm rounded-2xl overflow-hidden border border-black/10 dark:border-white/10 shadow-lg relative group">
-            <img src={msg.image} alt="Attached Visual Resource" className="w-full h-auto max-h-[240px] object-cover transition-all duration-300 group-hover:scale-105" />
-            <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center">
-              <span className="text-[10px] text-white font-black bg-black/70 px-3 py-1.5 rounded-full backdrop-blur-md">
-                Attached Resource
-              </span>
+          <div className="mb-3.5 max-w-md rounded-2xl overflow-hidden border border-black/10 dark:border-white/10 shadow-lg relative group bg-slate-900/10 dark:bg-slate-950/40">
+            <img 
+              src={msg.image} 
+              alt={isUser ? "Attached Visual" : "Generated AI Image"} 
+              className="w-full h-auto max-h-[360px] object-contain transition-all duration-300 group-hover:scale-[1.02]" 
+              referrerPolicy="no-referrer"
+            />
+            <div className="absolute top-2.5 right-2.5 bg-black/70 backdrop-blur-md px-3 py-1 rounded-full text-[10px] text-white font-extrabold flex items-center gap-1.5 shadow-md">
+              <Sparkles className="w-3 h-3 text-amber-300" />
+              <span>{isUser ? "Attached Image" : "AI Generated Image"}</span>
             </div>
           </div>
         )}
@@ -132,13 +138,15 @@ export const MessageBubble = React.memo(function MessageBubble({
         )}
 
         {/* Formatted Markdown Content */}
-        <div className={`prose dark:prose-invert max-w-none text-xs md:text-sm leading-relaxed ${
-          isUser 
-            ? "text-white prose-headings:text-white prose-p:text-indigo-50/95 prose-strong:text-white prose-a:text-white hover:prose-a:opacity-80" 
-            : "text-slate-800 dark:text-slate-200 prose-headings:text-slate-900 dark:prose-headings:text-white prose-p:leading-relaxed prose-strong:text-indigo-600 dark:prose-strong:text-indigo-400 prose-a:text-indigo-500 hover:prose-a:underline"
-        }`}>
-          <ReactMarkdown>{msg.text || ""}</ReactMarkdown>
-        </div>
+        {msg.text && msg.text.trim().length > 0 && (
+          <div className={`prose dark:prose-invert max-w-none text-xs md:text-sm leading-relaxed ${
+            isUser 
+              ? "text-white prose-headings:text-white prose-p:text-indigo-50/95 prose-strong:text-white prose-a:text-white hover:prose-a:opacity-80" 
+              : "text-slate-800 dark:text-slate-200 prose-headings:text-slate-900 dark:prose-headings:text-white prose-p:leading-relaxed prose-strong:text-indigo-600 dark:prose-strong:text-indigo-400 prose-a:text-indigo-500 hover:prose-a:underline"
+          }`}>
+            <ReactMarkdown>{msg.text}</ReactMarkdown>
+          </div>
+        )}
 
         {/* Verified Search Sources */}
         {!isUser && msg.searched && (

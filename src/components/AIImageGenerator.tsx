@@ -153,7 +153,7 @@ export function AIImageGenerator({ profile, onAwardXP, onAddNotification }: AIIm
     }, 3500);
 
     try {
-      const authStorage = localStorage.getItem("studymate_auth_token_v1");
+      const authStorage = localStorage.getItem("studymate_token") || localStorage.getItem("studymate_auth_token_v1") || "";
       const headers: Record<string, string> = {
         "Content-Type": "application/json"
       };

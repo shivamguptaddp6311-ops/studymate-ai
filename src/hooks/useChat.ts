@@ -49,7 +49,7 @@ How can we accelerate your learning today?`,
   };
 }
 
-function createDefaultSession(profile: UserProfile, customTitle?: string): ChatSession {
+function createDefaultSession(profile?: UserProfile, customTitle?: string): ChatSession {
   const now = new Date();
   const id = `session-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   return {
@@ -57,13 +57,14 @@ function createDefaultSession(profile: UserProfile, customTitle?: string): ChatS
     title: customTitle || "New Study Chat",
     createdAt: now,
     updatedAt: now,
-    messages: [createWelcomeMessage(profile.fullName, profile.classGrade)]
+    messages: [createWelcomeMessage(profile?.fullName || "", profile?.classGrade || "10")]
   };
 }
 
-export function useChat(profile: UserProfile) {
-  const sessionStorageKey = `studymate_ai_sessions_${profile.fullName || "default"}`;
-  const legacyStorageKey = `studymate_ai_chat_history_${profile.fullName || "default"}`;
+export function useChat(profile?: UserProfile) {
+  const profileName = profile?.fullName || "default";
+  const sessionStorageKey = `studymate_ai_sessions_${profileName}`;
+  const legacyStorageKey = `studymate_ai_chat_history_${profileName}`;
 
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
@@ -105,7 +106,7 @@ export function useChat(profile: UserProfile) {
   });
 
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
-    const activeKey = `studymate_ai_active_session_${profile.fullName || "default"}`;
+    const activeKey = `studymate_ai_active_session_${profileName}`;
     const savedActive = localStorage.getItem(activeKey);
     if (savedActive && sessions.some(s => s.id === savedActive)) {
       return savedActive;
@@ -117,14 +118,14 @@ export function useChat(profile: UserProfile) {
 
   // Persist sessions and active session ID to localStorage
   useEffect(() => {
-    if (!profile.fullName) return;
+    if (!profileName || profileName === "default") return;
     try {
       localStorage.setItem(sessionStorageKey, JSON.stringify(sessions));
-      localStorage.setItem(`studymate_ai_active_session_${profile.fullName}`, activeSessionId);
+      localStorage.setItem(`studymate_ai_active_session_${profileName}`, activeSessionId);
     } catch (e) {
       console.warn("Error persisting chat sessions:", e);
     }
-  }, [sessions, activeSessionId, profile.fullName, sessionStorageKey]);
+  }, [sessions, activeSessionId, profileName, sessionStorageKey]);
 
   // Always resolve valid active session safely
   const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0] || createDefaultSession(profile);

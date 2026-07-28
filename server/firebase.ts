@@ -38,8 +38,6 @@ export interface ChatUser {
   muteExpiresAt?: string | null;
   isBanned: boolean;
   banReason?: string;
-  passwordHash?: string;
-  passwordSalt?: string;
 }
 
 export interface ChatReport {
@@ -896,9 +894,7 @@ export async function runAutomatedMigration(): Promise<void> {
             violationsCount: isNaN(Number(userObj.violationsCount)) ? 0 : Number(userObj.violationsCount),
             muteExpiresAt: userObj.muteExpiresAt || null,
             isBanned: !!userObj.isBanned,
-            banReason: userObj.banReason || null,
-            passwordHash: userObj.passwordHash || "",
-            passwordSalt: userObj.passwordSalt || ""
+            banReason: userObj.banReason || null
           });
           migratedUsers++;
         });

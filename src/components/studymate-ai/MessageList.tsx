@@ -1,6 +1,6 @@
 import React, { RefObject, useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Sparkles, Globe, ArrowDown } from "lucide-react";
+import { Sparkles, Globe, ArrowDown, Image as ImageIcon } from "lucide-react";
 import { ChatMessage } from "./types";
 import { MessageBubble } from "./MessageBubble";
 import { PremiumErrorCard } from "../PremiumErrorCard";
@@ -10,14 +10,17 @@ interface MessageListProps {
   messages: ChatMessage[];
   isLoading: boolean;
   isWebSearching: boolean;
+  isGeneratingImage?: boolean;
   errorMessage: string | null;
   onClearError: () => void;
+  onRetryRequest?: () => void;
   onCancelRequest: () => void;
   onCopyText: (text: string) => void;
   onSpeakText: (text: string) => void;
   speakingMsgId: string | null;
   suggestions: Array<{ label: string; text: string }>;
   onSelectSuggestion: (text: string) => void;
+  onJumpToCitation?: (docName: string, pageNumber: number, snippet?: string) => void;
 }
 
 export function MessageList({
@@ -25,14 +28,17 @@ export function MessageList({
   messages,
   isLoading,
   isWebSearching,
+  isGeneratingImage,
   errorMessage,
   onClearError,
+  onRetryRequest,
   onCancelRequest,
   onCopyText,
   onSpeakText,
   speakingMsgId,
   suggestions,
   onSelectSuggestion,
+  onJumpToCitation
 }: MessageListProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const isAtBottomRef = useRef(true);
@@ -74,6 +80,7 @@ export function MessageList({
           onCopyText={onCopyText}
           onSpeakText={onSpeakText}
           isSpeaking={speakingMsgId === "speaking"}
+          onJumpToCitation={onJumpToCitation}
         />
       ))}
 
@@ -98,7 +105,12 @@ export function MessageList({
             </div>
 
             <span className="text-xs font-extrabold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
-              {isWebSearching ? (
+              {isGeneratingImage ? (
+                <>
+                  <ImageIcon className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
+                  Generating AI visual asset with multi-provider engine...
+                </>
+              ) : isWebSearching ? (
                 <>
                   <Globe className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
                   Searching real-time web sources...
@@ -132,7 +144,10 @@ export function MessageList({
           <PremiumErrorCard
             title="Communication Issue"
             description={errorMessage}
-            onRetry={onClearError}
+            onRetry={() => {
+              onClearError();
+              onRetryRequest?.();
+            }}
           />
         </motion.div>
       )}

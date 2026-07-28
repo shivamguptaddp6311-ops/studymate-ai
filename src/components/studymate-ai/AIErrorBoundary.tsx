@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
 import { AlertTriangle, RefreshCw } from "lucide-react";
+import { logger, getFriendlyErrorMessage } from "../../utils/logger";
 
 interface Props {
   children: ReactNode;
@@ -9,24 +10,32 @@ interface Props {
 interface State {
   hasError: boolean;
   error: Error | null;
+  friendlyMessage: string;
 }
 
 export class AIErrorBoundary extends Component<Props, State> {
   public state: State = {
     hasError: false,
-    error: null
+    error: null,
+    friendlyMessage: ""
   };
 
   public static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
+    return {
+      hasError: true,
+      error,
+      friendlyMessage: getFriendlyErrorMessage(error)
+    };
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error("StudyMate AI UI Error caught by boundary:", error, errorInfo);
+    logger.error("AIErrorBoundary", "AI workspace component tree caught rendering exception", error, {
+      componentStack: errorInfo.componentStack?.substring(0, 500)
+    });
   }
 
   private handleReset = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ hasError: false, error: null, friendlyMessage: "" });
     if (this.props.onReset) {
       this.props.onReset();
     } else {
@@ -45,7 +54,7 @@ export class AIErrorBoundary extends Component<Props, State> {
           <div>
             <h3 className="text-lg font-black text-slate-100">AI Workspace Restored</h3>
             <p className="text-xs text-slate-400 max-w-md mt-1 leading-relaxed">
-              Your chat workspace experienced a state refresh. All conversations were preserved safely.
+              {this.state.friendlyMessage || "Your chat workspace experienced a state refresh. All conversations were preserved safely."}
             </p>
           </div>
           <button

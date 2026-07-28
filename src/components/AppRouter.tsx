@@ -20,6 +20,7 @@ import Planner from "./Planner";
 import Habits from "./Habits";
 import Pomodoro from "./Pomodoro";
 import UniversalSmartSearch from "./UniversalSmartSearch";
+import StudyMateAI from "./StudyMateAI";
 import { 
   AISkeletonLoader, 
   GamesSkeletonLoader, 
@@ -29,17 +30,40 @@ import {
   ProfileSkeletonLoader, 
   GenericModuleSkeletonLoader 
 } from "./LoadingSkeletons";
+import { AIErrorBoundary } from "./studymate-ai/AIErrorBoundary";
+
+// Helper for robust dynamic imports with automatic retry and reload fallback
+const lazyWithRetry = (factory: () => Promise<any>) =>
+  lazy(async () => {
+    const pageHasAlreadyBeenRefreshed = JSON.parse(
+      window.sessionStorage.getItem('page_has_been_refreshed') || 'false'
+    );
+    try {
+      return await factory();
+    } catch (error) {
+      console.warn("[AppRouter] Dynamic component import failed, retrying...", error);
+      try {
+        return await factory();
+      } catch (retryError) {
+        console.error("[AppRouter] Failed dynamic component import after retry:", retryError);
+        if (!pageHasAlreadyBeenRefreshed) {
+          window.sessionStorage.setItem('page_has_been_refreshed', 'true');
+          window.location.reload();
+        }
+        throw retryError;
+      }
+    }
+  });
 
 // Lazy components
-const CalendarView = lazy(() => import("./CalendarView"));
-const Analytics = lazy(() => import("./Analytics"));
-const SyllabusTest = lazy(() => import("./SyllabusTest"));
-const StudyMateAI = lazy(() => import("./StudyMateAI"));
-const ImageGenerator = lazy(() => import("./ImageGenerator"));
-const EducationalGames = lazy(() => import("./EducationalGames"));
-const ProfileView = lazy(() => import("./ProfileView"));
-const SettingsView = lazy(() => import("./SettingsView"));
-const CommunityChat = lazy(() => import("./CommunityChat"));
+const CalendarView = lazyWithRetry(() => import("./CalendarView"));
+const Analytics = lazyWithRetry(() => import("./Analytics"));
+const SyllabusTest = lazyWithRetry(() => import("./SyllabusTest"));
+const ImageGenerator = lazyWithRetry(() => import("./ImageGenerator"));
+const EducationalGames = lazyWithRetry(() => import("./EducationalGames"));
+const ProfileView = lazyWithRetry(() => import("./ProfileView"));
+const SettingsView = lazyWithRetry(() => import("./SettingsView"));
+const CommunityChat = lazyWithRetry(() => import("./CommunityChat"));
 
 // Navigation Icons
 import { 
@@ -279,25 +303,25 @@ export const AppRouter: React.FC = () => {
     <div className="min-h-screen md:h-screen md:overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col md:flex-row font-sans transition-colors duration-300">
       
       {/* Sidebar for Desktop */}
-      <aside className={`hidden md:flex flex-col w-60 h-full bg-white dark:bg-slate-900 border-r border-slate-100 dark:border-slate-800/80 p-4 space-y-4 flex-shrink-0 ${isFullScreenActive ? "md:!hidden" : ""}`}>
+      <aside className={`hidden md:flex flex-col w-64 h-full bg-white/70 dark:bg-[#0c1326]/65 backdrop-blur-2xl border-r border-white/60 dark:border-white/10 shadow-[10px_0_30px_rgba(0,0,0,0.03)] dark:shadow-[16px_0_40px_rgba(0,0,0,0.4)] p-4 space-y-4 flex-shrink-0 z-20 relative overflow-hidden before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/80 dark:before:via-white/20 before:to-transparent ${isFullScreenActive ? "md:!hidden" : ""}`}>
         {/* Branding */}
-        <div className="flex items-center space-x-2 pb-2 border-b border-slate-100 dark:border-slate-800/60">
-          <span className="text-xl">🎓</span>
+        <div className="flex items-center space-x-2.5 pb-3 border-b border-white/50 dark:border-white/10">
+          <span className="text-2xl p-1.5 bg-gradient-to-br from-indigo-500/20 to-purple-500/20 rounded-2xl border border-indigo-500/30 backdrop-blur-md shadow-sm">🎓</span>
           <div>
-            <h2 className="text-sm font-semibold font-display tracking-tight text-indigo-600 dark:text-indigo-400">StudyMate</h2>
-            <span className="text-[10px] text-slate-400 font-medium uppercase tracking-wider">Productivity Suite</span>
+            <h2 className="text-base font-extrabold font-display tracking-tight text-indigo-600 dark:text-indigo-400">StudyMate</h2>
+            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wider">VisionOS AI Suite</span>
           </div>
         </div>
 
         {/* User context widget */}
-        <div className="p-2.5 bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl flex items-center justify-between space-x-2">
-          <div className="flex items-center space-x-2 overflow-hidden">
-            <span className="text-2xl p-1 bg-white dark:bg-slate-900 rounded-xl shadow-sm border border-slate-100 dark:border-slate-800">
+        <div className="p-3 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl border border-white/80 dark:border-white/12 rounded-2xl flex items-center justify-between space-x-2 shadow-sm">
+          <div className="flex items-center space-x-2.5 overflow-hidden">
+            <span className="text-2xl p-1 bg-white/80 dark:bg-slate-800/80 rounded-xl shadow-inner border border-white/60 dark:border-white/10">
               {profile.avatar}
             </span>
             <div className="overflow-hidden">
-              <h4 className="text-xs font-semibold truncate text-slate-800 dark:text-slate-100">{profile.fullName}</h4>
-              <span className="text-[9px] font-medium text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/40 px-1 rounded">
+              <h4 className="text-xs font-bold truncate text-slate-800 dark:text-slate-100">{profile.fullName}</h4>
+              <span className="text-[9px] font-extrabold text-indigo-600 dark:text-indigo-400 bg-indigo-50/80 dark:bg-indigo-950/60 border border-indigo-200/50 dark:border-indigo-800/40 px-1.5 py-0.5 rounded-md">
                 Level {profile.level}
               </span>
             </div>
@@ -305,14 +329,14 @@ export const AppRouter: React.FC = () => {
           <button 
             onClick={handleLogout}
             title="Log out Google Account"
-            className="p-1.5 bg-slate-100 dark:bg-slate-800 hover:text-rose-500 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer text-xs"
+            className="p-1.5 bg-slate-100/80 dark:bg-slate-800/80 hover:text-rose-500 rounded-xl hover:bg-rose-50/80 dark:hover:bg-rose-950/50 transition-all cursor-pointer text-xs border border-transparent hover:border-rose-300 dark:hover:border-rose-800/50"
           >
             ❌
           </button>
         </div>
 
         {/* Navigation list */}
-        <nav className="flex-1 space-y-0.5 overflow-y-auto pr-1 no-scrollbar select-none">
+        <nav className="flex-1 space-y-1 overflow-y-auto pr-1 no-scrollbar select-none">
           {NAV_LINKS.map((link) => {
             const Icon = link.icon;
             const isSelected = currentTab === link.id;
@@ -324,10 +348,10 @@ export const AppRouter: React.FC = () => {
                   setCurrentTab(link.id);
                   setMobileMenuOpen(false);
                 }}
-                className={`w-full flex items-center space-x-2.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all duration-200 cursor-pointer border ${
+                className={`w-full flex items-center space-x-2.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 cursor-pointer border ${
                   isSelected 
-                    ? `${theme.activeBg} ${theme.activeText} border-transparent shadow-md ${theme.shadow} scale-[1.01]` 
-                    : "bg-transparent border-transparent text-slate-500 dark:text-slate-400 hover:bg-slate-50/50 dark:hover:bg-slate-800/20 hover:text-slate-800 dark:hover:text-slate-100"
+                    ? `${theme.activeBg} ${theme.activeText} border-white/30 dark:border-white/20 shadow-lg ${theme.shadow} scale-[1.02] backdrop-blur-xl` 
+                    : "bg-transparent border-transparent text-slate-600 dark:text-slate-400 hover:bg-white/50 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-slate-100 hover:border-white/40 dark:hover:border-white/10"
                 }`}
               >
                 <span className="text-xs leading-none shrink-0">{link.symbol}</span>
@@ -340,10 +364,10 @@ export const AppRouter: React.FC = () => {
       </aside>
 
       {/* Mobile top app bar */}
-      <header className={`md:hidden bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800/80 px-4 py-2 flex justify-between items-center z-30 flex-shrink-0 ${isFullScreenActive ? "!hidden" : ""}`}>
+      <header className={`md:hidden bg-white/75 dark:bg-[#0c1326]/75 backdrop-blur-2xl border-b border-white/60 dark:border-white/10 px-4 py-2.5 flex justify-between items-center z-30 flex-shrink-0 shadow-sm ${isFullScreenActive ? "!hidden" : ""}`}>
         <div className="flex items-center space-x-2">
-          <span className="text-lg">🎓</span>
-          <h2 className="text-sm font-semibold font-display tracking-tight text-indigo-600 dark:text-indigo-400">StudyMate</h2>
+          <span className="text-xl">🎓</span>
+          <h2 className="text-sm font-extrabold font-display tracking-tight text-indigo-600 dark:text-indigo-400">StudyMate</h2>
         </div>
 
         <div className="flex items-center space-x-2">
@@ -740,15 +764,17 @@ export const AppRouter: React.FC = () => {
 
         {currentTab === "assistant" && (
           <div className="flex-1 min-h-0 h-full w-full flex flex-col overflow-hidden">
-            <Suspense fallback={<AISkeletonLoader />}>
-              <StudyMateAI 
-                profile={profile}
-                onAwardXP={handleAwardXP}
-                onAddNotification={handleAddNotification}
-                isFullScreen={aiFullScreen}
-                onToggleFullScreen={toggleAiFullScreen}
-              />
-            </Suspense>
+            <AIErrorBoundary>
+              <Suspense fallback={<AISkeletonLoader />}>
+                <StudyMateAI 
+                  profile={profile}
+                  onAwardXP={handleAwardXP}
+                  onAddNotification={handleAddNotification}
+                  isFullScreen={aiFullScreen}
+                  onToggleFullScreen={toggleAiFullScreen}
+                />
+              </Suspense>
+            </AIErrorBoundary>
           </div>
         )}
 
