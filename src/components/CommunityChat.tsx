@@ -1812,7 +1812,9 @@ export default function CommunityChat({
 
                 <button 
                   onClick={() => {
-                    navigator.clipboard.writeText(contextMessage.text);
+                    if (navigator.clipboard && navigator.clipboard.writeText) {
+                      navigator.clipboard.writeText(contextMessage.text).catch(() => {});
+                    }
                     handleAddNotification("📋 Copied", "Message text copied to clipboard.", "success");
                     setContextMessage(null);
                   }}

@@ -52,7 +52,9 @@ export function NotebookDocumentViewer({
   const pageText = activePageObj ? activePageObj.text : "No text content on this page.";
 
   const handleCopyPageText = () => {
-    navigator.clipboard.writeText(pageText);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(pageText).catch(() => {});
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

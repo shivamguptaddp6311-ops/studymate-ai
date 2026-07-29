@@ -73,7 +73,9 @@ export function useOCR() {
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        videoRef.current.play().catch((playErr) => {
+          console.warn("Camera video stream play prevented or interrupted:", playErr);
+        });
       }
       if (perms.camera !== "granted") {
         perms.camera = "granted";

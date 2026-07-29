@@ -29,18 +29,20 @@ export class AIErrorBoundary extends Component<Props, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("[AIErrorBoundary] Component tree caught rendering exception:", error, "\nStack trace:", errorInfo.componentStack);
     logger.error("AIErrorBoundary", "AI workspace component tree caught rendering exception", error, {
-      componentStack: errorInfo.componentStack?.substring(0, 500)
+      componentStack: errorInfo.componentStack?.substring(0, 1000)
     });
   }
 
   private handleReset = () => {
     this.setState({ hasError: false, error: null, friendlyMessage: "" });
     if (this.props.onReset) {
-      this.props.onReset();
-    } else {
-      localStorage.removeItem("studymate_ai_sessions");
-      window.location.reload();
+      try {
+        this.props.onReset();
+      } catch (err) {
+        console.error("[AIErrorBoundary] Error during reset handler:", err);
+      }
     }
   };
 

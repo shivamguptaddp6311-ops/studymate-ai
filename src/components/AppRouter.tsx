@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy, Suspense } from "react";
+import React, { useState, useEffect, useCallback, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, Alarm } from "../types";
 import { startRingtonePlayback, stopRingtonePlayback } from "./Alarms";
@@ -96,6 +96,24 @@ const TAB_THEMES: Record<string, { gradient: string; activeBg: string; activeTex
   settings: { gradient: "from-slate-600 to-slate-800", activeBg: "bg-gradient-to-r from-slate-600 to-slate-800", activeText: "text-white", inactiveBg: "bg-slate-100/50 dark:bg-slate-800/40", inactiveText: "text-slate-500/70 dark:text-slate-400/70 hover:text-slate-600 dark:hover:text-slate-400", shadow: "shadow-slate-500/20", border: "border-slate-200 dark:border-slate-800" }
 };
 
+const NAV_LINKS = [
+  { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, symbol: "🏠" },
+  { id: "tasks", label: "Homework", icon: ClipboardList, symbol: "📝" },
+  { id: "alarms", label: "Alarms", icon: Bell, symbol: "🔔" },
+  { id: "planner", label: "Timetable", icon: CalIcon, symbol: "📅" },
+  { id: "habits", label: "Habits", icon: Flame, symbol: "⚡" },
+  { id: "calendar", label: "Calendar", icon: CalIcon, symbol: "📆" },
+  { id: "assessment", label: "10-Day Test", icon: HelpCircle, symbol: "🎯" },
+  { id: "pomodoro", label: "Focus Sprint", icon: Clock, symbol: "⏱️" },
+  { id: "games", label: "Cognitive Games", icon: Gamepad2, symbol: "🎮" },
+  { id: "assistant", label: "StudyMate AI", icon: Sparkles, symbol: "🔮" },
+  { id: "imageGen", label: "AI Art & Diagrams", icon: Sparkles, symbol: "🎨" },
+  { id: "chat", label: "Community", icon: MessageSquare, symbol: "💬" },
+  { id: "analytics", label: "Analytics", icon: BarChart3, symbol: "📈" },
+  { id: "profile", label: "Profile", icon: User, symbol: "👤" },
+  { id: "settings", label: "Settings", icon: Settings, symbol: "⚙️" }
+];
+
 export const AppRouter: React.FC = () => {
   const { loggedInEmail, booted, handleLoginSuccess, handleLogout, getStorageKey } = useAuth();
   const { darkMode, handleToggleDarkMode, textSize, setTextSize } = useTheme();
@@ -149,6 +167,17 @@ export const AppRouter: React.FC = () => {
   } = useStorage();
 
   const [currentTab, setCurrentTab] = useState("dashboard");
+
+  const safeNavigateTab = useCallback((tabId: string) => {
+    try {
+      const isKnown = NAV_LINKS.some(l => l.id === tabId) || ["dashboard", "settings", "imageGen", "assistant", "chat"].includes(tabId);
+      const targetTab = isKnown ? tabId : "dashboard";
+      setCurrentTab(targetTab);
+    } catch (err: any) {
+      console.error(`[AppRouter Navigation Error] Failed navigating to tab '${tabId}':`, err, "\nStack:", err?.stack);
+      handleAddNotification("Navigation Error", "Could not open requested view. Staying on current screen.", "alert");
+    }
+  }, [handleAddNotification]);
   const [mobileRipples, setMobileRipples] = useState<{ id: number; x: number; y: number }[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
@@ -276,23 +305,7 @@ export const AppRouter: React.FC = () => {
     );
   }
 
-  const NAV_LINKS = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, symbol: "🏠" },
-    { id: "tasks", label: "Homework", icon: ClipboardList, symbol: "📝" },
-    { id: "alarms", label: "Alarms", icon: Bell, symbol: "🔔" },
-    { id: "planner", label: "Timetable", icon: CalIcon, symbol: "📅" },
-    { id: "habits", label: "Habits", icon: Flame, symbol: "⚡" },
-    { id: "calendar", label: "Calendar", icon: CalIcon, symbol: "📆" },
-    { id: "assessment", label: "10-Day Test", icon: HelpCircle, symbol: "🎯" },
-    { id: "pomodoro", label: "Focus Sprint", icon: Clock, symbol: "⏱️" },
-    { id: "games", label: "Cognitive Games", icon: Gamepad2, symbol: "🎮" },
-    { id: "assistant", label: "StudyMate AI", icon: Sparkles, symbol: "🔮" },
-    { id: "imageGen", label: "AI Art & Diagrams", icon: Sparkles, symbol: "🎨" },
-    { id: "chat", label: "Community", icon: MessageSquare, symbol: "💬" },
-    { id: "analytics", label: "Analytics", icon: BarChart3, symbol: "📈" },
-    { id: "profile", label: "Profile", icon: User, symbol: "👤" },
-    { id: "settings", label: "Settings", icon: Settings, symbol: "⚙️" }
-  ];
+
 
   const isFullScreenActive = 
     focusLockdown || 
@@ -345,7 +358,7 @@ export const AppRouter: React.FC = () => {
               <button
                 key={link.id}
                 onClick={() => {
-                  setCurrentTab(link.id);
+                  safeNavigateTab(link.id);
                   setMobileMenuOpen(false);
                 }}
                 className={`w-full flex items-center space-x-2.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all duration-200 cursor-pointer border ${
@@ -379,7 +392,7 @@ export const AppRouter: React.FC = () => {
           </button>
           
           <button 
-            onClick={() => setCurrentTab("settings")}
+            onClick={() => safeNavigateTab("settings")}
             className={`p-1.5 rounded-xl transition cursor-pointer ${
               currentTab === "settings"
                 ? "bg-indigo-600 text-white shadow-sm"
@@ -406,7 +419,7 @@ export const AppRouter: React.FC = () => {
                 <button
                   key={link.id}
                   onClick={() => {
-                    setCurrentTab(link.id);
+                    safeNavigateTab(link.id);
                     setMobileMenuOpen(false);
                   }}
                   className={`flex items-center space-x-2 p-2.5 rounded-xl text-[11px] font-semibold border transition-all duration-150 ${
@@ -621,7 +634,7 @@ export const AppRouter: React.FC = () => {
             triggeredAlarm={triggeredAlarm}
             profile={profile}
             onClearTriggeredAlarm={() => setTriggeredAlarm(null)}
-            onNavigate={(tab) => setCurrentTab(tab)}
+            onNavigate={(tab) => safeNavigateTab(tab)}
             onAwardXP={handleAwardXP}
           />
         )}
@@ -636,7 +649,7 @@ export const AppRouter: React.FC = () => {
             timetable={timetable}
             onAddTask={handleAddTask}
             onToggleTask={handleToggleTask}
-            onNavigate={(tab) => setCurrentTab(tab)}
+            onNavigate={(tab) => safeNavigateTab(tab)}
             onTriggerAlarmChallenge={(alarm) => setTriggeredAlarm(alarm)}
             onToggleHabitDate={handleToggleHabitDate}
             onOpenSearch={() => setIsSearchOpen(true)}
@@ -842,7 +855,7 @@ export const AppRouter: React.FC = () => {
                   setMobileRipples((prev) => prev.filter((r) => r.id !== rippleId));
                 }, 600);
 
-                setCurrentTab(link.id);
+                safeNavigateTab(link.id);
                 setMobileMenuOpen(false);
               }}
               className="relative flex flex-col items-center justify-center min-w-[48px] min-h-[48px] cursor-pointer outline-none select-none px-2 py-1 z-10"
@@ -906,7 +919,7 @@ export const AppRouter: React.FC = () => {
         <UniversalSmartSearch 
           isOpen={isSearchOpen}
           onClose={() => setIsSearchOpen(false)}
-          onNavigate={(tab) => setCurrentTab(tab)}
+          onNavigate={(tab) => safeNavigateTab(tab)}
           profile={profile}
           tasks={tasks}
           alarms={alarms}

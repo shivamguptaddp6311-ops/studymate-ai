@@ -29,6 +29,7 @@ import {
   handleClientLogs,
   getAIHealthMetrics
 } from "./server/logger";
+import { aiRateLimiter, imageGenRateLimiter } from "./server/middleware/rateLimiter";
 
 dotenv.config();
 
@@ -422,6 +423,10 @@ const apiRateLimiter = rateLimit({
   legacyHeaders: false,
 });
 app.use("/api", apiRateLimiter);
+
+// 7. Production AI Rate Limiting Middleware (Per-user/IP burst & sustained limits)
+app.use("/api/ai", aiRateLimiter);
+app.use("/api/gemini", aiRateLimiter);
 
 // 8. Setup JSON and urlencoded body parsing with large limit for image/document uploads
 app.use(express.json({ limit: "25mb" }));
@@ -1224,7 +1229,7 @@ app.post("/api/ai/route", requireAuth, async (req, res) => {
 });
 
 // AI Image & Diagram Generation Route (Multi-Provider Fallback: Gemini -> OpenAI -> Fal.ai)
-app.post("/api/ai/generate-image", requireAuth, async (req, res) => {
+app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, async (req, res) => {
   const controller = new AbortController();
   req.on("close", () => {
     controller.abort();
@@ -1246,8 +1251,8 @@ app.post("/api/ai/generate-image", requireAuth, async (req, res) => {
     }
 
     const emailNorm = (req as any).user.email?.toLowerCase().trim() || "anonymous";
-    const lockKey = `${emailNorm}:${req.path}:${prompt.trim().substring(0, 50)}`;
     const effectiveProvider = preferredProvider || provider || "auto";
+    const lockKey = `${emailNorm}:${req.path}:${prompt.trim()}:${aspectRatio}:${quality}:${effectiveProvider}`;
 
     const imageResult = await withDuplicatePrevention(lockKey, async () => {
       return await executeImageGenRequest({

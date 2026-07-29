@@ -41,6 +41,9 @@ export interface GeneratedImageRecord {
 export interface ImageGeneratorProps {
   onClose?: () => void;
   initialPrompt?: string;
+  profile?: any;
+  onAwardXP?: (amount: number, reason: string) => void;
+  onAddNotification?: (title: string, message: string, type?: "info" | "success" | "alert") => void;
 }
 
 const STYLES = [
@@ -83,7 +86,12 @@ const SAMPLE_PROMPTS = [
   "Minimalist modern tech startup logo with a glowing gradient brain icon"
 ];
 
-export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ onClose, initialPrompt = "" }) => {
+export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
+  onClose,
+  initialPrompt = "",
+  onAwardXP,
+  onAddNotification
+}) => {
   const [prompt, setPrompt] = useState(initialPrompt);
   const [negativePrompt, setNegativePrompt] = useState("");
   const [style, setStyle] = useState("realistic");
@@ -203,32 +211,49 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ onClose, initial
         });
       });
 
-      const results = await Promise.all(requests);
+      const settled = await Promise.allSettled(requests);
 
       clearInterval(progressTimer);
       stageTimers.forEach(clearTimeout);
+
+      const fulfilled = settled.filter((s): s is PromiseFulfilledResult<any> => s.status === "fulfilled");
+      const rejected = settled.filter((s): s is PromiseRejectedResult => s.status === "rejected");
+
+      if (fulfilled.length === 0) {
+        const firstErr = rejected[0]?.reason?.message || "Failed to generate image.";
+        throw new Error(firstErr);
+      }
+
       setProgressPercent(100);
       setLoadingStage("Complete!");
 
-      const newRecords: GeneratedImageRecord[] = results.map((data, idx) => ({
+      const newRecords: GeneratedImageRecord[] = fulfilled.map((res, idx) => ({
         id: "img-" + Date.now() + "-" + idx + "-" + Math.random().toString(36).substring(2, 6),
-        imageUrl: data.imageUrl,
+        imageUrl: res.value.imageUrl,
         prompt: textToUse.trim(),
         negativePrompt: negativePrompt.trim() || undefined,
         style,
         category: style,
         aspectRatio,
         quality,
-        providerUsed: data.providerUsed || "gemini",
+        providerUsed: res.value.providerUsed || "gemini",
         createdAt: new Date().toISOString(),
         isFavorite: false
       }));
 
       setCurrentBatch(newRecords);
       saveHistory([...newRecords, ...history]);
-      setLoading(false);
-      setProgressPercent(0);
-      setLoadingStage("");
+
+      if (onAwardXP) {
+        onAwardXP(20 * fulfilled.length, "Generated AI Visual Asset");
+      }
+      if (onAddNotification) {
+        onAddNotification(
+          "Image Generated",
+          `Generated ${fulfilled.length} image(s) via ${fulfilled[0].value.providerUsed || "AI Router"}.`,
+          "success"
+        );
+      }
     } catch (err: any) {
       clearInterval(progressTimer);
       stageTimers.forEach(clearTimeout);
@@ -237,9 +262,11 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ onClose, initial
       } else {
         setError(err.message || "Failed to generate image. Please check network connection or try again.");
       }
+    } finally {
       setLoading(false);
       setProgressPercent(0);
       setLoadingStage("");
+      abortControllerRef.current = null;
     }
   };
 
@@ -254,7 +281,11 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({ onClose, initial
   };
 
   const handleCopyPrompt = (text: string) => {
-    navigator.clipboard.writeText(text);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch((err) => {
+        console.warn("Clipboard copy operation prevented or unavailable:", err);
+      });
+    }
     setCopiedText(text);
     setTimeout(() => setCopiedText(null), 2000);
   };

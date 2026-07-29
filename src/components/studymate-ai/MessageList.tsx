@@ -62,8 +62,14 @@ export function MessageList({
   }, [scrollRef]);
 
   useEffect(() => {
-    handleScroll();
-  }, [messages.length, handleScroll]);
+    if (isAtBottomRef.current || isLoading) {
+      scrollToBottom();
+    }
+  }, [messages.length, isLoading, scrollToBottom]);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [scrollToBottom]);
 
   return (
     <div 

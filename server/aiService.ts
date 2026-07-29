@@ -1094,10 +1094,20 @@ export async function generateImageGemini(
         signal
       );
 
-      const rawBytes = sdkRes?.generatedImages?.[0]?.image?.imageBytes;
-      if (rawBytes && typeof rawBytes === "string") {
-        const imageUrl = rawBytes.startsWith("data:") ? rawBytes : `data:image/jpeg;base64,${rawBytes}`;
-        return { imageUrl, revisedPrompt: prompt };
+      const imageObj = sdkRes?.generatedImages?.[0]?.image;
+      const rawBytes = imageObj?.imageBytes;
+      if (rawBytes) {
+        let b64Str = "";
+        if (typeof rawBytes === "string") {
+          b64Str = rawBytes.replace(/\s+/g, "");
+        } else if (Buffer.isBuffer(rawBytes) || rawBytes instanceof Uint8Array) {
+          b64Str = Buffer.from(rawBytes).toString("base64");
+        }
+        if (b64Str.length > 50) {
+          const mime = imageObj?.mimeType || "image/jpeg";
+          const imageUrl = b64Str.startsWith("data:") ? b64Str : `data:${mime};base64,${b64Str}`;
+          return { imageUrl, revisedPrompt: prompt };
+        }
       }
     } catch (e: any) {
       serverLogger.warn("AIServiceImage", `Gemini SDK generateImages failed, trying REST API: ${e.message}`);
@@ -1105,7 +1115,7 @@ export async function generateImageGemini(
   }
 
   // Fallback to REST API predict endpoint
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey.trim()}`;
   const response = await fetchWithTimeout(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1131,12 +1141,23 @@ export async function generateImageGemini(
   }
 
   const data = await response.json();
-  const bytes = data?.predictions?.[0]?.bytesBase64Encoded;
-  if (!bytes || typeof bytes !== "string") {
-    throw new Error("No valid base64 image data returned from Gemini Imagen");
+  const bytes = data?.predictions?.[0]?.bytesBase64Encoded || data?.predictions?.[0]?.image?.imageBytes;
+  if (!bytes) {
+    throw new Error("No valid base64 image data returned from Gemini Imagen REST API");
   }
 
-  const imageUrl = bytes.startsWith("data:") ? bytes : `data:image/jpeg;base64,${bytes}`;
+  let cleanB64 = "";
+  if (typeof bytes === "string") {
+    cleanB64 = bytes.replace(/\s+/g, "");
+  } else if (Buffer.isBuffer(bytes) || bytes instanceof Uint8Array) {
+    cleanB64 = Buffer.from(bytes).toString("base64");
+  }
+
+  if (!cleanB64 || cleanB64.length < 50) {
+    throw new Error("Gemini Imagen REST API returned truncated or invalid base64 payload");
+  }
+
+  const imageUrl = cleanB64.startsWith("data:") ? cleanB64 : `data:image/jpeg;base64,${cleanB64}`;
   return { imageUrl, revisedPrompt: prompt };
 }
 
@@ -1163,7 +1184,7 @@ export async function generateImageOpenAI(
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
+            "Authorization": `Bearer ${apiKey.trim()}`
           },
           body: JSON.stringify({
             model: "dall-e-3",
@@ -1189,13 +1210,16 @@ export async function generateImageOpenAI(
 
         let imageUrl = "";
         if (item.b64_json) {
-          imageUrl = item.b64_json.startsWith("data:") ? item.b64_json : `data:image/png;base64,${item.b64_json}`;
-        } else if (item.url) {
+          const cleanB64 = typeof item.b64_json === "string" ? item.b64_json.replace(/\s+/g, "") : "";
+          if (cleanB64.length > 50) {
+            imageUrl = cleanB64.startsWith("data:") ? cleanB64 : `data:image/png;base64,${cleanB64}`;
+          }
+        } else if (item.url && typeof item.url === "string" && item.url.startsWith("http")) {
           imageUrl = item.url;
         }
 
         if (!imageUrl) {
-          throw new Error("OpenAI DALL-E 3 returned no image URL or base64 data.");
+          throw new Error("OpenAI DALL-E 3 returned no valid image URL or base64 data.");
         }
 
         return {
@@ -1261,11 +1285,11 @@ export async function generateImageFal(
         } else if (data.output?.[0]?.url) {
           imageUrl = data.output[0].url;
         } else if (data.images?.[0]?.b64) {
-          const b64 = data.images[0].b64;
+          const b64 = String(data.images[0].b64).replace(/\s+/g, "");
           imageUrl = b64.startsWith("data:") ? b64 : `data:image/jpeg;base64,${b64}`;
         }
 
-        if (!imageUrl) {
+        if (!imageUrl || typeof imageUrl !== "string" || (!imageUrl.startsWith("http") && !imageUrl.startsWith("data:"))) {
           throw new Error("Fal.ai FLUX returned no valid image URL.");
         }
 
@@ -1337,7 +1361,7 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
       !config.fal ? "FAL_KEY" : null,
     ].filter(Boolean).join(", ");
 
-    throw new Error(`No image generation providers configured. Missing secrets: ${unconfigured || "GEMINI_API_KEY, OPENAI_API_KEY, FAL_KEY"}. Please configure at least one API key.`);
+    throw new Error(`No image generation providers configured. Missing secrets: ${unconfigured || "GEMINI_API_KEY, OPENAI_API_KEY, FAL_KEY"}. Please configure at least one API key in settings.`);
   }
 
   const errors: string[] = [];
@@ -1375,7 +1399,7 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
 
       const duration = Date.now() - providerStartTime;
       recordAISuccess(provider, duration);
-      serverLogger.info("AIServiceImage", `Successfully generated image with provider [${provider}] in ${duration}ms. Payload size: ${genResult.imageUrl.length} chars`);
+      serverLogger.info("AIServiceImage", `Successfully generated image with provider [${provider}] in ${duration}ms. Payload size: ${genResult.imageUrl.length} chars. Image format: ${genResult.imageUrl.substring(0, 30)}...`);
 
       imageCache.set(cacheKey, {
         imageUrl: genResult.imageUrl,

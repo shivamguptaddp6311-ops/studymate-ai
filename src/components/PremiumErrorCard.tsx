@@ -90,7 +90,9 @@ export const PremiumErrorCard: React.FC<PremiumErrorCardProps> = ({
 
   const handleCopyDetails = () => {
     if (errorMessageString) {
-      navigator.clipboard.writeText(errorMessageString);
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(errorMessageString).catch(() => {});
+      }
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
