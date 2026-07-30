@@ -9,7 +9,7 @@ import { ChatMessage } from "./types";
 interface ChatMessageBubbleProps {
   msg: ChatMessage;
   onCopyText: (text: string) => void;
-  onSpeakText: (text: string) => void;
+  onSpeakText: (text: string, msgId: string) => void;
   isSpeaking: boolean;
   onJumpToCitation?: (docName: string, pageNumber: number) => void;
 }
@@ -195,7 +195,7 @@ export const MessageBubble = React.memo(function MessageBubble({
               {/* Voice Read Aloud */}
               <button
                 type="button"
-                onClick={() => onSpeakText(msg.text)}
+                onClick={() => onSpeakText(msg.text, msg.id)}
                 className={`p-1.5 rounded-lg text-xs transition cursor-pointer flex items-center space-x-1 ${
                   isSpeaking 
                     ? "bg-indigo-500 text-white animate-pulse" 

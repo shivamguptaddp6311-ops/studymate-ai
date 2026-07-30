@@ -545,7 +545,7 @@ Instructions:
 
       // 5. Send request through existing authenticated AI endpoint (/api/gemini/chat)
       let token = localStorage.getItem("studymate_token") || "";
-      let email = localStorage.getItem("studymate_logged_in_email") || "shivamguptaddp6312@gmail.com";
+      let email = localStorage.getItem("studymate_logged_in_email") || `guest-${Date.now()}@studymate.app`;
 
       if (!token) {
         try {

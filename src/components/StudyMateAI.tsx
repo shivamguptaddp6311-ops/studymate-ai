@@ -31,13 +31,21 @@ export function StudyMateAI({
   onAwardXP,
   onAddNotification,
   isFullScreen,
-  onToggleFullScreen
+  onToggleFullScreen,
+  onOpenAISettings
 }: StudyMateAIProps) {
   const [usePersonalization, setUsePersonalization] = useState(true);
   const [selectedModel, setSelectedModel] = useState(() => localStorage.getItem("studymate_ai_model") || "gemini-2.5-flash");
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [showSessionsMenu, setShowSessionsMenu] = useState(false);
   const [showLiveVoiceTutor, setShowLiveVoiceTutor] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  useEffect(() => {
+    if (onOpenAISettings) {
+      onOpenAISettings(() => setShowSettingsModal(true));
+    }
+  }, [onOpenAISettings]);
   
   // NotebookLM Studio State
   const [showNotebookLMStudio, setShowNotebookLMStudio] = useState(false);
@@ -278,6 +286,8 @@ export function StudyMateAI({
           onOpenNotebookLMStudio={() => setShowNotebookLMStudio(true)}
           onOpenImageGenerator={() => setShowImageGeneratorModal(true)}
           activeDocumentCount={notebookLM?.activeDocIds?.length || 0}
+          showSettingsModal={showSettingsModal}
+          setShowSettingsModal={setShowSettingsModal}
         />
 
         {/* Scrollable Messages Area */}
@@ -402,6 +412,39 @@ export function StudyMateAI({
           fileInputRef={fileInputRef}
           pdfFileInputRef={pdfFileInputRef}
         />
+
+        {/* Tool Dock Above Composer */}
+        <div className="px-3 md:px-5 py-2 bg-white/60 dark:bg-slate-950/60 backdrop-blur-md border-t border-slate-200/50 dark:border-slate-800/60 flex items-center space-x-2 overflow-x-auto no-scrollbar shrink-0 z-20">
+          <button
+            type="button"
+            onClick={() => setShowNotebookLMStudio(true)}
+            className="px-3 py-1.5 bg-indigo-50/90 dark:bg-indigo-950/50 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/80 dark:border-indigo-800/60 rounded-xl text-xs font-bold transition-all duration-150 flex items-center space-x-1.5 shrink-0 cursor-pointer shadow-2xs hover:scale-[1.02] active:scale-95"
+            title="Open StudyMate Docs"
+          >
+            <span>🧠</span>
+            <span>StudyMate Docs</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowImageGeneratorModal(true)}
+            className="px-3 py-1.5 bg-purple-50/90 dark:bg-purple-950/50 hover:bg-purple-100 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 border border-purple-200/80 dark:border-purple-800/60 rounded-xl text-xs font-bold transition-all duration-150 flex items-center space-x-1.5 shrink-0 cursor-pointer shadow-2xs hover:scale-[1.02] active:scale-95"
+            title="Open Image Studio"
+          >
+            <span>🎨</span>
+            <span>Image Studio</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setShowLiveVoiceTutor(true)}
+            className="px-3 py-1.5 bg-pink-50/90 dark:bg-pink-950/50 hover:bg-pink-100 dark:hover:bg-pink-900/60 text-pink-700 dark:text-pink-300 border border-pink-200/80 dark:border-pink-800/60 rounded-xl text-xs font-bold transition-all duration-150 flex items-center space-x-1.5 shrink-0 cursor-pointer shadow-2xs hover:scale-[1.02] active:scale-95"
+            title="Open Live Voice Tutor"
+          >
+            <span>🎙️</span>
+            <span>Live Voice</span>
+          </button>
+        </div>
 
         {/* Fixed Prompt Input Dock */}
         <PromptInput

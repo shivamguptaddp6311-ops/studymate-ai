@@ -1,7 +1,14 @@
-import React, { RefObject } from "react";
+import React, { RefObject, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Plus, Send, Camera, Image as ImageIcon, CloudUpload, FileText, Mic } from "lucide-react";
+import { Plus, Send, Camera, Image as ImageIcon, CloudUpload, FileText, Mic, ChevronDown, Check } from "lucide-react";
 import { AttachedPdf } from "./PDFUploader";
+
+const MODEL_OPTIONS = [
+  { id: "gemini-2.5-flash", label: "✨ Flash", fullName: "Gemini 2.5 Flash" },
+  { id: "gemini-2.5-pro", label: "🚀 Pro", fullName: "Gemini 2.5 Pro" },
+  { id: "auto", label: "⚡ Auto AI", fullName: "Auto AI" },
+  { id: "gpt-4o", label: "🤖 GPT-4o", fullName: "GPT-4o" },
+];
 
 interface PromptInputProps {
   inputText: string;
@@ -183,19 +190,70 @@ export function PromptInput({
         </div>
 
         {/* AI MODEL SELECTOR INSIDE COMPOSER */}
-        <div className="shrink-0 hidden sm:flex items-center">
-          <select
-            value={selectedModel}
-            onChange={(e) => setSelectedModel?.(e.target.value)}
-            className="bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 font-bold text-[11px] px-2.5 py-1.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60 focus:outline-none cursor-pointer"
-            title="Select AI Model"
-          >
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-            <option value="gemini-2.5-pro">Gemini Pro</option>
-            <option value="auto">Auto AI</option>
-            <option value="gpt-4o">GPT-4o</option>
-          </select>
-        </div>
+        {(() => {
+          const [showModelPopover, setShowModelPopover] = useState(false);
+          const currentModelObj = MODEL_OPTIONS.find((m) => m.id === selectedModel) || MODEL_OPTIONS[0];
+
+          return (
+            <div className="shrink-0 hidden sm:flex items-center relative">
+              {showModelPopover && (
+                <div
+                  className="fixed inset-0 z-40 bg-transparent"
+                  onClick={() => setShowModelPopover(false)}
+                />
+              )}
+
+              <button
+                type="button"
+                onClick={() => setShowModelPopover(!showModelPopover)}
+                className="bg-slate-100/90 dark:bg-slate-800/80 hover:bg-slate-200/90 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 font-bold text-[11px] px-2.5 py-1.5 rounded-xl border border-slate-200/80 dark:border-slate-700/60 transition cursor-pointer flex items-center space-x-1.5 relative z-50 shadow-2xs"
+                title="Select AI Model"
+              >
+                <span>{currentModelObj.label}</span>
+                <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform duration-150 ${showModelPopover ? "rotate-180" : ""}`} />
+              </button>
+
+              <AnimatePresence>
+                {showModelPopover && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                    transition={{ duration: 0.12 }}
+                    className="absolute bottom-11 right-0 w-52 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-1.5 shadow-2xl z-50 space-y-0.5"
+                  >
+                    <div className="px-2.5 py-1 border-b border-slate-100 dark:border-slate-800 mb-1">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">Select AI Model</span>
+                    </div>
+                    {MODEL_OPTIONS.map((m) => {
+                      const isSelected = selectedModel === m.id;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => {
+                            setSelectedModel?.(m.id);
+                            setShowModelPopover(false);
+                          }}
+                          className={`w-full text-left px-2.5 py-1.5 rounded-xl transition flex items-center justify-between text-xs cursor-pointer ${
+                            isSelected
+                              ? "bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 font-bold border border-purple-200/60 dark:border-purple-800/60"
+                              : "text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800/70 font-semibold"
+                          }`}
+                        >
+                          <div className="flex items-center space-x-1.5">
+                            <span>{m.fullName}</span>
+                          </div>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400 shrink-0 ml-1" />}
+                        </button>
+                      );
+                    })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          );
+        })()}
 
         {/* PURPLE SEND BUTTON */}
         <button

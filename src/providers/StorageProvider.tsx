@@ -509,11 +509,17 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setSyncStatus(hasNetworkError ? "offline" : "synced");
 
       if (!serverData && finalProfile && !hasNetworkError) {
-        triggerCloudSync(finalProfile, finalTasks, finalAlarms, finalTimetable, finalHabits, finalBadges, finalNotifications);
+        triggerCloudSync(finalProfile, finalTasks, finalAlarms, finalTimetable, finalHabits, finalBadges, finalNotifications).catch((err) => {
+          console.warn("Initial cloud sync error:", err);
+        });
       }
     };
 
-    loadAndSyncData();
+    loadAndSyncData().catch((err) => {
+      console.warn("loadAndSyncData uncaught error:", err);
+      setBooted(true);
+      setSyncStatus("offline");
+    });
   }, [loggedInEmail]);
 
   // Alarm clock ticking

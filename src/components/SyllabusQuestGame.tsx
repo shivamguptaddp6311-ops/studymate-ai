@@ -137,7 +137,9 @@ export default function SyllabusQuestGame({
 
     if (timeLeft <= 0) {
       // Time Out counts as incorrect
-      handleAnswerSelection(-1);
+      handleAnswerSelection(-1).catch((err) => {
+        console.warn("Time out handleAnswerSelection error:", err);
+      });
       return;
     }
 

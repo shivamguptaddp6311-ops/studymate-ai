@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import { circuitBreaker } from "./circuitBreaker";
 
 export type LogLevel = "INFO" | "WARN" | "ERROR" | "PERF" | "AI_FALLBACK";
 
@@ -155,6 +156,7 @@ export const serverLogger = {
 
 // AI Health Metric Tracking Functions
 export function recordAIAttempt(provider: string) {
+  circuitBreaker.recordAttempt(provider);
   if (!aiHealthMetrics[provider]) {
     aiHealthMetrics[provider] = { provider, status: "healthy", totalRequests: 0, successCount: 0, failureCount: 0, avgLatencyMs: 0 };
   }
@@ -162,6 +164,7 @@ export function recordAIAttempt(provider: string) {
 }
 
 export function recordAISuccess(provider: string, durationMs: number) {
+  circuitBreaker.recordSuccess(provider, durationMs);
   if (!aiHealthMetrics[provider]) {
     recordAIAttempt(provider);
   }
@@ -176,6 +179,9 @@ export function recordAISuccess(provider: string, durationMs: number) {
 }
 
 export function recordAIFailure(provider: string, reason: string) {
+  const isTimeout = reason.toLowerCase().includes("timeout") || reason.toLowerCase().includes("timed out") || reason.toLowerCase().includes("cancel");
+  circuitBreaker.recordFailure(provider, reason, isTimeout);
+
   if (!aiHealthMetrics[provider]) {
     recordAIAttempt(provider);
   }
@@ -192,8 +198,39 @@ export function recordAIFailure(provider: string, reason: string) {
   }
 }
 
-export function getAIHealthMetrics(): Record<string, AIProviderHealth> {
-  return { ...aiHealthMetrics };
+export function getAIHealthMetrics(): Record<string, AIProviderHealth & { circuitState?: string; cooldownRemainingMs?: number }> {
+  const cbMetrics = circuitBreaker.getMetrics();
+  const merged: Record<string, AIProviderHealth & { circuitState?: string; cooldownRemainingMs?: number }> = { ...aiHealthMetrics };
+
+  for (const [provider, cb] of Object.entries(cbMetrics)) {
+    const existing = merged[provider] || {
+      provider,
+      status: "healthy",
+      totalRequests: cb.totalRequests,
+      successCount: cb.successCount,
+      failureCount: cb.failureCount,
+      avgLatencyMs: cb.avgLatencyMs
+    };
+
+    let calculatedStatus = existing.status;
+    if (cb.state === "OPEN") {
+      calculatedStatus = "failing"; // circuit open
+    } else if (cb.state === "HALF_OPEN") {
+      calculatedStatus = "degraded";
+    }
+
+    merged[provider] = {
+      ...existing,
+      status: calculatedStatus as any,
+      circuitState: cb.state,
+      cooldownRemainingMs: cb.cooldownRemainingMs,
+      lastFailureTime: cb.lastFailureTime || existing.lastFailureTime,
+      lastErrorReason: cb.lastErrorReason || existing.lastErrorReason,
+      avgLatencyMs: cb.avgLatencyMs || existing.avgLatencyMs
+    };
+  }
+
+  return merged;
 }
 
 // Slow Request & Performance Monitoring Express Middleware

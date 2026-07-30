@@ -3,6 +3,8 @@ import dotenv from "dotenv";
 import crypto from "crypto";
 import { firebaseDB } from "./firebase";
 import { serverLogger, recordAIAttempt, recordAISuccess, recordAIFailure } from "./logger";
+import { concurrencyQueue } from "./concurrencyQueue";
+import { circuitBreaker } from "./circuitBreaker";
 
 dotenv.config();
 
@@ -90,23 +92,23 @@ function isValidKey(key: string | undefined): boolean {
 // Dynamic tracker to disable Anthropic if we encounter a billing/credit exhaustion error
 let isAnthropicDisabled = false;
 
-// Check configured keys
-export function getConfiguredProviders() {
+// Check configured keys with Circuit Breaker status check
+export function getConfiguredProviders(ignoreCircuit = false) {
   return {
-    gemini: isValidKey(process.env.GEMINI_API_KEY),
-    openai: isValidKey(process.env.OPENAI_API_KEY),
-    groq: isValidKey(process.env.GROQ_API_KEY),
-    openrouter: isValidKey(process.env.OPENROUTER_API_KEY),
-    anthropic: isValidKey(process.env.ANTHROPIC_API_KEY) && !isAnthropicDisabled,
-    fal: isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)
+    gemini: isValidKey(process.env.GEMINI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("gemini")),
+    openai: isValidKey(process.env.OPENAI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("openai")),
+    groq: isValidKey(process.env.GROQ_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("groq")),
+    openrouter: isValidKey(process.env.OPENROUTER_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("openrouter")),
+    anthropic: isValidKey(process.env.ANTHROPIC_API_KEY) && !isAnthropicDisabled && (ignoreCircuit || circuitBreaker.canExecute("anthropic")),
+    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && (ignoreCircuit || circuitBreaker.canExecute("fal"))
   };
 }
 
-export function getConfiguredImageProviders() {
+export function getConfiguredImageProviders(ignoreCircuit = false) {
   return {
-    gemini: isValidKey(process.env.GEMINI_API_KEY),
-    openai: isValidKey(process.env.OPENAI_API_KEY),
-    fal: isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)
+    gemini: isValidKey(process.env.GEMINI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("gemini")),
+    openai: isValidKey(process.env.OPENAI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("openai")),
+    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && (ignoreCircuit || circuitBreaker.canExecute("fal"))
   };
 }
 
@@ -410,149 +412,167 @@ export async function executeAIRequest(options: {
     };
   }
 
-  // Determine list of providers to try
-  const config = getConfiguredProviders();
-  // Standard fallback sequence requested by user
-  const fallbackOrder: AIProvider[] = ["gemini", "openai", "groq", "anthropic", "openrouter"];
-  
-  let providersToTry: AIProvider[] = [];
-
-  if (preferredProvider !== "auto" && preferredProvider !== undefined) {
-    providersToTry.push(preferredProvider);
-    fallbackOrder.forEach(p => {
-      if (p !== preferredProvider) {
-        providersToTry.push(p);
-      }
-    });
-  } else {
-    providersToTry = [...fallbackOrder];
-  }
-
-  // Filter based on configured keys
-  providersToTry = providersToTry.filter(p => config[p as keyof typeof config]);
-
-  if (providersToTry.length === 0) {
-    if (isValidKey(process.env.GEMINI_API_KEY)) {
-      providersToTry = ["gemini"];
-    } else {
-      throw new Error(
-        "No AI Providers are configured. Please set GEMINI_API_KEY or other keys (OPENAI_API_KEY, GROQ_API_KEY, etc.) in the Secrets Settings."
-      );
-    }
-  }
-
   const isPdf = !!image && (image.startsWith("data:application/pdf") || image.includes("pdf"));
+  const category = concurrencyQueue.determineCategory(
+    undefined,
+    isPdf,
+    !!image,
+    false
+  );
+  const payloadSize = (image ? image.length : 0) + JSON.stringify(messages).length;
 
-  let lastError: any = null;
-  let success = false;
-  let finalResult: AIResponse | null = null;
-  const startTime = Date.now();
-  let providerUsed: AIProvider = preferredProvider;
+  return concurrencyQueue.enqueue(
+    {
+      category,
+      taskName: `executeAIRequest:${category}`,
+      payloadSize,
+      timeoutMs,
+      signal
+    },
+    async () => {
+      // Determine list of providers to try
+      const config = getConfiguredProviders();
+      // Standard fallback sequence requested by user
+      const fallbackOrder: AIProvider[] = ["gemini", "openai", "groq", "anthropic", "openrouter"];
+      
+      let providersToTry: AIProvider[] = [];
 
-  try {
-    for (let i = 0; i < providersToTry.length; i++) {
-      const provider = providersToTry[i];
-      if (signal?.aborted) {
-        throw new Error("Request was cancelled by user.");
+      if (preferredProvider !== "auto" && preferredProvider !== undefined) {
+        providersToTry.push(preferredProvider);
+        fallbackOrder.forEach(p => {
+          if (p !== preferredProvider) {
+            providersToTry.push(p);
+          }
+        });
+      } else {
+        providersToTry = [...fallbackOrder];
       }
-      const providerStartTime = Date.now();
-      recordAIAttempt(provider);
+
+      // Filter based on configured keys
+      providersToTry = providersToTry.filter(p => config[p as keyof typeof config]);
+
+      if (providersToTry.length === 0) {
+        if (isValidKey(process.env.GEMINI_API_KEY)) {
+          providersToTry = ["gemini"];
+        } else {
+          throw new Error(
+            "No AI Providers are configured. Please set GEMINI_API_KEY or other keys (OPENAI_API_KEY, GROQ_API_KEY, etc.) in the Secrets Settings."
+          );
+        }
+      }
+
+      let lastError: any = null;
+      let success = false;
+      let finalResult: AIResponse | null = null;
+      const startTime = Date.now();
+      let providerUsed: AIProvider = preferredProvider;
 
       try {
-        // Validate support for document/PDF format
-        if (isPdf && ["openai", "groq", "anthropic"].includes(provider)) {
-          serverLogger.info("AIService", `Skipping provider [${provider}] for PDF document input (natively supported by Gemini/OpenRouter)`);
-          continue;
+        for (let i = 0; i < providersToTry.length; i++) {
+          const provider = providersToTry[i];
+          if (signal?.aborted) {
+            throw new Error("Request was cancelled by user.");
+          }
+          const providerStartTime = Date.now();
+          recordAIAttempt(provider);
+
+          try {
+            // Validate support for document/PDF format
+            if (isPdf && ["openai", "groq", "anthropic"].includes(provider)) {
+              serverLogger.info("AIService", `Skipping provider [${provider}] for PDF document input (natively supported by Gemini/OpenRouter)`);
+              continue;
+            }
+
+            serverLogger.info("AIService", `Attempting AI request using provider: [${provider}]`);
+            let resultText = "";
+            providerUsed = provider;
+
+            // Append active provider context
+            let activeSystemInstruction = systemInstruction || "";
+            const providerContext = `\n\n[Active AI Engine Context: You are currently running on the "${provider}" provider backend. If the user asks which AI provider, model, engine, or backend you are currently using, you MUST truthfully tell them that you are currently using ${provider}.]`;
+            if (activeSystemInstruction) {
+              activeSystemInstruction += providerContext;
+            } else {
+              activeSystemInstruction = providerContext;
+            }
+
+            if (provider === "gemini") {
+              resultText = await callGemini(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+            } else if (provider === "openai") {
+              resultText = await callOpenAI(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+            } else if (provider === "groq") {
+              resultText = await callGroq(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+            } else if (provider === "openrouter") {
+              resultText = await callOpenRouter(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+            } else if (provider === "anthropic") {
+              resultText = await callAnthropic(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+            }
+
+            if (!resultText || resultText.trim() === "") {
+              throw new Error(`Provider ${provider} returned an empty or invalid response.`);
+            }
+
+            const providerDuration = Date.now() - providerStartTime;
+            recordAISuccess(provider, providerDuration);
+            serverLogger.info("AIService", `Successfully received response from provider: [${provider}] in ${providerDuration}ms`);
+            
+            // Save in cache
+            responseCache.set(cacheKey, {
+              text: resultText,
+              providerUsed: provider,
+              timestamp: Date.now()
+            });
+            
+            success = true;
+            finalResult = {
+              text: resultText,
+              providerUsed: provider
+            };
+            break;
+          } catch (err: any) {
+            const providerDuration = Date.now() - providerStartTime;
+            const errMsg = err.message || String(err);
+            recordAIFailure(provider, errMsg);
+
+            if (provider === "anthropic" && (errMsg.includes("credit balance") || errMsg.includes("Credit balance") || errMsg.includes("billing") || errMsg.includes("Billing") || errMsg.includes("status 400"))) {
+              serverLogger.warn("AIService", "Disabling Anthropic provider dynamically due to credit balance/billing failure.");
+              isAnthropicDisabled = true;
+            }
+
+            const nextProvider = providersToTry[i + 1] || "none";
+            serverLogger.aiFallback(provider, nextProvider, errMsg, providerDuration);
+            lastError = err;
+            
+            // Propagate immediate aborts
+            if (err?.name === "AbortError" || err?.message?.includes("cancelled") || signal?.aborted) {
+              throw err;
+            }
+          }
         }
 
-        serverLogger.info("AIService", `Attempting AI request using provider: [${provider}]`);
-        let resultText = "";
-        providerUsed = provider;
-
-        // Append active provider context
-        let activeSystemInstruction = systemInstruction || "";
-        const providerContext = `\n\n[Active AI Engine Context: You are currently running on the "${provider}" provider backend. If the user asks which AI provider, model, engine, or backend you are currently using, you MUST truthfully tell them that you are currently using ${provider}.]`;
-        if (activeSystemInstruction) {
-          activeSystemInstruction += providerContext;
-        } else {
-          activeSystemInstruction = providerContext;
+        if (finalResult) {
+          return finalResult;
         }
-
-        if (provider === "gemini") {
-          resultText = await callGemini(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
-        } else if (provider === "openai") {
-          resultText = await callOpenAI(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
-        } else if (provider === "groq") {
-          resultText = await callGroq(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
-        } else if (provider === "openrouter") {
-          resultText = await callOpenRouter(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
-        } else if (provider === "anthropic") {
-          resultText = await callAnthropic(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
-        }
-
-        if (!resultText || resultText.trim() === "") {
-          throw new Error(`Provider ${provider} returned an empty or invalid response.`);
-        }
-
-        const providerDuration = Date.now() - providerStartTime;
-        recordAISuccess(provider, providerDuration);
-        serverLogger.info("AIService", `Successfully received response from provider: [${provider}] in ${providerDuration}ms`);
-        
-        // Save in cache
-        responseCache.set(cacheKey, {
-          text: resultText,
-          providerUsed: provider,
-          timestamp: Date.now()
-        });
-        
-        success = true;
-        finalResult = {
-          text: resultText,
-          providerUsed: provider
-        };
-        break;
+        throw new Error(`All configured AI Providers failed to respond. Please try again shortly.`);
       } catch (err: any) {
-        const providerDuration = Date.now() - providerStartTime;
-        const errMsg = err.message || String(err);
-        recordAIFailure(provider, errMsg);
-
-        if (provider === "anthropic" && (errMsg.includes("credit balance") || errMsg.includes("Credit balance") || errMsg.includes("billing") || errMsg.includes("Billing") || errMsg.includes("status 400"))) {
-          serverLogger.warn("AIService", "Disabling Anthropic provider dynamically due to credit balance/billing failure.");
-          isAnthropicDisabled = true;
-        }
-
-        const nextProvider = providersToTry[i + 1] || "none";
-        serverLogger.aiFallback(provider, nextProvider, errMsg, providerDuration);
         lastError = err;
-        
-        // Propagate immediate aborts
-        if (err?.name === "AbortError" || err?.message?.includes("cancelled") || signal?.aborted) {
-          throw err;
-        }
+        throw err;
+      } finally {
+        const responseTimeMs = Date.now() - startTime;
+        // Log details of request
+        const errorMsg = success ? null : (lastError?.message || String(lastError));
+        firebaseDB.saveAIRequestLog({
+          id: `ailog-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+          provider: providerUsed,
+          endpoint: messages.length > 1 ? "chat" : "solve",
+          responseTimeMs,
+          success,
+          error: errorMsg,
+          timestamp: new Date().toISOString()
+        }).catch(e => console.error("[AIService] Failed to write AI request metrics log:", e));
       }
     }
-
-    if (finalResult) {
-      return finalResult;
-    }
-    throw new Error(`All configured AI Providers failed to respond. Please try again shortly.`);
-  } catch (err: any) {
-    lastError = err;
-    throw err;
-  } finally {
-    const responseTimeMs = Date.now() - startTime;
-    // Log details of request
-    const errorMsg = success ? null : (lastError?.message || String(lastError));
-    firebaseDB.saveAIRequestLog({
-      id: `ailog-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
-      provider: providerUsed,
-      endpoint: messages.length > 1 ? "chat" : "solve",
-      responseTimeMs,
-      success,
-      error: errorMsg,
-      timestamp: new Date().toISOString()
-    }).catch(e => console.error("[AIService] Failed to write AI request metrics log:", e));
-  }
+  );
 }
 
 // ----------------------------------------------------
@@ -846,7 +866,7 @@ async function callOpenRouter(
     model,
     messages: formattedMessages,
     temperature: 0.7,
-    max_tokens: 4000
+    max_tokens: 2000
   };
 
   if (responseSchema) {
@@ -1056,6 +1076,39 @@ export function enhancePromptForCategory(prompt: string, category?: string, qual
 
 export const enhancePromptByCategory = enhancePromptForCategory;
 
+export async function generateImagePollinations(
+  prompt: string,
+  aspectRatio = "1:1",
+  signal?: AbortSignal,
+  timeoutMs = 25000
+): Promise<{ imageUrl: string; revisedPrompt?: string }> {
+  let width = 1024;
+  let height = 1024;
+  if (aspectRatio === "16:9") { width = 1280; height = 720; }
+  else if (aspectRatio === "9:16") { width = 720; height = 1280; }
+  else if (aspectRatio === "4:3") { width = 1024; height = 768; }
+  else if (aspectRatio === "3:4") { width = 768; height = 1024; }
+
+  const seed = Math.floor(Math.random() * 1000000);
+  const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}`;
+
+  try {
+    const res = await fetchWithTimeout(pollinationsUrl, { signal }, timeoutMs);
+    if (res.ok) {
+      const buffer = await res.arrayBuffer();
+      const b64 = Buffer.from(buffer).toString("base64");
+      const mime = res.headers.get("content-type") || "image/jpeg";
+      if (b64.length > 100) {
+        return { imageUrl: `data:${mime};base64,${b64}`, revisedPrompt: prompt };
+      }
+    }
+  } catch (e: any) {
+    serverLogger.warn("AIServiceImage", `Pollinations fetch failed: ${e.message}`);
+  }
+
+  return { imageUrl: pollinationsUrl, revisedPrompt: prompt };
+}
+
 export async function generateImageGemini(
   prompt: string,
   aspectRatio = "1:1",
@@ -1073,92 +1126,97 @@ export async function generateImageGemini(
   else if (aspectRatio === "9:16") geminiRatio = "9:16";
   else if (aspectRatio === "3:4" || aspectRatio === "4:3") geminiRatio = aspectRatio;
 
-  // Try GoogleGenAI SDK first
+  const candidateModels = ["imagen-3.0-generate-002", "imagen-3.0-fast-generate-001", "imagen-3.0-generate-001"];
+
+  // 1. Try GoogleGenAI SDK with candidate models
   const gemini = getGeminiClient();
   if (gemini && typeof (gemini.models as any).generateImages === "function") {
-    try {
-      const sdkRes = await withTimeoutAndSignal(
-        async () => {
-          return await (gemini.models as any).generateImages({
-            model: "imagen-3.0-generate-002",
-            prompt,
-            config: {
-              numberOfImages: 1,
-              outputMimeType: "image/jpeg",
-              aspectRatio: geminiRatio,
-            },
-          });
-        },
-        timeoutMs,
-        "Gemini Imagen SDK request timed out",
-        signal
-      );
+    for (const modelCandidate of candidateModels) {
+      try {
+        const sdkRes = await withTimeoutAndSignal(
+          async () => {
+            return await (gemini.models as any).generateImages({
+              model: modelCandidate,
+              prompt,
+              config: {
+                numberOfImages: 1,
+                outputMimeType: "image/jpeg",
+                aspectRatio: geminiRatio,
+              },
+            });
+          },
+          Math.min(timeoutMs, 15000),
+          "Gemini Imagen SDK request timed out",
+          signal
+        );
 
-      const imageObj = sdkRes?.generatedImages?.[0]?.image;
-      const rawBytes = imageObj?.imageBytes;
-      if (rawBytes) {
-        let b64Str = "";
-        if (typeof rawBytes === "string") {
-          b64Str = rawBytes.replace(/\s+/g, "");
-        } else if (Buffer.isBuffer(rawBytes) || rawBytes instanceof Uint8Array) {
-          b64Str = Buffer.from(rawBytes).toString("base64");
+        const imageObj = sdkRes?.generatedImages?.[0]?.image;
+        const rawBytes = imageObj?.imageBytes;
+        if (rawBytes) {
+          let b64Str = "";
+          if (typeof rawBytes === "string") {
+            b64Str = rawBytes.replace(/\s+/g, "");
+          } else if (Buffer.isBuffer(rawBytes) || rawBytes instanceof Uint8Array) {
+            b64Str = Buffer.from(rawBytes).toString("base64");
+          }
+          if (b64Str.length > 50) {
+            const mime = imageObj?.mimeType || "image/jpeg";
+            const imageUrl = b64Str.startsWith("data:") ? b64Str : `data:${mime};base64,${b64Str}`;
+            return { imageUrl, revisedPrompt: prompt };
+          }
         }
-        if (b64Str.length > 50) {
-          const mime = imageObj?.mimeType || "image/jpeg";
-          const imageUrl = b64Str.startsWith("data:") ? b64Str : `data:${mime};base64,${b64Str}`;
-          return { imageUrl, revisedPrompt: prompt };
-        }
+      } catch (e: any) {
+        serverLogger.warn("AIServiceImage", `Gemini SDK generateImages with model ${modelCandidate} failed: ${e.message}`);
       }
-    } catch (e: any) {
-      serverLogger.warn("AIServiceImage", `Gemini SDK generateImages failed, trying REST API: ${e.message}`);
     }
   }
 
-  // Fallback to REST API predict endpoint
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey.trim()}`;
-  const response = await fetchWithTimeout(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      instances: [{ prompt }],
-      parameters: {
-        sampleCount: 1,
-        aspectRatio: geminiRatio,
-        outputOptions: { mimeType: "image/jpeg" }
-      }
-    }),
-    signal
-  }, timeoutMs);
-
-  if (!response.ok) {
-    const errText = await response.text().catch(() => "");
-    let errMsg = errText;
+  // 2. Try REST API predict endpoint with candidate models
+  for (const modelCandidate of candidateModels) {
     try {
-      const parsed = JSON.parse(errText);
-      if (parsed.error?.message) errMsg = parsed.error.message;
-    } catch (_) {}
-    throw new Error(`Gemini Imagen HTTP ${response.status}: ${errMsg}`);
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelCandidate}:predict?key=${apiKey.trim()}`;
+      const response = await fetchWithTimeout(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instances: [{ prompt }],
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: geminiRatio,
+            outputOptions: { mimeType: "image/jpeg" }
+          }
+        }),
+        signal
+      }, Math.min(timeoutMs, 12000));
+
+      if (response.ok) {
+        const data = await response.json();
+        const bytes = data?.predictions?.[0]?.bytesBase64Encoded || data?.predictions?.[0]?.image?.imageBytes;
+        if (bytes) {
+          let cleanB64 = "";
+          if (typeof bytes === "string") {
+            cleanB64 = bytes.replace(/\s+/g, "");
+          } else if (Buffer.isBuffer(bytes) || bytes instanceof Uint8Array) {
+            cleanB64 = Buffer.from(bytes).toString("base64");
+          }
+
+          if (cleanB64 && cleanB64.length >= 50) {
+            const imageUrl = cleanB64.startsWith("data:") ? cleanB64 : `data:image/jpeg;base64,${cleanB64}`;
+            return { imageUrl, revisedPrompt: prompt };
+          }
+        }
+      } else {
+        const errText = await response.text().catch(() => "");
+        serverLogger.warn("AIServiceImage", `Gemini REST predict with model ${modelCandidate} returned HTTP ${response.status}: ${errText}`);
+      }
+    } catch (e: any) {
+      serverLogger.warn("AIServiceImage", `Gemini REST predict error for model ${modelCandidate}: ${e.message}`);
+    }
   }
 
-  const data = await response.json();
-  const bytes = data?.predictions?.[0]?.bytesBase64Encoded || data?.predictions?.[0]?.image?.imageBytes;
-  if (!bytes) {
-    throw new Error("No valid base64 image data returned from Gemini Imagen REST API");
-  }
-
-  let cleanB64 = "";
-  if (typeof bytes === "string") {
-    cleanB64 = bytes.replace(/\s+/g, "");
-  } else if (Buffer.isBuffer(bytes) || bytes instanceof Uint8Array) {
-    cleanB64 = Buffer.from(bytes).toString("base64");
-  }
-
-  if (!cleanB64 || cleanB64.length < 50) {
-    throw new Error("Gemini Imagen REST API returned truncated or invalid base64 payload");
-  }
-
-  const imageUrl = cleanB64.startsWith("data:") ? cleanB64 : `data:image/jpeg;base64,${cleanB64}`;
-  return { imageUrl, revisedPrompt: prompt };
+  // 3. Fallback to Pollinations AI
+  serverLogger.info("AIServiceImage", "Gemini Imagen endpoints unavailable; using Pollinations AI fallback.");
+  return await generateImagePollinations(prompt, aspectRatio, signal);
 }
 
 export async function generateImageOpenAI(
@@ -1334,7 +1392,18 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
     };
   }
 
-  const config = getConfiguredImageProviders();
+  const payloadSize = revisedPrompt.length * 2;
+
+  return concurrencyQueue.enqueue(
+    {
+      category: "image_generation",
+      taskName: "executeImageGenRequest",
+      payloadSize,
+      timeoutMs,
+      signal
+    },
+    async () => {
+      const config = getConfiguredImageProviders();
 
   // Strict fallback sequence: Gemini -> OpenAI -> Fal.ai
   const fallbackOrder: ("gemini" | "openai" | "fal")[] = ["gemini", "openai", "fal"];
@@ -1447,7 +1516,19 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
     timestamp: new Date().toISOString()
   }).catch(e => console.error("[AIServiceImage] Failed to save AI request failure log:", e));
 
-  throw new Error(`All image generation attempts failed:\n${errors.join("\n")}`);
+  serverLogger.warn("AIServiceImage", `All configured image providers failed (${errors.join("; ")}). Falling back to Pollinations AI.`);
+  try {
+    const polRes = await generateImagePollinations(revisedPrompt, aspectRatio, signal);
+    return {
+      imageUrl: polRes.imageUrl,
+      providerUsed: "gemini" as any,
+      revisedPrompt
+    };
+  } catch (finalErr: any) {
+    throw new Error(`All image generation attempts failed:\n${errors.join("\n")}`);
+  }
+    }
+  );
 }
 
 export const generateImageWithFallback = executeImageGenRequest;

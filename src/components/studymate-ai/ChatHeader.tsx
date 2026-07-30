@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { Maximize2, Minimize2, ChevronDown, Settings, Brain, Sparkles, Image as ImageIcon, Trash2, Plus, X } from "lucide-react";
+import React from "react";
+import { Maximize2, Minimize2, ChevronDown, Settings, Brain, Sparkles, Image as ImageIcon, Trash2, Plus, X, Mic } from "lucide-react";
 import { UserProfile } from "../../types";
 import { ChatSession } from "./types";
 
@@ -19,6 +19,8 @@ interface ChatHeaderProps {
   onOpenNotebookLMStudio?: () => void;
   onOpenImageGenerator?: () => void;
   activeDocumentCount?: number;
+  showSettingsModal: boolean;
+  setShowSettingsModal: (val: boolean) => void;
 }
 
 export function ChatHeader({
@@ -33,10 +35,12 @@ export function ChatHeader({
   onOpenSessionsMenu,
   onCreateNewChat,
   onDeleteCurrentChat,
+  onOpenLiveVoiceTutor,
   onOpenNotebookLMStudio,
   onOpenImageGenerator,
+  showSettingsModal,
+  setShowSettingsModal,
 }: ChatHeaderProps) {
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
 
   return (
     <>
@@ -154,10 +158,24 @@ export function ChatHeader({
                     setShowSettingsModal(false);
                     onOpenImageGenerator();
                   }}
-                  className="w-full p-3 bg-slate-50 dark:bg-slate-800/50 hover:bg-purple-50 dark:hover:bg-purple-950/30 rounded-xl border border-slate-200/60 dark:border-slate-700/50 flex items-center space-x-2.5 text-left transition font-semibold text-slate-800 dark:text-slate-200"
+                  className="w-full p-3 bg-slate-50 dark:bg-slate-800/50 hover:bg-purple-50 dark:hover:bg-purple-950/30 rounded-xl border border-slate-200/60 dark:border-slate-700/50 flex items-center space-x-2.5 text-left transition font-semibold text-slate-800 dark:text-slate-200 cursor-pointer"
                 >
                   <ImageIcon className="w-4 h-4 text-purple-500" />
                   <span>Open AI Image Generator</span>
+                </button>
+              )}
+
+              {onOpenLiveVoiceTutor && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSettingsModal(false);
+                    onOpenLiveVoiceTutor();
+                  }}
+                  className="w-full p-3 bg-slate-50 dark:bg-slate-800/50 hover:bg-pink-50 dark:hover:bg-pink-950/30 rounded-xl border border-slate-200/60 dark:border-slate-700/50 flex items-center space-x-2.5 text-left transition font-semibold text-slate-800 dark:text-slate-200 cursor-pointer"
+                >
+                  <Mic className="w-4 h-4 text-pink-500" />
+                  <span>Open Live Voice Tutor</span>
                 </button>
               )}
 

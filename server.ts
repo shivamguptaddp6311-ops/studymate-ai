@@ -23,6 +23,8 @@ import {
   detectMemoryRetrievalTriggers,
   extractAndSaveMemoriesInBackground
 } from "./server/memoryService";
+import { concurrencyQueue } from "./server/concurrencyQueue";
+import { circuitBreaker } from "./server/circuitBreaker";
 import {
   serverLogger,
   slowRequestMiddleware,
@@ -1171,6 +1173,61 @@ app.get("/api/ai/providers", (req, res) => {
     textProviders: getConfiguredProviders(),
     imageProviders: getConfiguredImageProviders()
   });
+});
+
+// Scanned PDF Page OCR Endpoint (Bilingual English + Hindi Support)
+app.post("/api/ai/ocr-pdf-page", requireAuth, async (req, res) => {
+  const controller = new AbortController();
+  req.on("close", () => {
+    controller.abort();
+  });
+
+  try {
+    const { image, pageNumber = 1, provider = "auto", timeoutMs } = req.body;
+
+    if (!image || typeof image !== "string" || !image.startsWith("data:image/")) {
+      return res.status(400).json({ error: "A valid base64 page image Data URL is required." });
+    }
+
+    const emailNorm = (req as any).user.email.toLowerCase().trim();
+    const lockKey = `${emailNorm}:${req.path}:p${pageNumber}:${image.slice(0, 50)}`;
+
+    const resultText = await withDuplicatePrevention(lockKey, async () => {
+      const systemInstruction = `You are StudyMate AI's high-precision Optical Character Recognition (OCR) engine.
+Your task is to transcribe all readable text from this scanned PDF page image.
+
+CRITICAL OCR INSTRUCTIONS:
+1. LANGUAGE SUPPORT: Extract text in both English and Hindi (Devanagari script Unicode: e.g. हिन्दी / संस्कृत) with complete accuracy.
+2. PRESERVE STRUCTURE: Retain exact headings, paragraphs, bullet points, numbered lists, tables, mathematical equations, and formulas.
+3. NO PREAMBLE: Output ONLY the verbatim extracted text. Do NOT add introduction text (e.g. "Here is the extracted text:"), conclusions, or extra commentary.
+4. EMPTY PAGES: If the page contains no readable text or is purely a blank graphic, return "[Page ${pageNumber} has no readable text]".`;
+
+      const response = await executeAIRequest({
+        messages: [{ role: "user", content: `Extract all text from page ${pageNumber} of this scanned document.` }],
+        systemInstruction,
+        image,
+        preferredProvider: provider as AIProvider,
+        timeoutMs: timeoutMs ? Number(timeoutMs) : 30000,
+        signal: controller.signal
+      });
+
+      return sanitizeAIOutputText(response.text || "");
+    });
+
+    res.json({ pageNumber, text: resultText });
+  } catch (error: any) {
+    if (error.message?.includes("timed out")) {
+      return res.status(504).json({ error: error.message });
+    }
+    if (error.message?.includes("cancelled") || controller.signal.aborted) {
+      return res.status(499).json({ error: "Request was cancelled." });
+    }
+    if (error.message?.includes("in progress")) {
+      return res.status(409).json({ error: error.message });
+    }
+    console.error("PDF page OCR error:", error);
+    res.status(500).json({ error: "Failed to perform OCR on PDF page." });
+  }
 });
 
 // Centralized AI Router Endpoint
@@ -2475,6 +2532,7 @@ app.get("/api/health", asyncHandler(async (req, res) => {
       heapTotal: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
     },
     aiProviders: getAIHealthMetrics(),
+    queueMetrics: concurrencyQueue.getMetrics(),
     env: process.env.NODE_ENV || "development"
   });
 }));
@@ -2488,7 +2546,33 @@ app.get("/api/ai/health", (req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     configuredProviders: configured,
-    providerHealth: metrics
+    providerHealth: metrics,
+    queueMetrics: concurrencyQueue.getMetrics()
+  });
+});
+
+// 4. Concurrency Queue Metrics & Status Endpoint
+app.get("/api/ai/queue-metrics", (req, res) => {
+  res.json(concurrencyQueue.getMetrics());
+});
+
+// 5. Circuit Breaker Metrics & Status Endpoint
+app.get("/api/ai/circuit-breaker", (req, res) => {
+  res.json({
+    metrics: circuitBreaker.getMetrics(),
+    configuredProviders: getConfiguredProviders(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// 6. Reset Circuit Breaker Endpoint
+app.post("/api/ai/circuit-breaker/reset", (req, res) => {
+  const { provider } = req.body || {};
+  circuitBreaker.reset(provider);
+  res.json({
+    success: true,
+    message: provider ? `Circuit breaker reset for provider [${provider}].` : "Circuit breaker reset for all AI providers.",
+    metrics: circuitBreaker.getMetrics()
   });
 });
 

@@ -166,29 +166,25 @@ export function useChat(profile?: UserProfile) {
   const deleteSession = useCallback((sessionId: string) => {
     if (!sessionId) return activeSessionId;
 
+    const remaining = sessions.filter(s => s.id !== sessionId);
     let nextActiveId = activeSessionId;
 
-    setSessions(prevSessions => {
-      const remaining = prevSessions.filter(s => s.id !== sessionId);
-
-      if (remaining.length === 0) {
-        // If all chats deleted, automatically create a fresh empty chat session
-        const freshSession = createDefaultSession(profile);
-        nextActiveId = freshSession.id;
-        return [freshSession];
-      }
-
+    if (remaining.length === 0) {
+      // If all chats deleted, automatically create a fresh empty chat session
+      const freshSession = createDefaultSession(profile);
+      nextActiveId = freshSession.id;
+      setSessions([freshSession]);
+    } else {
       if (sessionId === activeSessionId) {
         // Automatically switch to another valid chat session
         nextActiveId = remaining[0].id;
       }
-
-      return remaining;
-    });
+      setSessions(remaining);
+    }
 
     setActiveSessionId(nextActiveId);
     return nextActiveId;
-  }, [activeSessionId, profile]);
+  }, [activeSessionId, profile, sessions]);
 
   const deleteActiveChat = useCallback(() => {
     return deleteSession(activeSessionId);

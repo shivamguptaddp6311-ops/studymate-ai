@@ -159,7 +159,11 @@ export function setupGlobalErrorMonitoring(): () => void {
   };
 
   const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-    logger.error("GlobalUnhandledRejection", "Unhandled promise rejection detected", event.reason);
+    const reasonMsg = event.reason?.message || (typeof event.reason === "string" ? event.reason : "Unhandled promise rejection detected");
+    logger.error("GlobalUnhandledRejection", reasonMsg, event.reason);
+    if (typeof event.preventDefault === "function") {
+      event.preventDefault();
+    }
   };
 
   window.addEventListener("error", handleWindowError);

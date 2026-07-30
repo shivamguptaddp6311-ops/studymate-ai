@@ -16,7 +16,7 @@ interface MessageListProps {
   onRetryRequest?: () => void;
   onCancelRequest: () => void;
   onCopyText: (text: string) => void;
-  onSpeakText: (text: string) => void;
+  onSpeakText: (text: string, msgId: string) => void;
   speakingMsgId: string | null;
   suggestions: Array<{ label: string; text: string }>;
   onSelectSuggestion: (text: string) => void;
@@ -85,7 +85,7 @@ export function MessageList({
           msg={msg}
           onCopyText={onCopyText}
           onSpeakText={onSpeakText}
-          isSpeaking={speakingMsgId === "speaking"}
+          isSpeaking={speakingMsgId === msg.id}
           onJumpToCitation={onJumpToCitation}
         />
       ))}

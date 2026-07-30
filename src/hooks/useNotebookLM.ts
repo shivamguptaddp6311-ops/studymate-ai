@@ -253,7 +253,7 @@ Format your response STRICTLY as a JSON object inside a \`\`\`json markdown bloc
 
     try {
       let token = localStorage.getItem("studymate_token") || "";
-      let email = localStorage.getItem("studymate_logged_in_email") || "shivamguptaddp6312@gmail.com";
+      let email = localStorage.getItem("studymate_logged_in_email") || `guest-${Date.now()}@studymate.app`;
 
       if (!token) {
         try {

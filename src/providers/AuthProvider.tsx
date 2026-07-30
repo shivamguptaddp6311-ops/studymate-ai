@@ -176,11 +176,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const cachedToken = window.localStorage.getItem("studymate_token");
 
         if (cachedToken) {
-          setLoggedInEmail(cachedEmail || "shivamguptaddp6312@gmail.com");
+          setLoggedInEmail(cachedEmail || `guest-${Date.now()}@studymate.app`);
           setSessionToken(cachedToken);
         } else {
           try {
-            const emailToUse = cachedEmail || "shivamguptaddp6312@gmail.com";
+            const emailToUse = cachedEmail || `guest-${Date.now()}@studymate.app`;
             const res = await fetch("/api/auth/guest-token", {
               method: "POST",
               headers: { "Content-Type": "application/json" },

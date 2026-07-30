@@ -85,7 +85,7 @@ export function useVoice() {
     }
   };
 
-  const speakText = (text: string) => {
+  const speakText = (text: string, msgId: string) => {
     if (!window.speechSynthesis) return;
 
     if (window.speechSynthesis.speaking) {
@@ -106,7 +106,7 @@ export function useVoice() {
     utterance.onend = () => setSpeakingMsgId(null);
     utterance.onerror = () => setSpeakingMsgId(null);
 
-    setSpeakingMsgId("speaking");
+    setSpeakingMsgId(msgId);
     window.speechSynthesis.speak(utterance);
   };
 

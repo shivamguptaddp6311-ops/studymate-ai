@@ -60,7 +60,7 @@ export function useAI() {
 
     try {
       let token = localStorage.getItem("studymate_token") || window.localStorage.getItem("studymate_token") || "";
-      let email = localStorage.getItem("studymate_logged_in_email") || window.localStorage.getItem("studymate_logged_in_email") || "shivamguptaddp6312@gmail.com";
+      let email = localStorage.getItem("studymate_logged_in_email") || window.localStorage.getItem("studymate_logged_in_email") || `guest-${Date.now()}@studymate.app`;
 
       if (!token) {
         try {
@@ -238,7 +238,7 @@ ${data.conceptualExplanation || ""}`;
 
     try {
       let token = localStorage.getItem("studymate_token") || window.localStorage.getItem("studymate_token") || "";
-      let email = localStorage.getItem("studymate_logged_in_email") || window.localStorage.getItem("studymate_logged_in_email") || "shivamguptaddp6312@gmail.com";
+      let email = localStorage.getItem("studymate_logged_in_email") || window.localStorage.getItem("studymate_logged_in_email") || `guest-${Date.now()}@studymate.app`;
 
       if (!token) {
         try {

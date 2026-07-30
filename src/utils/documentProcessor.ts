@@ -104,9 +104,89 @@ function createChunks(docId: string, docName: string, pages: DocumentPage[]): Do
 }
 
 /**
- * Extract text from PDF file using pdfjs-dist
+ * Detects whether extracted text is insufficient (indicating a scanned or image-based PDF page).
  */
-export async function extractPdfText(file: File): Promise<{ pages: DocumentPage[]; fullText: string }> {
+export function isInsufficientText(text: string): boolean {
+  if (!text || !text.trim()) return true;
+  const cleaned = text.replace(/\[Page \d+ content.*?\]/gi, "").trim();
+  // Count meaningful English letters, numbers, or Hindi Devanagari characters (\u0900-\u097F)
+  const meaningfulChars = cleaned.replace(/[^a-zA-Z0-9\u0900-\u097F]/g, "");
+  return meaningfulChars.length < 20;
+}
+
+/**
+ * Render a PDF page proxy to canvas and export as a JPEG Base64 Data URL for OCR
+ */
+export async function renderPdfPageToDataUrl(page: any): Promise<string | null> {
+  try {
+    const viewport = page.getViewport({ scale: 1.5 });
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    canvas.height = viewport.height;
+    canvas.width = viewport.width;
+
+    await page.render({ canvasContext: context, viewport }).promise;
+    return canvas.toDataURL("image/jpeg", 0.85);
+  } catch (err) {
+    console.warn("[documentProcessor] Canvas render error for PDF page OCR:", err);
+    return null;
+  }
+}
+
+/**
+ * Perform OCR on a scanned PDF page image using the backend AI OCR endpoint
+ */
+export async function performPageOcr(imageDataUrl: string, pageNumber: number): Promise<string> {
+  try {
+    let token = localStorage.getItem("studymate_token") || window.localStorage.getItem("studymate_token") || "";
+    if (!token) {
+      const email = localStorage.getItem("studymate_logged_in_email") || `guest-${Date.now()}@studymate.app`;
+      const guestRes = await fetch("/api/auth/guest-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      if (guestRes.ok) {
+        const guestData = await guestRes.json();
+        token = guestData.token;
+        window.localStorage.setItem("studymate_token", token);
+      }
+    }
+
+    const res = await fetch("/api/ai/ocr-pdf-page", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        image: imageDataUrl,
+        pageNumber,
+        provider: localStorage.getItem("studymate_ai_provider") || "auto"
+      })
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.text && typeof data.text === "string" && data.text.trim()) {
+        return data.text.trim();
+      }
+    }
+  } catch (err) {
+    console.warn(`[documentProcessor] OCR failed for page ${pageNumber}:`, err);
+  }
+  return `[Page ${pageNumber} content - OCR unavailable]`;
+}
+
+/**
+ * Extract text from PDF file using pdfjs-dist with automatic OCR fallback for scanned pages
+ */
+export async function extractPdfText(
+  file: File,
+  onProgress?: (current: number, total: number, status: string) => void
+): Promise<{ pages: DocumentPage[]; fullText: string }> {
   const arrayBuffer = await file.arrayBuffer();
   const getDoc = pdfjsLib.getDocument || (pdfjsLib as any).default?.getDocument;
   if (typeof getDoc !== "function") {
@@ -119,15 +199,37 @@ export async function extractPdfText(file: File): Promise<{ pages: DocumentPage[
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
-    const pageText = textContent.items
+    let pageText = textContent.items
       .map((item: any) => item.str || "")
       .join(" ")
       .replace(/\s+/g, " ")
       .trim();
 
+    // 1. Detect if digital text extraction is insufficient (scanned/image-based page)
+    if (isInsufficientText(pageText)) {
+      if (onProgress) {
+        onProgress(i, pdf.numPages, `Running AI OCR fallback on scanned page ${i}/${pdf.numPages}...`);
+      }
+      // 2. Render page to canvas and perform OCR
+      const pageImageDataUrl = await renderPdfPageToDataUrl(page);
+      if (pageImageDataUrl) {
+        const ocrText = await performPageOcr(pageImageDataUrl, i);
+        if (ocrText && ocrText.trim()) {
+          pageText = ocrText;
+        }
+      }
+    } else if (onProgress) {
+      onProgress(i, pdf.numPages, `Extracted digital text for page ${i}/${pdf.numPages}`);
+    }
+
+    if (!pageText || !pageText.trim()) {
+      pageText = `[Page ${i} content]`;
+    }
+
+    // 3. Preserve page numbers and merge extracted text seamlessly
     pages.push({
       pageNumber: i,
-      text: pageText || `[Page ${i} content]`
+      text: pageText
     });
     fullTextParts.push(`--- Page ${i} ---\n${pageText}`);
   }

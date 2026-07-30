@@ -1,5 +1,6 @@
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
+import { concurrencyQueue } from "./concurrencyQueue";
 
 dotenv.config();
 
@@ -997,73 +998,82 @@ export async function executeWebSearch(query: string): Promise<WebSearchResponse
     return { results: [], sourceUsed: "empty", intent: "general_web", responseTimeMs: 0 };
   }
 
-  const startOverall = Date.now();
+  return concurrencyQueue.enqueue(
+    {
+      category: "web_search",
+      taskName: `executeWebSearch:"${sanitized.substring(0, 30)}"`,
+      payloadSize: query.length * 2
+    },
+    async () => {
+      const startOverall = Date.now();
 
-  // 1. Intent Detection
-  const intent = await classifyQueryIntent(sanitized);
+      // 1. Intent Detection
+      const intent = await classifyQueryIntent(sanitized);
 
-  // 12. Smart Cache Check
-  const ttlMs = getCacheTtlMs(intent);
-  if (ttlMs > 0) {
-    const cached = searchCache.get(sanitized);
-    if (cached && (Date.now() - cached.timestamp < cached.ttlMs)) {
-      console.log(`[HybridRetrieval Log] Smart Cache HIT for query: "${sanitized}" | Intent: ${intent}`);
-      return cached.response;
+      // 12. Smart Cache Check
+      const ttlMs = getCacheTtlMs(intent);
+      if (ttlMs > 0) {
+        const cached = searchCache.get(sanitized);
+        if (cached && (Date.now() - cached.timestamp < cached.ttlMs)) {
+          console.log(`[HybridRetrieval Log] Smart Cache HIT for query: "${sanitized}" | Intent: ${intent}`);
+          return cached.response;
+        }
+      }
+
+      // 2. Query Expansion
+      const expandedQueries = await expandQuery(sanitized, intent);
+      console.log(`[HybridRetrieval Log] Query: "${sanitized}" | Intent: ${intent} | Expanded Variations:`, expandedQueries);
+
+      // 3. Parallel Search across providers
+      const { results: rawResults, sources } = await executeParallelSearch(expandedQueries, intent);
+
+      if (rawResults.length === 0) {
+        throw new Error("All web search providers (Exa, Tavily, Serper) failed or returned no results for this query.");
+      }
+
+      // 4. Quality Scoring & Deduplication
+      const scoredResults = scoreAndRankResults(rawResults, sanitized, intent);
+
+      // 5. Firecrawl Deep Extraction on top results
+      const enhancedResults = await enhanceResultsWithFirecrawl(scoredResults);
+
+      // 6. Intelligent Chunking
+      let allChunks: Chunk[] = [];
+      for (const r of enhancedResults.slice(0, 4)) {
+        const resultChunks = chunkSearchResult(r);
+        allChunks.push(...resultChunks);
+      }
+
+      // 7. Semantic Reranking
+      const rerankedChunks = rerankChunks(allChunks, sanitized, 6);
+
+      // 8. Evidence Verification
+      const verification = verifyEvidence(rerankedChunks);
+
+      const durationMs = Date.now() - startOverall;
+      const sourceUsedStr = sources.length > 0 ? sources.join("+") : "hybrid";
+
+      console.log(`[HybridRetrieval Log] Hybrid Pipeline Completed in ${durationMs}ms | Sources: ${sourceUsedStr} | Top Results: ${enhancedResults.length} | Top Chunks: ${rerankedChunks.length}`);
+
+      const responsePayload: WebSearchResponse = {
+        results: enhancedResults,
+        chunks: rerankedChunks,
+        sourceUsed: sourceUsedStr,
+        intent,
+        responseTimeMs: durationMs,
+        expandedQueries,
+        evidenceVerification: verification
+      };
+
+      if (ttlMs > 0) {
+        searchCache.set(sanitized, {
+          response: responsePayload,
+          timestamp: Date.now(),
+          ttlMs
+        });
+      }
+
+      return responsePayload;
     }
-  }
-
-  // 2. Query Expansion
-  const expandedQueries = await expandQuery(sanitized, intent);
-  console.log(`[HybridRetrieval Log] Query: "${sanitized}" | Intent: ${intent} | Expanded Variations:`, expandedQueries);
-
-  // 3. Parallel Search across providers
-  const { results: rawResults, sources } = await executeParallelSearch(expandedQueries, intent);
-
-  if (rawResults.length === 0) {
-    throw new Error("All web search providers (Exa, Tavily, Serper) failed or returned no results for this query.");
-  }
-
-  // 4. Quality Scoring & Deduplication
-  const scoredResults = scoreAndRankResults(rawResults, sanitized, intent);
-
-  // 5. Firecrawl Deep Extraction on top results
-  const enhancedResults = await enhanceResultsWithFirecrawl(scoredResults);
-
-  // 6. Intelligent Chunking
-  let allChunks: Chunk[] = [];
-  for (const r of enhancedResults.slice(0, 4)) {
-    const resultChunks = chunkSearchResult(r);
-    allChunks.push(...resultChunks);
-  }
-
-  // 7. Semantic Reranking
-  const rerankedChunks = rerankChunks(allChunks, sanitized, 6);
-
-  // 8. Evidence Verification
-  const verification = verifyEvidence(rerankedChunks);
-
-  const durationMs = Date.now() - startOverall;
-  const sourceUsedStr = sources.length > 0 ? sources.join("+") : "hybrid";
-
-  console.log(`[HybridRetrieval Log] Hybrid Pipeline Completed in ${durationMs}ms | Sources: ${sourceUsedStr} | Top Results: ${enhancedResults.length} | Top Chunks: ${rerankedChunks.length}`);
-
-  const responsePayload: WebSearchResponse = {
-    results: enhancedResults,
-    chunks: rerankedChunks,
-    sourceUsed: sourceUsedStr,
-    intent,
-    responseTimeMs: durationMs,
-    expandedQueries,
-    evidenceVerification: verification
-  };
-
-  if (ttlMs > 0) {
-    searchCache.set(sanitized, {
-      response: responsePayload,
-      timestamp: Date.now(),
-      ttlMs
-    });
-  }
-
-  return responsePayload;
+  );
 }

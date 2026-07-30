@@ -39,4 +39,5 @@ export interface StudyMateAIProps {
   onAddNotification?: (title: string, text: string, type: "success" | "info" | "alert") => void;
   isFullScreen?: boolean;
   onToggleFullScreen?: () => void;
+  onOpenAISettings?: (fn: () => void) => void;
 }

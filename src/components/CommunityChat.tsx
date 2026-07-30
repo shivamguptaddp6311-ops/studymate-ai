@@ -313,9 +313,9 @@ export default function CommunityChat({
   useEffect(() => {
     if (!rulesAgreed) return;
 
-    fetchMessages();
+    fetchMessages().catch((e) => console.warn("fetchMessages error:", e));
     if (isUserAdmin) {
-      fetchAdminStats();
+      fetchAdminStats().catch((e) => console.warn("fetchAdminStats error:", e));
     }
 
     const token = localStorage.getItem("studymate_token") || "";

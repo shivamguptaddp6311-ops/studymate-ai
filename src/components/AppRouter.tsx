@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, lazy, Suspense } from "react";
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { UserProfile, Alarm } from "../types";
 import { startRingtonePlayback, stopRingtonePlayback } from "./Alarms";
@@ -234,6 +234,8 @@ export const AppRouter: React.FC = () => {
     };
   }, []);
 
+  const aiSettingsHandlerRef = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     setAiFullScreen(false);
     setChatFullScreen(false);
@@ -313,7 +315,7 @@ export const AppRouter: React.FC = () => {
     (currentTab === "chat" && chatFullScreen);
 
   return (
-    <div className="min-h-screen md:h-screen md:overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col md:flex-row font-sans transition-colors duration-300">
+    <div className="h-dvh md:h-screen overflow-hidden bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 flex flex-col md:flex-row font-sans transition-colors duration-300">
       
       {/* Sidebar for Desktop */}
       <aside className={`hidden md:flex flex-col w-64 h-full bg-white/70 dark:bg-[#0c1326]/65 backdrop-blur-2xl border-r border-white/60 dark:border-white/10 shadow-[10px_0_30px_rgba(0,0,0,0.03)] dark:shadow-[16px_0_40px_rgba(0,0,0,0.4)] p-4 space-y-4 flex-shrink-0 z-20 relative overflow-hidden before:absolute before:inset-x-0 before:top-0 before:h-px before:bg-gradient-to-r before:from-transparent before:via-white/80 dark:before:via-white/20 before:to-transparent ${isFullScreenActive ? "md:!hidden" : ""}`}>
@@ -497,7 +499,13 @@ export const AppRouter: React.FC = () => {
             </button>
 
             <button 
-              onClick={() => setCurrentTab("settings")}
+              onClick={() => {
+                if (currentTab === "assistant" && aiSettingsHandlerRef.current) {
+                  aiSettingsHandlerRef.current();
+                } else {
+                  setCurrentTab("settings");
+                }
+              }}
               className={`p-2 border rounded-xl shadow-sm transition text-xs font-semibold cursor-pointer flex items-center space-x-1 ${
                 currentTab === "settings" 
                   ? "bg-indigo-600 border-indigo-600 text-white" 
@@ -785,6 +793,9 @@ export const AppRouter: React.FC = () => {
                   onAddNotification={handleAddNotification}
                   isFullScreen={aiFullScreen}
                   onToggleFullScreen={toggleAiFullScreen}
+                  onOpenAISettings={(fn) => {
+                    aiSettingsHandlerRef.current = fn;
+                  }}
                 />
               </Suspense>
             </AIErrorBoundary>
