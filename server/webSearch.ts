@@ -116,46 +116,101 @@ export function sanitizeSearchQuery(query: string): string {
 
 /**
  * Determines whether the user message requires real-time live web search.
+ * Intelligent Freshness Detection:
+ * - Detects explicit and implicit freshness intent.
+ * - Recognizes exam, admission, result, counselling, policy, and news queries.
+ * - Triggers web search automatically when freshness is required.
+ * - Avoids unnecessary web searches for evergreen topics (math problems, timeless concepts).
  */
 export async function shouldSearchWeb(message: string): Promise<boolean> {
   if (!message || typeof message !== "string") return false;
   const lower = message.toLowerCase().trim();
 
-  // Explicit live search indicators
-  const searchTriggers = [
-    "latest", "today", "current", "recent", "newest", "recently", "breaking news",
-    "weather", "stock price", "crypto price", "live sports", "sports score",
-    "news on", "what happened in", "yesterday", "who won", "current president",
-    "released today", "recently released", "scientific discoveries", "game today", "match today",
-    "research", "paper", "documentation", "api docs", "2026", "2025"
+  // 1. Freshness Triggers (Exams, Admissions, Results, Counselling, Policy, News, Current Events)
+  const examTriggers = [
+    "exam date", "exam schedule", "exam pattern", "exam timetable", "hall ticket",
+    "admit card", "answer key", "cutoff", "cut off", "merit list", "board exam date",
+    "jee main", "jee advanced", "neet ug", "neet pg", "upsc prelims", "gate exam",
+    "cat exam", "cuet", "clat", "toefl", "ielts", "sat exam", "marking scheme"
   ];
 
-  // Offline concepts to skip web search for
-  const skipTriggers = [
-    "solve", "integrate", "derivative", "equation", "math", "board exam", "cbse", "grammar", "history of",
-    "how to write", "explain concept", "scientific concept", "physics", "chemistry", "biology"
+  const admissionCounsellingTriggers = [
+    "admission", "admissions", "counselling", "counseling", "seat allotment",
+    "seat matrix", "registration date", "application form", "last date to apply",
+    "application deadline", "form release", "josaa", "csab", "mcc counselling",
+    "college admission", "university admission"
   ];
 
-  const hasSearchKeyword = searchTriggers.some(trigger => lower.includes(trigger));
-  const hasSkipKeyword = skipTriggers.some(trigger => lower.includes(trigger));
+  const resultTriggers = [
+    "result", "results", "scorecard", "percentile", "rank list", "rankcard",
+    "result date", "declared", "marksheet download", "pass percentage"
+  ];
 
-  if (hasSkipKeyword && !hasSearchKeyword) {
-    return false;
-  }
-  if (hasSearchKeyword) {
+  const policyNewsTriggers = [
+    "policy", "guidelines", "notification", "circular", "government policy",
+    "education policy", "nep 2020", "ugc", "aicte", "nta notification", "rule change",
+    "latest news", "breaking news", "today news", "headline", "press release",
+    "postponed", "rescheduled", "cancelled", "when will", "is out", "announced"
+  ];
+
+  const temporalTriggers = [
+    "latest", "today", "current", "recent", "newest", "recently", "weather",
+    "stock price", "crypto price", "live sports", "sports score", "news on",
+    "what happened in", "yesterday", "who won", "current president", "released today",
+    "recently released", "game today", "match today", "2025", "2026", "2027",
+    "this year", "next year", "upcoming"
+  ];
+
+  const allFreshnessTriggers = [
+    ...examTriggers,
+    ...admissionCounsellingTriggers,
+    ...resultTriggers,
+    ...policyNewsTriggers,
+    ...temporalTriggers
+  ];
+
+  // 2. Evergreen / Skip Triggers (Timeless educational/scientific/math topics)
+  const evergreenTriggers = [
+    "solve", "integrate", "derivative", "equation", "quadratic", "pythagoras",
+    "grammar rules", "past tense", "how to write an essay", "explain concept",
+    "scientific concept", "what is photosynthesis", "newton's laws", "periodic table",
+    "mitosis vs meiosis", "what is gravity", "speed of light", "definition of",
+    "formula for", "history of world war"
+  ];
+
+  const hasFreshnessKeyword = allFreshnessTriggers.some(trigger => lower.includes(trigger));
+  const hasEvergreenKeyword = evergreenTriggers.some(trigger => lower.includes(trigger));
+
+  // If query explicitly requests fresh information (exam date, result, counselling, 2026, etc.), ALWAYS trigger web search
+  if (hasFreshnessKeyword) {
     return true;
   }
 
-  // LLM-based classification fallback for ambiguous queries
+  // If query is strictly an evergreen topic without any freshness indicators, skip web search
+  if (hasEvergreenKeyword && !hasFreshnessKeyword) {
+    return false;
+  }
+
+  // 3. LLM-based classification fallback for ambiguous queries
   try {
     const gemini = getGeminiClient();
     if (gemini) {
-      const classificationPrompt = `Analyze the user query and decide if answering it accurately requires live, real-time, or current web information (current news, weather, stock price, recent tech releases, sports results, recent research, docs).
-If it's a standard educational question, math problem, general coding explanation, language lesson, history concept, or timeless general knowledge, respond "NO".
-Otherwise respond "YES".
-Respond with EXACTLY "YES" or "NO".
+      const classificationPrompt = `Analyze the user query and decide if answering it accurately requires live, real-time, or current web information.
+Examples requiring live web search ("YES"):
+- Exam dates, exam schedules, admit cards, cutoffs, syllabus updates (e.g., JEE, NEET, UPSC, CBSE).
+- College/University admissions, counselling schedules, seat allotment (e.g., JoSAA, MCC).
+- Exam results, scorecards, percentile declarations.
+- Government/Education policies, regulations, circulars, notifications.
+- Latest news, current affairs, breaking updates, weather, stocks, recent releases.
 
-Query: "${message}"`;
+Examples NOT requiring live web search ("NO"):
+- Evergreen math problems, equations, calculus derivatives, algebra.
+- Timeless scientific concepts (e.g., photosynthesis, Newton's laws, periodic table).
+- Standard grammar, language rules, generic essay structure.
+- Historical events, static textbook facts, general coding syntax without library updates.
+
+Query: "${message}"
+Respond with EXACTLY "YES" or "NO".`;
 
       const response = await Promise.race([
         gemini.models.generateContent({
@@ -192,14 +247,15 @@ export async function classifyQueryIntent(query: string): Promise<QueryIntent> {
   if (!query) return "general_web";
   const lower = query.toLowerCase().trim();
 
-  // Breaking & Latest News
+  // Breaking & Latest News / Policy Updates
   if (lower.includes("breaking") || lower.includes("live news") || lower.includes("just in")) {
     return "breaking_news";
   }
   if (
     lower.includes("news") || lower.includes("latest") || lower.includes("today") ||
     lower.includes("recent") || lower.includes("yesterday") || lower.includes("update today") ||
-    lower.includes("released today")
+    lower.includes("released today") || lower.includes("policy update") || lower.includes("government policy") ||
+    lower.includes("notification") || lower.includes("circular")
   ) {
     return "latest_news";
   }
@@ -246,8 +302,13 @@ export async function classifyQueryIntent(query: string): Promise<QueryIntent> {
     return "shopping";
   }
 
-  // Education
-  const eduKeywords = ["cbse", "ncert", "syllabus", "exam", "lesson", "concept", "definition", "chapter", "lecture"];
+  // Education (Exams, Admissions, Results, Counselling, Policy, Syllabus)
+  const eduKeywords = [
+    "cbse", "ncert", "syllabus", "exam", "lesson", "concept", "definition", "chapter", "lecture",
+    "admission", "admissions", "counselling", "counseling", "result", "results", "scorecard",
+    "admit card", "hall ticket", "cutoff", "cut off", "seat allotment", "jee", "neet", "upsc",
+    "gate", "cat", "cuet", "clat", "nep 2020", "ugc", "aicte", "nta"
+  ];
   if (eduKeywords.some(k => lower.includes(k))) {
     return "education";
   }
@@ -963,17 +1024,125 @@ export function compressContext(chunks: Chunk[], maxTotalChars = 3500): string {
   return compressedBlocks.join("\n\n---\n\n");
 }
 
+export interface CitationSourceInput {
+  title: string;
+  url: string;
+  domain?: string;
+  publishedDate?: string;
+  pageNumber?: number;
+  docName?: string;
+}
+
+export interface GroundingResult {
+  text: string;
+  validatedSources: Array<{
+    title: string;
+    url: string;
+    domain?: string;
+    publishedDate?: string;
+    pageNumber?: number;
+  }>;
+  hasCitations: boolean;
+  prunedInvalidCitationsCount: number;
+}
+
 /**
  * 10. Citation Engine
- * Formats citations for Gemini consumption.
+ * Formats citations for model consumption and grounds responses against evidence.
  */
 export function generateCitationsContext(results: SearchResult[]): string {
   return results.map((r, idx) => {
-    let line = `[${idx + 1}] "${r.title}" - ${r.domain || extractDomain(r.url)}`;
-    if (r.publishedDate) line += ` (Date: ${r.publishedDate})`;
+    let line = `[Source ${idx + 1}] Title: "${r.title}" | Domain: ${r.domain || extractDomain(r.url)}`;
+    if (r.publishedDate) line += ` | Date: ${r.publishedDate}`;
     line += `\nURL: ${r.url}`;
     return line;
-  }).join("\n");
+  }).join("\n\n");
+}
+
+/**
+ * Validates, grounds, and sanitizes AI response citations.
+ * - Links factual claims to supporting sources.
+ * - Preserves source titles and URLs.
+ * - Formats and preserves page numbers when available.
+ * - Prevents unsupported/hallucinated citation numbers (e.g., [99] when only 3 sources exist).
+ * - Maintains full compatibility with frontend rendering.
+ */
+export function groundResponseCitations(
+  responseText: string,
+  sources: CitationSourceInput[] = []
+): GroundingResult {
+  if (!responseText || typeof responseText !== "string") {
+    return {
+      text: responseText || "",
+      validatedSources: [],
+      hasCitations: false,
+      prunedInvalidCitationsCount: 0
+    };
+  }
+
+  // Preserve and sanitize valid sources
+  const validatedSources = sources.map((s) => ({
+    title: s.title || "Untitled Source",
+    url: s.url || "#",
+    domain: s.domain || (s.url && s.url !== "#" ? extractDomain(s.url) : "web"),
+    publishedDate: s.publishedDate,
+    pageNumber: s.pageNumber
+  }));
+
+  const maxValidIndex = validatedSources.length;
+  let prunedCount = 0;
+  let modifiedText = responseText;
+
+  if (maxValidIndex > 0) {
+    // 1. Detect and sanitize numeric citation tags like [1], [2], [99], [Source 1], [1, p. 3], [1, page 5]
+    const citationPattern = /\[(?:Source\s*)?(\d+)(?:\s*,\s*(?:p\.|page)\s*(\d+))?\]/gi;
+
+    modifiedText = modifiedText.replace(citationPattern, (match, numStr, pageStr) => {
+      const idx = parseInt(numStr, 10);
+      if (isNaN(idx) || idx < 1 || idx > maxValidIndex) {
+        // Unsupported/hallucinated citation index! Prune or remap
+        prunedCount++;
+        if (maxValidIndex === 1) {
+          return `[1${pageStr ? `, p. ${pageStr}` : ""}]`;
+        }
+        return ""; // Remove unsupported citation tag
+      }
+
+      // Valid index! Check if page number was explicitly specified in citation tag or fallback
+      if (pageStr) {
+        return `[${idx}, p. ${pageStr}]`;
+      }
+      return `[${idx}]`;
+    });
+
+    // Clean up empty brackets or orphaned spaces caused by pruning
+    modifiedText = modifiedText.replace(/\s*\[\]/g, "").replace(/\[\s*\]/g, "");
+
+    // 2. Check if text contains any inline citations after replacement
+    const hasInlineCitations = /\[\d+(?:\s*,\s*p\.\s*\d+)?\]/.test(modifiedText);
+
+    // 3. Fallback: If no citations exist in the text but sources were provided, auto-append citation footer tag
+    if (!hasInlineCitations && validatedSources.length > 0) {
+      const citationFooterTags = validatedSources
+        .map((s, i) => `[${i + 1}${s.pageNumber ? `, p. ${s.pageNumber}` : ""}]`)
+        .join(" ");
+      modifiedText = `${modifiedText.trim()}\n\n*(Sources: ${citationFooterTags})*`;
+    }
+
+    return {
+      text: modifiedText,
+      validatedSources,
+      hasCitations: true,
+      prunedInvalidCitationsCount: prunedCount
+    };
+  }
+
+  return {
+    text: modifiedText,
+    validatedSources: [],
+    hasCitations: false,
+    prunedInvalidCitationsCount: 0
+  };
 }
 
 /**

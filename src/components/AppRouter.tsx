@@ -462,7 +462,7 @@ export const AppRouter: React.FC = () => {
           <div>
             <h1 className="text-lg md:text-xl font-bold text-slate-950 dark:text-slate-50 tracking-tight capitalize flex items-center gap-2">
               <span>{currentTab === "dashboard" ? "🏠" : NAV_LINKS.find(l => l.id === currentTab)?.label === "10-Day Test" ? "🎯" : "📚"}</span>
-              <span>{currentTab === "dashboard" ? `Welcome Back, ${profile?.fullName || "Student"}!` : `${NAV_LINKS.find(l => l.id === currentTab)?.label || currentTab}`}</span>
+              <span>{currentTab === "dashboard" ? "Dashboard" : `${NAV_LINKS.find(l => l.id === currentTab)?.label || currentTab}`}</span>
             </h1>
             <p className="text-xs text-slate-400 font-medium">
               {currentTab === "dashboard" 
@@ -496,33 +496,6 @@ export const AppRouter: React.FC = () => {
             >
               <Type className="w-4 h-4 text-slate-500" />
               <span className="text-[10px] uppercase font-extrabold">{textSize}</span>
-            </button>
-
-            <button 
-              onClick={() => {
-                if (currentTab === "assistant" && aiSettingsHandlerRef.current) {
-                  aiSettingsHandlerRef.current();
-                } else {
-                  setCurrentTab("settings");
-                }
-              }}
-              className={`p-2 border rounded-xl shadow-sm transition text-xs font-semibold cursor-pointer flex items-center space-x-1 ${
-                currentTab === "settings" 
-                  ? "bg-indigo-600 border-indigo-600 text-white" 
-                  : "bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
-              }`}
-              title="Open Settings"
-              aria-label="Open Settings"
-            >
-              <Settings className="w-4 h-4" />
-            </button>
-
-            <button 
-              onClick={handleToggleDarkMode}
-              className="p-2 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl shadow-sm transition text-xs font-medium cursor-pointer"
-              title="Toggle theme mode"
-            >
-              {darkMode ? "☀️ Light" : "🌙 Dark"}
             </button>
 
             {/* Notification Bell */}

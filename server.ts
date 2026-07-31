@@ -10,8 +10,8 @@ import compression from "compression";
 import { rateLimit } from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { Type } from "@google/genai";
-import { executeAIRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter } from "./server/aiService";
-import { shouldSearchWeb, executeWebSearch, compressContext, generateCitationsContext } from "./server/webSearch";
+import { executeAIRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter, getAICacheMetrics, clearAICaches } from "./server/aiService";
+import { shouldSearchWeb, executeWebSearch, compressContext, generateCitationsContext, groundResponseCitations } from "./server/webSearch";
 import { firebaseDB, runAutomatedMigration, ChatUser, ChatMessage, ChatReport, AdminLog, SyncData, UserMemory } from "./server/firebase";
 import { getQuestions } from "./server/questionService";
 import {
@@ -29,9 +29,36 @@ import {
   serverLogger,
   slowRequestMiddleware,
   handleClientLogs,
-  getAIHealthMetrics
+  getAIHealthMetrics,
+  getAIHealthDashboardData
 } from "./server/logger";
 import { aiRateLimiter, imageGenRateLimiter } from "./server/middleware/rateLimiter";
+import { validateRequest } from "./server/middleware/validateRequest";
+import {
+  guestTokenSchema,
+  loginSchema,
+  refreshTokenSchema,
+  checkEmailSchema,
+  syncPushSchema,
+  quizQuestionsSchema,
+  geminiSolveSchema,
+  ocrPdfPageSchema,
+  aiRouteSchema,
+  generateImageSchema,
+  geminiChatSchema,
+  aiMemoryPostSchema,
+  aiMemoryDeleteSchema,
+  chapterMaterialsSchema,
+  suggestScheduleSchema,
+  chatStreamSchema,
+  chatMessagesQuerySchema,
+  chatPostMessageSchema,
+  chatReportSchema,
+  chatTypingSchema,
+  chatAdminActionSchema,
+  clientLogsSchema,
+  circuitBreakerResetSchema
+} from "./server/schemas/apiSchemas";
 
 dotenv.config();
 
@@ -488,17 +515,19 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
 // ----------------------------------------------------
 
 // Get configured/available AI providers
-app.get("/api/ai/providers", (req, res) => {
+app.get("/api/ai/providers", requireAuth, (req, res) => {
   try {
-    const providers = getConfiguredProviders();
-    res.json(providers);
+    res.json({
+      textProviders: getConfiguredProviders(),
+      imageProviders: getConfiguredImageProviders()
+    });
   } catch (err: any) {
     res.status(500).json({ error: "Failed to fetch providers." });
   }
 });
 
 // Get AI request logs and metrics
-app.get("/api/ai/metrics", async (req, res) => {
+app.get("/api/ai/metrics", requireAdmin, async (req, res) => {
   try {
     const logs = await firebaseDB.getAIRequestLogs();
     
@@ -557,7 +586,7 @@ const authLimiter = rateLimit({
 });
 
 // Auto-Session Guest Token Endpoint for Seamless Access
-app.post("/api/auth/guest-token", authLimiter, async (req, res) => {
+app.post("/api/auth/guest-token", authLimiter, validateRequest(guestTokenSchema), async (req, res) => {
   try {
     const rawEmail = req.body?.email || req.query?.email;
     let finalEmail: string;
@@ -610,7 +639,7 @@ app.post("/api/auth/guest-token", authLimiter, async (req, res) => {
 });
 
 // Secure Backend Authentication Endpoint
-app.post("/api/auth/login", authLimiter, async (req, res) => {
+app.post("/api/auth/login", authLimiter, validateRequest(loginSchema), async (req, res) => {
   try {
     const { email, idToken } = req.body || {};
     
@@ -710,7 +739,7 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
 });
 
 // Secure Token Refresh Endpoint
-app.post("/api/auth/refresh", authLimiter, async (req, res) => {
+app.post("/api/auth/refresh", authLimiter, validateRequest(refreshTokenSchema), async (req, res) => {
   try {
     let refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
     
@@ -764,7 +793,7 @@ app.post("/api/auth/logout", (req, res) => {
 });
 
 // Check if user email has an existing account
-app.get("/api/auth/check-email", async (req, res) => {
+app.get("/api/auth/check-email", validateRequest(checkEmailSchema), async (req, res) => {
   try {
     const { email } = req.query;
     if (!email || typeof email !== "string") {
@@ -793,7 +822,7 @@ app.get("/api/sync/pull", requireAuth, async (req, res) => {
 });
 
 // Sync Push endpoint
-app.post("/api/sync/push", requireAuth, async (req, res) => {
+app.post("/api/sync/push", requireAuth, validateRequest(syncPushSchema), async (req, res) => {
   try {
     const uid = (req as any).user.uid;
     const emailNorm = (req as any).user.email.toLowerCase().trim();
@@ -1018,7 +1047,7 @@ async function withDuplicatePrevention<T>(key: string, promiseFactory: () => Pro
 }
 
 // Endpoint for dynamic question generation and filtration
-app.post("/api/quiz/questions", requireAuth, asyncHandler(async (req, res) => {
+app.post("/api/quiz/questions", requireAuth, validateRequest(quizQuestionsSchema), asyncHandler(async (req, res) => {
   const { classGrade, subject, chapter, difficulty, excludeIds = [], count = 5 } = req.body;
 
   if (!classGrade || !subject || !chapter || !difficulty) {
@@ -1047,7 +1076,7 @@ app.post("/api/quiz/questions", requireAuth, asyncHandler(async (req, res) => {
 }));
 
 // 1. AI Solver Route - Multi-modal OCR & Step-by-Step Question Solver
-app.post("/api/gemini/solve", requireAuth, async (req, res) => {
+app.post("/api/gemini/solve", requireAuth, validateRequest(geminiSolveSchema), async (req, res) => {
   const controller = new AbortController();
   req.on("close", () => {
     controller.abort();
@@ -1190,16 +1219,8 @@ JSON schema to match:
   }
 });
 
-// GET configured AI providers for text and image generation
-app.get("/api/ai/providers", (req, res) => {
-  res.json({
-    textProviders: getConfiguredProviders(),
-    imageProviders: getConfiguredImageProviders()
-  });
-});
-
 // Scanned PDF Page OCR Endpoint (Bilingual English + Hindi Support)
-app.post("/api/ai/ocr-pdf-page", requireAuth, async (req, res) => {
+app.post("/api/ai/ocr-pdf-page", requireAuth, validateRequest(ocrPdfPageSchema), async (req, res) => {
   const controller = new AbortController();
   req.on("close", () => {
     controller.abort();
@@ -1254,7 +1275,7 @@ CRITICAL OCR INSTRUCTIONS:
 });
 
 // Centralized AI Router Endpoint
-app.post("/api/ai/route", requireAuth, async (req, res) => {
+app.post("/api/ai/route", requireAuth, validateRequest(aiRouteSchema), async (req, res) => {
   const controller = new AbortController();
   req.on("close", () => {
     controller.abort();
@@ -1309,7 +1330,7 @@ app.post("/api/ai/route", requireAuth, async (req, res) => {
 });
 
 // AI Image & Diagram Generation Route (Multi-Provider Fallback: Gemini -> OpenAI -> Fal.ai)
-app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, async (req, res) => {
+app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, validateRequest(generateImageSchema), async (req, res) => {
   const controller = new AbortController();
   req.on("close", () => {
     controller.abort();
@@ -1365,7 +1386,7 @@ app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, async (req,
 });
 
 // 2. Interactive Tutor Chat - Follow-up and conversation with full memory & reasoning
-app.post("/api/gemini/chat", requireAuth, async (req, res) => {
+app.post("/api/gemini/chat", requireAuth, validateRequest(geminiChatSchema), async (req, res) => {
   const controller = new AbortController();
   req.on("close", () => {
     controller.abort();
@@ -1467,10 +1488,11 @@ ${citationsStr}
 
 [Hybrid Retrieval Guidelines]:
 1. Synthesize answer clearly using the verified evidence provided above.
-2. Include inline citations matching source index tags (e.g. [1], [2]) when referencing facts.
-3. State explicitly in your reply that the response includes live web search information.
-4. Do NOT render raw markdown links in the main text body unless providing formal references.
-5. If sources contradict each other, note the discrepancy clearly without inventing unbacked claims.`;
+2. Link every factual claim directly to its supporting source using inline citations (e.g., [1], [2], [1, p. X]).
+3. Do NOT invent or output citation numbers higher than the provided sources count (${searchResult.results.length}).
+4. Preserve source titles and URLs when referencing evidence.
+5. State explicitly in your reply that the response includes live web search information.
+6. If sources contradict each other, note the discrepancy clearly without inventing unbacked claims.`;
           }
         } catch (err: any) {
           console.error("[WebSearch] Search pipeline failed completely:", err);
@@ -1543,7 +1565,13 @@ Before generating your final response, execute these internal steps:
         signal: controller.signal
       });
 
-      const replyText = sanitizeAIOutputText(response.text);
+      let replyText = sanitizeAIOutputText(response.text);
+
+      if (searched && searchSources.length > 0) {
+        const grounded = groundResponseCitations(replyText, searchSources);
+        replyText = sanitizeAIOutputText(grounded.text);
+        searchSources = grounded.validatedSources;
+      }
 
       // Trigger background long-term memory extraction (non-blocking)
       extractAndSaveMemoriesInBackground(uid, emailNorm, finalUserMessage, replyText).catch(err => {
@@ -1590,7 +1618,7 @@ app.get("/api/ai/memory", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/api/ai/memory", requireAuth, async (req, res) => {
+app.post("/api/ai/memory", requireAuth, validateRequest(aiMemoryPostSchema), async (req, res) => {
   try {
     const emailNorm = (req as any).user.email.toLowerCase().trim();
     const uid = (req as any).user.uid || emailNorm;
@@ -1616,7 +1644,7 @@ app.post("/api/ai/memory", requireAuth, async (req, res) => {
   }
 });
 
-app.delete("/api/ai/memory", requireAuth, async (req, res) => {
+app.delete("/api/ai/memory", requireAuth, validateRequest(aiMemoryDeleteSchema), async (req, res) => {
   try {
     const emailNorm = (req as any).user.email.toLowerCase().trim();
     const uid = (req as any).user.uid || emailNorm;
@@ -1655,7 +1683,7 @@ app.get("/api/ai/image-health", requireAuth, (req, res) => {
 });
 
 // 2.5. Dynamic CBSE Chapter Material Generator (Textbook details on-demand)
-app.post("/api/gemini/generate-chapter-materials", requireAuth, async (req, res) => {
+app.post("/api/gemini/generate-chapter-materials", requireAuth, validateRequest(chapterMaterialsSchema), async (req, res) => {
   const controller = new AbortController();
   req.on("close", () => {
     controller.abort();
@@ -1770,7 +1798,7 @@ Respond strictly in JSON format matching this schema:
 });
 
 // 3. AI Study Planner Generator
-app.post("/api/gemini/suggest-schedule", requireAuth, async (req, res) => {
+app.post("/api/gemini/suggest-schedule", requireAuth, validateRequest(suggestScheduleSchema), async (req, res) => {
   const controller = new AbortController();
   req.on("close", () => {
     controller.abort();
@@ -1918,7 +1946,7 @@ function broadcastOnlineCount() {
 }
 
 // 1. Establish Server-Sent Events (SSE) stream for instant real-time broadcasts
-app.get("/api/chat/stream", (req, res) => {
+app.get("/api/chat/stream", validateRequest(chatStreamSchema), (req, res) => {
   const { email, token } = req.query;
   const userEmail = typeof email === "string" ? email.toLowerCase().trim() : "anonymous";
 
@@ -1963,7 +1991,7 @@ app.get("/api/chat/stream", (req, res) => {
 });
 
 // 2. Fetch paginated or searched chat history
-app.get("/api/chat/messages", requireAuth, async (req, res) => {
+app.get("/api/chat/messages", requireAuth, validateRequest(chatMessagesQuerySchema), async (req, res) => {
   try {
     const { before, search, limit } = req.query;
     const maxLimit = limit ? parseInt(limit as string) : 50;
@@ -1997,7 +2025,7 @@ app.get("/api/chat/registered-users", requireAuth, async (req, res) => {
 });
 
 // 3. Post a message, validating constraints and using Gemini for strict OCR/Safety moderation
-app.post("/api/chat/message", requireAuth, async (req, res) => {
+app.post("/api/chat/message", requireAuth, validateRequest(chatPostMessageSchema), async (req, res) => {
   try {
     const { userEmail, username, avatar, level, badge, text, country, repliedToId, repliedToUser, attachment } = req.body;
 
@@ -2285,7 +2313,7 @@ Return strictly a JSON object matching this schema:
 });
 
 // 4. Submit an abuse report against a message
-app.post("/api/chat/report", requireAuth, async (req, res) => {
+app.post("/api/chat/report", requireAuth, validateRequest(chatReportSchema), async (req, res) => {
   try {
     const { messageId, reportedBy, reason, comment } = req.body;
 
@@ -2333,7 +2361,7 @@ app.post("/api/chat/report", requireAuth, async (req, res) => {
 });
 
 // 5. Broadcast typing state
-app.post("/api/chat/typing", requireAuth, (req, res) => {
+app.post("/api/chat/typing", requireAuth, validateRequest(chatTypingSchema), (req, res) => {
   try {
     const { userEmail, username, isTyping } = req.body;
     if (userEmail && username) {
@@ -2386,7 +2414,7 @@ app.get("/api/chat/admin/stats", requireAdmin, async (req, res) => {
 });
 
 // 7. Admin Action Endpoint (Mute, Ban, Delete)
-app.post("/api/chat/admin/action", requireAdmin, async (req, res) => {
+app.post("/api/chat/admin/action", requireAdmin, validateRequest(chatAdminActionSchema), async (req, res) => {
   try {
     const { action, targetId, targetEmail, reason } = req.body;
     const adminEmail = (req as any).user.email;
@@ -2542,7 +2570,7 @@ app.post("/api/chat/admin/action", requireAdmin, async (req, res) => {
 // ----------------------------------------------------
 
 // 1. Client error log ingestion endpoint
-app.post("/api/logs/client", handleClientLogs);
+app.post("/api/logs/client", validateRequest(clientLogsSchema), handleClientLogs);
 
 // 2. Health check endpoint for container probes and status validation
 app.get("/api/health", asyncHandler(async (req, res) => {
@@ -2571,26 +2599,55 @@ app.get("/api/health", asyncHandler(async (req, res) => {
 }));
 
 // 3. AI Health Check & Provider Metrics Endpoint
-app.get("/api/ai/health", (req, res) => {
+app.get("/api/ai/health", requireAuth, (req, res) => {
+  const dashboard = getAIHealthDashboardData();
   const configured = getConfiguredProviders();
-  const metrics = getAIHealthMetrics();
 
   res.json({
     status: "ok",
-    timestamp: new Date().toISOString(),
+    ...dashboard,
     configuredProviders: configured,
-    providerHealth: metrics,
+    cacheMetrics: getAICacheMetrics(),
     queueMetrics: concurrencyQueue.getMetrics()
   });
 });
 
+// Dedicated AI Health Dashboard Endpoint
+app.get("/api/ai/health-dashboard", requireAuth, (req, res) => {
+  const dashboard = getAIHealthDashboardData();
+  res.json({
+    ...dashboard,
+    cacheMetrics: getAICacheMetrics()
+  });
+});
+
+// Dedicated AI Cache Metrics Endpoint
+app.get("/api/ai/cache-metrics", requireAuth, (req, res) => {
+  res.json({
+    status: "ok",
+    metrics: getAICacheMetrics(),
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Cache Clear Endpoint (Admin / Internal)
+app.post("/api/ai/cache-clear", requireAuth, (req, res) => {
+  clearAICaches();
+  res.json({
+    status: "ok",
+    message: "All AI success and failure caches cleared successfully.",
+    metrics: getAICacheMetrics(),
+    timestamp: new Date().toISOString()
+  });
+});
+
 // 4. Concurrency Queue Metrics & Status Endpoint
-app.get("/api/ai/queue-metrics", (req, res) => {
+app.get("/api/ai/queue-metrics", requireAuth, (req, res) => {
   res.json(concurrencyQueue.getMetrics());
 });
 
 // 5. Circuit Breaker Metrics & Status Endpoint
-app.get("/api/ai/circuit-breaker", (req, res) => {
+app.get("/api/ai/circuit-breaker", requireAuth, (req, res) => {
   res.json({
     metrics: circuitBreaker.getMetrics(),
     configuredProviders: getConfiguredProviders(),
@@ -2599,7 +2656,7 @@ app.get("/api/ai/circuit-breaker", (req, res) => {
 });
 
 // 6. Reset Circuit Breaker Endpoint
-app.post("/api/ai/circuit-breaker/reset", requireAdmin, (req, res) => {
+app.post("/api/ai/circuit-breaker/reset", requireAdmin, validateRequest(circuitBreakerResetSchema), (req, res) => {
   const { provider } = req.body || {};
   circuitBreaker.reset(provider);
   res.json({

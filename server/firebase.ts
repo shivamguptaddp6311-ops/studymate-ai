@@ -312,22 +312,22 @@ loadFallbackDB();
 export const firebaseDB = {
   // --- VERIFY ID TOKEN ---
   async verifyFirebaseIdToken(idToken: string): Promise<{ email: string; uid: string }> {
-    if (!idToken) {
+    if (!idToken || typeof idToken !== "string") {
       throw new Error("ID token is required");
     }
     try {
       const { getAuth: getAdminAuth } = await import("firebase-admin/auth");
       const decodedToken = await getAdminAuth().verifyIdToken(idToken);
-      return { email: decodedToken.email || "", uid: decodedToken.uid || "" };
-    } catch (err) {
-      // Clean fallback decoding if Admin SDK fails to fetch Google keys, but never bypass verification in production
-      try {
-        const payloadB64 = idToken.split(".")[1];
-        const payload = JSON.parse(Buffer.from(payloadB64, "base64").toString("utf8"));
-        return { email: payload.email || "", uid: payload.user_id || payload.sub || "" };
-      } catch {
-        throw err;
+      if (!decodedToken) {
+        throw new Error("Invalid token verification output");
       }
+      return {
+        email: (decodedToken.email || "").toLowerCase().trim(),
+        uid: decodedToken.uid || ""
+      };
+    } catch (err: any) {
+      console.error("[Firebase Auth] Firebase ID token verification failed:", err.message || err);
+      throw new Error("Invalid or expired authentication token. Cryptographic verification failed.");
     }
   },
 

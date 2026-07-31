@@ -37,16 +37,29 @@ setInterval(() => {
  * Helper to extract client identifier (Authenticated User Email/UID or Client IP)
  */
 export function getClientIdentifier(req: Request): string {
+  // Extract remote IP address
+  const forwarded = req.headers["x-forwarded-for"];
+  let ip = "";
+  if (typeof forwarded === "string") {
+    ip = forwarded.split(",")[0].trim();
+  } else if (Array.isArray(forwarded) && forwarded.length > 0) {
+    ip = forwarded[0].trim();
+  } else {
+    ip = req.socket?.remoteAddress || req.ip || "127.0.0.1";
+  }
+
   const user = (req as any).user;
   if (user) {
-    if (user.email && typeof user.email === "string") {
-      return `user:${user.email.toLowerCase().trim()}`;
+    const userEmail = typeof user.email === "string" ? user.email.toLowerCase().trim() : "";
+    if (userEmail) {
+      if (userEmail.startsWith("guest_") || userEmail.endsWith("@guest.studymate.ai")) {
+        // Bind guest users to IP + Email to prevent guest token creation quota bypass
+        return `guest:${ip}:${userEmail}`;
+      }
+      return `user:${userEmail}`;
     }
     if (user.uid && typeof user.uid === "string") {
       return `user:${user.uid.trim()}`;
-    }
-    if (user.id && typeof user.id === "string") {
-      return `user:${user.id.trim()}`;
     }
   }
 
@@ -60,10 +73,11 @@ export function getClientIdentifier(req: Request): string {
         const payloadStr = Buffer.from(parts[1], "base64url").toString("utf8");
         const payload = JSON.parse(payloadStr);
         if (payload && payload.email && typeof payload.email === "string") {
-          return `user:${payload.email.toLowerCase().trim()}`;
-        }
-        if (payload && payload.uid && typeof payload.uid === "string") {
-          return `user:${payload.uid.trim()}`;
+          const email = payload.email.toLowerCase().trim();
+          if (email.startsWith("guest_") || email.endsWith("@guest.studymate.ai")) {
+            return `guest:${ip}:${email}`;
+          }
+          return `user:${email}`;
         }
       }
     } catch {
@@ -72,16 +86,6 @@ export function getClientIdentifier(req: Request): string {
   }
 
   // Fallback to IP address for anonymous users
-  const forwarded = req.headers["x-forwarded-for"];
-  let ip = "";
-  if (typeof forwarded === "string") {
-    ip = forwarded.split(",")[0].trim();
-  } else if (Array.isArray(forwarded) && forwarded.length > 0) {
-    ip = forwarded[0].trim();
-  } else {
-    ip = req.socket?.remoteAddress || req.ip || "127.0.0.1";
-  }
-
   return `ip:${ip}`;
 }
 

@@ -15,9 +15,135 @@ import {
 
 dotenv.config();
 
-// Simple in-memory response cache to optimize quota usage and speed up repetitive tasks
+// --- Failure-Aware Response Cache Infrastructure ---
+export const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes TTL for successful text responses
+export const IMAGE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes TTL for successful image responses
+export const FAILURE_CACHE_TTL_MS = 2 * 60 * 1000; // 2 minutes separate TTL for failed provider attempts
+
+export interface FailureCacheEntry {
+  provider: AIProvider;
+  cacheKey: string;
+  error: string;
+  timestamp: number;
+}
+
+// Verified Successful Response Caches
 const responseCache = new Map<string, { text: string; providerUsed: AIProvider; timestamp: number }>();
-const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache TTL
+const imageCache = new Map<string, { imageUrl: string; providerUsed: "gemini" | "openai" | "fal"; timestamp: number }>();
+
+// Separate Failure Cache for Provider Failures
+const failureCache = new Map<string, FailureCacheEntry>();
+
+// Cache Performance Metrics Collector
+const cacheMetrics = {
+  successCacheHits: 0,
+  successCacheMisses: 0,
+  failureCacheHits: 0,
+  failureCacheBypasses: 0,
+  failureTTLExpirations: 0
+};
+
+/**
+ * Record a failed provider attempt in the dedicated failure cache.
+ * Ensures failed responses are NEVER cached in the normal success response cache.
+ */
+export function recordFailureCache(provider: AIProvider, cacheKey: string, errorMsg: string) {
+  const failureKey = `${provider}:${cacheKey}`;
+  failureCache.set(failureKey, {
+    provider,
+    cacheKey,
+    error: errorMsg,
+    timestamp: Date.now()
+  });
+  failureCache.set(`global:${provider}`, {
+    provider,
+    cacheKey: "global",
+    error: errorMsg,
+    timestamp: Date.now()
+  });
+}
+
+/**
+ * Clear failure cache entries for a provider when it successfully completes a request.
+ */
+export function clearFailureCache(provider: AIProvider, cacheKey?: string) {
+  if (cacheKey) {
+    failureCache.delete(`${provider}:${cacheKey}`);
+  }
+  failureCache.delete(`global:${provider}`);
+}
+
+/**
+ * Check if a provider has recently failed for a given request or globally within the failure TTL.
+ * Automatically evicts expired failure entries.
+ */
+export function isProviderInFailureCache(provider: AIProvider, cacheKey?: string): boolean {
+  const now = Date.now();
+  if (cacheKey) {
+    const specificKey = `${provider}:${cacheKey}`;
+    const entry = failureCache.get(specificKey);
+    if (entry) {
+      if (now - entry.timestamp < FAILURE_CACHE_TTL_MS) {
+        return true;
+      } else {
+        failureCache.delete(specificKey);
+        cacheMetrics.failureTTLExpirations++;
+      }
+    }
+  }
+
+  const globalKey = `global:${provider}`;
+  const globalEntry = failureCache.get(globalKey);
+  if (globalEntry) {
+    if (now - globalEntry.timestamp < FAILURE_CACHE_TTL_MS) {
+      return true;
+    } else {
+      failureCache.delete(globalKey);
+      cacheMetrics.failureTTLExpirations++;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Retrieve comprehensive metrics for the AI Cache engine.
+ */
+export function getAICacheMetrics() {
+  const totalQueries = cacheMetrics.successCacheHits + cacheMetrics.successCacheMisses;
+  const hitRatioPercent = totalQueries > 0 ? Number(((cacheMetrics.successCacheHits / totalQueries) * 100).toFixed(2)) : 0;
+
+  // Evict expired failure entries
+  const now = Date.now();
+  for (const [key, entry] of failureCache.entries()) {
+    if (now - entry.timestamp >= FAILURE_CACHE_TTL_MS) {
+      failureCache.delete(key);
+      cacheMetrics.failureTTLExpirations++;
+    }
+  }
+
+  return {
+    successCacheHits: cacheMetrics.successCacheHits,
+    successCacheMisses: cacheMetrics.successCacheMisses,
+    failureCacheHits: cacheMetrics.failureCacheHits,
+    failureCacheBypasses: cacheMetrics.failureCacheBypasses,
+    failureTTLExpirations: cacheMetrics.failureTTLExpirations,
+    successCacheSize: responseCache.size + imageCache.size,
+    failureCacheSize: failureCache.size,
+    hitRatioPercent,
+    failureTTLMs: FAILURE_CACHE_TTL_MS,
+    successTTLMs: CACHE_TTL_MS
+  };
+}
+
+/**
+ * Clear all success and failure response caches.
+ */
+export function clearAICaches() {
+  responseCache.clear();
+  imageCache.clear();
+  failureCache.clear();
+}
 
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const controller = new AbortController();
@@ -70,6 +196,7 @@ export interface ImageGenResponse {
   imageUrl: string;
   providerUsed: AIImageProvider;
   revisedPrompt: string;
+  cached?: boolean;
 }
 
 export interface AIMessage {
@@ -80,6 +207,7 @@ export interface AIMessage {
 export interface AIResponse {
   text: string;
   providerUsed: AIProvider;
+  cached?: boolean;
 }
 
 // Check if API key is a valid non-placeholder value
@@ -521,12 +649,15 @@ export async function executeAIRequest(options: {
 
   const cached = responseCache.get(cacheKey);
   if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
+    cacheMetrics.successCacheHits++;
     console.log(`[AIService] Cache HIT for key: ${cacheKey}`);
     return {
       text: cached.text,
-      providerUsed: cached.providerUsed
+      providerUsed: cached.providerUsed,
+      cached: true
     };
   }
+  cacheMetrics.successCacheMisses++;
 
   const isPdf = !!image && (image.startsWith("data:application/pdf") || image.includes("pdf"));
   const category = concurrencyQueue.determineCategory(
@@ -590,6 +721,27 @@ export async function executeAIRequest(options: {
         }
       }
 
+      // Failure-Aware Reordering: Move recently failed providers to end, allowing healthy providers to bypass failed cache
+      const failedProviders = providersToTry.filter(p => isProviderInFailureCache(p, cacheKey));
+      const healthyProviders = providersToTry.filter(p => !isProviderInFailureCache(p, cacheKey));
+
+      if (failedProviders.length > 0) {
+        if (healthyProviders.length > 0) {
+          cacheMetrics.failureCacheBypasses++;
+          serverLogger.info(
+            "AIService",
+            `Healthy providers [${healthyProviders.join(", ")}] bypassing recently failed cache entries for providers [${failedProviders.join(", ")}].`
+          );
+          providersToTry = [...healthyProviders, ...failedProviders];
+        } else {
+          cacheMetrics.failureCacheHits++;
+          serverLogger.warn(
+            "AIService",
+            `All candidate providers [${failedProviders.join(", ")}] are in failure cache. Attempting execution as fallback.`
+          );
+        }
+      }
+
       let lastError: any = null;
       let success = false;
       let finalResult: AIResponse | null = null;
@@ -642,10 +794,13 @@ export async function executeAIRequest(options: {
             }
 
             const providerDuration = Date.now() - providerStartTime;
-            recordAISuccess(provider, providerDuration);
+            const inputChars = messages.reduce((acc, m) => acc + (m.content?.length || 0), 0) + (systemInstruction?.length || 0) + (image?.length || 0);
+            const outputChars = resultText.length;
+            recordAISuccess(provider, providerDuration, inputChars, outputChars, false);
             serverLogger.info("AIService", `Successfully received response from provider: [${provider}] in ${providerDuration}ms`);
             
-            // Save in cache
+            // On success, clear failure cache entry and store response in success cache ONLY
+            clearFailureCache(provider, cacheKey);
             responseCache.set(cacheKey, {
               text: resultText,
               providerUsed: provider,
@@ -662,6 +817,7 @@ export async function executeAIRequest(options: {
             const providerDuration = Date.now() - providerStartTime;
             const errMsg = err.message || String(err);
             recordAIFailure(provider, errMsg);
+            recordFailureCache(provider, cacheKey, errMsg);
 
             if (provider === "anthropic" && (errMsg.includes("credit balance") || errMsg.includes("Credit balance") || errMsg.includes("billing") || errMsg.includes("Billing") || errMsg.includes("status 400"))) {
               serverLogger.warn("AIService", "Disabling Anthropic provider dynamically due to credit balance/billing failure.");
@@ -1162,9 +1318,6 @@ export interface GenerateImageResult {
   cached?: boolean;
 }
 
-const imageCache = new Map<string, { imageUrl: string; providerUsed: "gemini" | "openai" | "fal"; timestamp: number }>();
-const IMAGE_CACHE_TTL_MS = 30 * 60 * 1000;
-
 export function enhancePromptForCategory(prompt: string, category?: string, quality?: string): string {
   if (!prompt || typeof prompt !== "string") return "";
   const base = prompt.trim();
@@ -1573,13 +1726,16 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
 
   const cached = imageCache.get(cacheKey);
   if (cached && (Date.now() - cached.timestamp < IMAGE_CACHE_TTL_MS)) {
+    cacheMetrics.successCacheHits++;
     serverLogger.info("AIServiceImage", `Cache HIT for prompt: "${revisedPrompt.substring(0, 40)}..."`);
     return {
       imageUrl: cached.imageUrl,
       providerUsed: cached.providerUsed,
-      revisedPrompt
+      revisedPrompt,
+      cached: true
     };
   }
+  cacheMetrics.successCacheMisses++;
 
   const payloadSize = revisedPrompt.length * 2;
 
@@ -1635,6 +1791,23 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
         return 0;
       });
 
+      // 4. Failure-Aware Reordering: Move recently failed image providers to end
+      const failedProviders = providersToTry.filter(p => isProviderInFailureCache(p, cacheKey));
+      const healthyProviders = providersToTry.filter(p => !isProviderInFailureCache(p, cacheKey));
+
+      if (failedProviders.length > 0) {
+        if (healthyProviders.length > 0) {
+          cacheMetrics.failureCacheBypasses++;
+          serverLogger.info(
+            "AIServiceImage",
+            `Healthy image providers [${healthyProviders.join(", ")}] bypassing failed cache entries for providers [${failedProviders.join(", ")}].`
+          );
+          providersToTry = [...healthyProviders, ...failedProviders];
+        } else {
+          cacheMetrics.failureCacheHits++;
+        }
+      }
+
       const errors: string[] = [];
       const startTime = Date.now();
       let lastUsedProvider: AIImageProvider = providersToTry[0] || "fal";
@@ -1669,11 +1842,12 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
           }
 
           const duration = Date.now() - providerStartTime;
-          recordAISuccess(provider, duration);
+          recordAISuccess(provider, duration, prompt.length, 0, true);
           recordImageProviderHealthSuccess(provider);
 
           serverLogger.info("AIServiceImage", `Successfully generated image with provider [${provider}] in ${duration}ms. Format: ${genResult.imageUrl.substring(0, 30)}...`);
 
+          clearFailureCache(provider, cacheKey);
           imageCache.set(cacheKey, {
             imageUrl: genResult.imageUrl,
             providerUsed: provider,
@@ -1698,6 +1872,7 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
           const duration = Date.now() - providerStartTime;
           const errMsg = err.message || String(err);
           recordAIFailure(provider, errMsg);
+          recordFailureCache(provider, cacheKey, errMsg);
           recordImageProviderHealthFailure(provider, errMsg, !isTransientImageError(err));
 
           const nextProvider = providersToTry[i + 1] || "pollinations";

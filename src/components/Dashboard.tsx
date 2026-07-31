@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { UserProfile, Task, Alarm, Habit, TimetableItem } from "../types";
 import { MOTIVATIONAL_QUOTES } from "../data";
-import { motion, AnimatePresence } from "motion/react";
+import { motion, AnimatePresence, useReducedMotion } from "motion/react";
 import { 
   GlassCard, HeroCard, QuickActionCard, ProgressCard, AnalyticsCard, 
   AchievementCard, AICard, TimelineCard, EmptyStateCard, PremiumButton, 
@@ -393,175 +393,225 @@ function LiveClockBadge() {
     return false;
   };
 
+  const rawDisplayName = profile.nickname || profile.fullName.split(" ")[0] || "Student";
+  const displayName = rawDisplayName.charAt(0).toUpperCase() + rawDisplayName.slice(1);
+
+  const shouldReduceMotion = useReducedMotion();
+
+  const getDaysToBoardExam = () => {
+    const customDate = localStorage.getItem("studymate_target_exam_date");
+    const target = customDate ? new Date(customDate) : new Date("2027-02-15");
+    const now = new Date();
+    const diffTime = target.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays > 0 ? diffDays : 185;
+  };
+  const daysRemaining = getDaysToBoardExam();
+
   return (
-    <div id="dashboard_tab" className="space-y-6 max-w-5xl mx-auto px-1 md:px-3 pb-12 select-none">
+    <div id="dashboard_tab" className="space-y-5 max-w-5xl mx-auto px-1 md:px-3 pb-12 select-none">
       
-      {/* 1. LARGE PERSONALIZED HERO CARD */}
+      {/* 1. COMPRESSED VIBRANT HERO CARD */}
       <motion.div 
-        initial={{ opacity: 0, y: 15 }}
-        animate={{ opacity: 1, y: 0 }}
+        initial={shouldReduceMotion ? {} : { opacity: 0, y: 10 }}
+        animate={shouldReduceMotion ? {} : { opacity: 1, y: 0 }}
         transition={{ type: "spring", stiffness: 300, damping: 25 }}
-        className="relative overflow-hidden rounded-[32px] bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 dark:from-slate-950 dark:via-indigo-950 dark:to-slate-950 text-white p-6 md:p-8 shadow-[0_25px_60px_-15px_rgba(79,70,229,0.3)] border border-white/15 dark:border-indigo-500/30"
+        className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#0d0f22] via-[#241a5e] to-[#0d0f22] text-white p-4 sm:p-5 shadow-[0_20px_50px_-15px_rgba(91,79,233,0.35)] border border-[#5B4FE9]/30"
       >
-        {/* Soft background ambient radial glows */}
-        <div className="absolute -top-16 -right-16 w-56 h-56 bg-indigo-500/20 rounded-full blur-[90px] pointer-events-none" />
-        <div className="absolute -bottom-20 -left-16 w-64 h-64 bg-purple-500/20 rounded-full blur-[100px] pointer-events-none" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 h-80 bg-cyan-500/10 rounded-full blur-[120px] pointer-events-none" />
+        {/* Soft background ambient radial glows using target palette */}
+        <div className="absolute -top-16 -right-16 w-56 h-56 bg-[#5B4FE9]/25 rounded-full blur-[80px] pointer-events-none" />
+        <div className="absolute -bottom-20 -left-16 w-64 h-64 bg-[#E0459B]/20 rounded-full blur-[90px] pointer-events-none" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 bg-[#3AB0E8]/15 rounded-full blur-[100px] pointer-events-none" />
 
-        <div className="relative z-10 flex flex-col lg:flex-row items-stretch justify-between gap-6">
+        <div className="relative z-10 space-y-3.5">
           
-          {/* Left Column: Greeting, Class/Exam, Duolingo Streaks & Linear XP Bar */}
-          <div className="space-y-4 flex-1 text-left flex flex-col justify-between">
-            <div>
-              <div className="flex flex-wrap items-center gap-2 mb-2">
-                <LiveClockBadge />
-                <span className="text-[10px] font-extrabold uppercase tracking-widest text-amber-300 bg-amber-500/20 border border-amber-400/30 px-3 py-1 rounded-full backdrop-blur-md flex items-center gap-1">
-                  <Sparkle className="w-3 h-3 text-amber-400 animate-spin" style={{ animationDuration: "6s" }} />
-                  Level {profile.level} Student
-                </span>
-              </div>
-
-              <h1 className="text-2xl sm:text-3.5xl font-black tracking-tight leading-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-indigo-200">
-                {getSalutation()}, {profile.nickname || profile.fullName.split(" ")[0]}! 👋
-              </h1>
-              
-              <p className="text-slate-300/80 text-xs font-semibold flex items-center gap-1.5 mt-1">
-                <BookOpen className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
-                <span>{profile.classGrade} &bull; Target Exam: <strong className="text-indigo-200">{profile.targetExam}</strong></span>
-              </p>
+          {/* Top Row: Date/Clock + Level Chip + Streak Flame Chip */}
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <LiveClockBadge />
+              <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#FFA726] bg-[#FFA726]/15 border border-[#FFA726]/30 px-2.5 py-0.5 rounded-full backdrop-blur-md flex items-center gap-1">
+                <Sparkle className="w-3 h-3 text-[#FFA726]" />
+                Level {profile.level} Student
+              </span>
             </div>
-
-            {/* Gamified Duolingo / Linear Gamification Badges Row */}
-            <div className="grid grid-cols-3 gap-2.5 pt-2">
-              {/* Streak Counter (Duolingo Style) */}
-              <div className="bg-white/10 dark:bg-white/5 border border-white/15 rounded-2xl p-3 text-center flex flex-col items-center justify-center backdrop-blur-md hover:bg-white/15 transition">
-                <span className="text-[10px] text-slate-300 font-bold block uppercase tracking-wider">Streak</span>
-                <span className="text-base font-black text-amber-400 flex items-center gap-1 mt-0.5">
-                  <Flame className="w-4 h-4 text-orange-400 fill-orange-400 animate-pulse" />
-                  {profile.streakCounter || 1} <span className="text-[10px] font-semibold text-slate-300">Days</span>
-                </span>
-              </div>
-
-              {/* Rank XP (Linear Style) */}
-              <div className="bg-white/10 dark:bg-white/5 border border-white/15 rounded-2xl p-3 text-center flex flex-col items-center justify-center backdrop-blur-md hover:bg-white/15 transition">
-                <span className="text-[10px] text-slate-300 font-bold block uppercase tracking-wider">XP Score</span>
-                <span className="text-base font-black text-indigo-300 flex items-center gap-1 mt-0.5">
-                  <Trophy className="w-4 h-4 text-indigo-400 fill-indigo-400/30" />
-                  {profile.xp} <span className="text-[10px] font-semibold text-slate-300">XP</span>
-                </span>
-              </div>
-
-              {/* Daily Study Goal */}
-              <div className="bg-white/10 dark:bg-white/5 border border-white/15 rounded-2xl p-3 text-center flex flex-col items-center justify-center backdrop-blur-md hover:bg-white/15 transition">
-                <span className="text-[10px] text-slate-300 font-bold block uppercase tracking-wider">Daily Goal</span>
-                <span className="text-base font-black text-cyan-300 flex items-center gap-1 mt-0.5">
-                  <Target className="w-4 h-4 text-cyan-400" />
-                  {studyHoursToday}/{profile.dailyStudyGoal} <span className="text-[10px] font-semibold text-slate-300">hrs</span>
-                </span>
-              </div>
+            
+            <div className="flex items-center gap-1.5 bg-white/10 dark:bg-white/5 border border-white/15 px-3 py-1 rounded-full backdrop-blur-md">
+              <Flame className="w-3.5 h-3.5 text-[#FFA726] fill-[#FFA726] animate-pulse" />
+              <span className="text-xs font-bold text-amber-200">{profile.streakCounter || 1} Day Streak</span>
             </div>
-
-            {/* Level Progress Bar */}
-            <div className="space-y-1 pt-1">
-              <div className="flex justify-between items-center text-[10px] font-extrabold text-slate-300">
-                <span>Level {profile.level} Rank Progress</span>
-                <span>{profile.xp % 500} / 500 XP to Level {profile.level + 1}</span>
-              </div>
-              <div className="w-full bg-white/10 h-2 rounded-full overflow-hidden p-0.5 border border-white/10">
-                <motion.div 
-                  initial={{ width: 0 }}
-                  animate={{ width: `${Math.min(100, ((profile.xp % 500) / 500) * 100)}%` }}
-                  transition={{ duration: 1, ease: "easeOut" }}
-                  className="h-full bg-gradient-to-r from-amber-400 via-indigo-400 to-cyan-400 rounded-full shadow-[0_0_10px_rgba(251,191,36,0.6)]"
-                />
-              </div>
-            </div>
-
           </div>
 
-          {/* Right Column: Continue Learning Card & Animated Apple-style Progress Ring */}
-          <div className="flex flex-col sm:flex-row lg:flex-col items-center justify-between gap-4 border-t lg:border-t-0 lg:border-l border-white/10 pt-4 lg:pt-0 lg:pl-6 shrink-0 min-w-[240px]">
-            
-            {/* Animated Apple Progress Ring */}
-            <div className="flex flex-col items-center justify-center relative">
-              <div className="relative w-28 h-28 flex items-center justify-center">
-                <div className="absolute inset-0 bg-indigo-500/30 rounded-full blur-[20px] animate-pulse" />
-                <svg className="w-full h-full transform -rotate-90">
-                  <circle
-                    cx="56"
-                    cy="56"
-                    r={radius}
-                    className="stroke-white/10"
-                    strokeWidth="7"
-                    fill="transparent"
-                  />
-                  <motion.circle
-                    cx="56"
-                    cy="56"
-                    r={radius}
-                    className="stroke-cyan-400 dark:stroke-cyan-400"
-                    strokeWidth="8"
-                    fill="transparent"
-                    strokeDasharray={circumference}
-                    initial={{ strokeDashoffset: circumference }}
-                    animate={{ strokeDashoffset }}
-                    transition={{ duration: 1.2, ease: "easeOut" }}
-                    strokeLinecap="round"
-                  />
-                </svg>
-                <div className="absolute flex flex-col items-center justify-center text-center">
-                  <span className="text-xl font-black text-white">{studyPercent}%</span>
-                  <span className="text-[8px] text-slate-300 uppercase tracking-widest font-extrabold mt-0.5">Goal</span>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setShowLogHours(true)}
-                className="mt-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 active:scale-95 text-[11px] font-black px-3.5 py-1.5 rounded-xl border border-white/20 shadow-lg shadow-indigo-600/30 transition-all flex items-center gap-1.5 cursor-pointer"
+          {/* Main Hero Middle: Scoreboard-style Board Exam Countdown Digit Card */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white/5 border border-white/10 rounded-2xl p-3.5 backdrop-blur-md">
+            <div className="flex items-center gap-3.5 w-full sm:w-auto">
+              {/* Glowing Scoreboard Digit Block */}
+              <motion.div 
+                initial={shouldReduceMotion ? {} : { opacity: 0, scale: 0.9, y: 5 }}
+                animate={shouldReduceMotion ? {} : { opacity: 1, scale: 1, y: 0 }}
+                transition={{ duration: 0.4, ease: "easeOut" }}
+                className="bg-gradient-to-br from-[#FFA726] to-[#E0459B] p-0.5 rounded-2xl shadow-[0_0_22px_rgba(255,167,38,0.4)] shrink-0"
               >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Log Study Hours</span>
-              </button>
+                <div className="bg-[#0d0f22] rounded-[14px] px-4 py-1.5 flex items-center justify-center min-w-[80px] text-center">
+                  <span className="font-jetbrains text-3xl sm:text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-[#FFA726] via-[#FF5A6E] to-[#E0459B] tracking-tight">
+                    {daysRemaining}
+                  </span>
+                </div>
+              </motion.div>
+
+              <div className="text-left min-w-0">
+                <span className="text-[10px] font-extrabold uppercase tracking-widest text-[#FFA726] block">
+                  {profile.targetExam ? `${profile.targetExam} Countdown` : "CBSE Board Exam Countdown"}
+                </span>
+                <h2 className="text-base sm:text-lg font-black text-white leading-tight">
+                  Days to Board Exam &bull; {getSalutation()}, {displayName}! 👋
+                </h2>
+                <p className="text-[11px] text-slate-300/80 font-medium flex items-center gap-1.5 mt-0.5 truncate">
+                  <BookOpen className="w-3.5 h-3.5 text-[#3AB0E8] shrink-0" />
+                  <span>{profile.classGrade} &bull; Target: <strong className="text-indigo-200">{profile.targetExam}</strong></span>
+                </p>
+              </div>
             </div>
 
-            {/* Continue Learning Widget Card */}
-            <div className="bg-white/10 dark:bg-white/5 border border-white/15 rounded-2xl p-3.5 w-full text-left backdrop-blur-md space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-[9px] font-black uppercase tracking-wider text-indigo-300 bg-indigo-500/20 px-2 py-0.5 rounded-md">
-                  Continue Learning
-                </span>
-                <span className="text-[9px] font-bold text-slate-300">Syllabus Day {syllabusDaysElapsed}</span>
+            <button
+              onClick={() => setShowLogHours(true)}
+              className="w-full sm:w-auto bg-gradient-to-r from-[#5B4FE9] to-[#E0459B] hover:opacity-95 active:scale-95 text-xs font-black px-3.5 py-2 rounded-xl text-white shadow-lg shadow-[#5B4FE9]/30 transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Log Study Hours</span>
+            </button>
+          </div>
+
+          {/* Compact "Continue Learning" Resume Card */}
+          <div className="bg-white/10 dark:bg-white/5 border border-white/15 rounded-xl p-3 flex flex-col sm:flex-row items-center justify-between gap-2.5 backdrop-blur-md">
+            <div className="flex items-center gap-3 text-left w-full sm:w-auto min-w-0">
+              <div className="p-2 bg-[#5B4FE9]/30 border border-[#5B4FE9]/50 rounded-xl text-[#3AB0E8] shrink-0">
+                <BookOpen className="w-4 h-4" />
               </div>
-              <div>
-                <h4 className="text-xs font-bold text-white truncate">NCERT Physics: Chapter 4</h4>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-[9px] font-black uppercase tracking-wider text-[#3AB0E8] bg-[#3AB0E8]/20 px-2 py-0.5 rounded-md">
+                    Continue Learning
+                  </span>
+                  <span className="text-[9px] font-semibold text-slate-300">Syllabus Day {syllabusDaysElapsed}</span>
+                </div>
+                <h4 className="text-xs font-bold text-white truncate mt-0.5">NCERT Physics: Chapter 4</h4>
                 <p className="text-[10px] text-slate-300 truncate">Moving Charges & Magnetism Checkpoint</p>
               </div>
-              <button
-                onClick={() => onNavigate("assessment")}
-                className="w-full py-1.5 bg-white text-slate-950 hover:bg-slate-100 active:scale-98 font-extrabold text-[11px] rounded-xl transition flex items-center justify-center gap-1 cursor-pointer shadow"
-              >
-                <span>Resume Test</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
             </div>
 
+            <button
+              onClick={() => onNavigate("assessment")}
+              className="w-full sm:w-auto px-3.5 py-1.5 bg-white text-slate-950 hover:bg-slate-100 active:scale-98 font-black text-xs rounded-xl transition flex items-center justify-center gap-1 cursor-pointer shrink-0 shadow"
+            >
+              <span>Resume Test</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Motivational Quote Banner */}
+          <div className="pt-1.5 border-t border-white/10 flex items-center gap-2 text-left text-slate-300">
+            <Sparkles className="w-3.5 h-3.5 text-[#FFA726] shrink-0" />
+            <p className="text-[11px] font-medium italic text-indigo-100/90 truncate">
+              "{quote.quote || "The future depends on what you do today."}" &mdash; <span className="not-italic text-indigo-200/70 font-bold">{quote.author || "Mahatma Gandhi"}</span>
+            </p>
           </div>
 
         </div>
+      </motion.div>
 
-        {/* Motivational Quote Banner */}
-        <div className="mt-5 pt-4 border-t border-white/10 flex items-start gap-2.5 text-left text-slate-300">
-          <Sparkles className="w-4 h-4 text-amber-300 shrink-0 mt-0.5" />
-          <div className="flex-1">
-            <p className="text-xs font-medium italic text-indigo-100/90 leading-relaxed">
-              "{quote.quote || "The future depends on what you do today."}"
-            </p>
-            <span className="text-[9px] text-indigo-200/70 font-bold block mt-0.5">
-              &mdash; {quote.author || "Mahatma Gandhi"}
+      {/* 2. SLIM HORIZONTAL ROW OF 3 STAT CHIPS DIRECTLY BELOW HERO */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Stat Chip 1: Daily Goal + Shrunken Progress Ring (Sky Tint #3AB0E8) */}
+        <div className="bg-[#3AB0E8]/10 dark:bg-[#3AB0E8]/15 border border-[#3AB0E8]/30 rounded-2xl p-3 flex items-center justify-between backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+            {/* Shrunken Progress Ring */}
+            <div className="relative w-10 h-10 flex items-center justify-center shrink-0">
+              <svg className="w-full h-full transform -rotate-90">
+                <circle
+                  cx="20"
+                  cy="20"
+                  r="16"
+                  className="stroke-slate-200 dark:stroke-slate-700"
+                  strokeWidth="3.5"
+                  fill="transparent"
+                />
+                <motion.circle
+                  cx="20"
+                  cy="20"
+                  r="16"
+                  className="stroke-[#3AB0E8]"
+                  strokeWidth="3.5"
+                  fill="transparent"
+                  strokeDasharray={2 * Math.PI * 16}
+                  initial={{ strokeDashoffset: 2 * Math.PI * 16 }}
+                  animate={{ strokeDashoffset: (2 * Math.PI * 16) * (1 - Math.min(100, studyPercent) / 100) }}
+                  transition={{ duration: shouldReduceMotion ? 0 : 1, ease: "easeOut" }}
+                  strokeLinecap="round"
+                />
+              </svg>
+              <span className="absolute text-[9px] font-black text-slate-900 dark:text-white">
+                {studyPercent}%
+              </span>
+            </div>
+
+            <div className="text-left">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#3AB0E8] block">Daily Goal</span>
+              <span className="text-sm font-black text-slate-900 dark:text-white">
+                {studyHoursToday} / {profile.dailyStudyGoal} <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">hrs</span>
+              </span>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setShowLogHours(true)}
+            className="p-1.5 bg-[#3AB0E8]/20 hover:bg-[#3AB0E8]/30 text-[#3AB0E8] dark:text-sky-300 rounded-lg transition cursor-pointer"
+            title="Log Study Hours"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Stat Chip 2: Streak (Marigold Tint #FFA726) */}
+        <div className="bg-[#FFA726]/10 dark:bg-[#FFA726]/15 border border-[#FFA726]/30 rounded-2xl p-3 flex items-center justify-between backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-[#FFA726]/20 rounded-xl text-[#FFA726] shrink-0">
+              <Flame className="w-5 h-5 fill-[#FFA726]" />
+            </div>
+            <div className="text-left">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#FFA726] block">Streak</span>
+              <span className="text-sm font-black text-slate-900 dark:text-white">
+                {profile.streakCounter || 1} <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">Days</span>
+              </span>
+            </div>
+          </div>
+          <span className="text-[10px] font-extrabold text-[#FFA726] bg-[#FFA726]/20 px-2 py-0.5 rounded-md">
+            Level {profile.level}
+          </span>
+        </div>
+
+        {/* Stat Chip 3: XP Score (Violet/Fuchsia Tint #E0459B / #5B4FE9) */}
+        <div className="bg-[#E0459B]/10 dark:bg-[#E0459B]/15 border border-[#E0459B]/30 rounded-2xl p-3 flex items-center justify-between backdrop-blur-sm">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-[#E0459B]/20 rounded-xl text-[#E0459B] shrink-0">
+              <Trophy className="w-5 h-5 fill-[#E0459B]/30" />
+            </div>
+            <div className="text-left">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-[#E0459B] block">XP Score</span>
+              <span className="text-sm font-black text-slate-900 dark:text-white">
+                {profile.xp} <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">XP</span>
+              </span>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="text-[10px] font-extrabold text-[#E0459B] block">
+              {profile.xp % 500}/500
+            </span>
+            <span className="text-[9px] font-semibold text-slate-500 dark:text-slate-400 block">
+              Next Lvl
             </span>
           </div>
         </div>
-      </motion.div>
+      </div>
 
       {/* FLAGSHIP UNIVERSAL SMART SEARCH FLOATING CARD */}
       <motion.div
