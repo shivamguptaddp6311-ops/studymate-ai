@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { checkImageQuality, compressImage } from "../utils/imageOptimizer";
+import { checkImageQuality, compressImage, preprocessImageForOCRAndVision } from "../utils/imageOptimizer";
 
 export interface AttachedPdf {
   name: string;
@@ -115,10 +115,18 @@ export function useAttachments() {
           }
           
           try {
+            const preprocessed = await preprocessImageForOCRAndVision(rawSrc, {
+              autoRotate: true,
+              deskew: true,
+              denoise: true,
+              improveContrast: true,
+              resizeIntelligently: true,
+              jpegQuality: 0.88
+            });
+            onCropSource(preprocessed.processedDataUrl);
+          } catch (err) {
             const compressed = await compressImage(rawSrc, 1024, 0.78);
             onCropSource(compressed);
-          } catch (err) {
-            onCropSource(rawSrc);
           }
           onError(null);
         };

@@ -3,6 +3,11 @@
  * Designed for high-performance mobile-first edge applications.
  */
 
+import { preprocessImageForOCRAndVision, PreprocessOptions, PreprocessResult } from "./imagePreprocessingPipeline";
+
+export { preprocessImageForOCRAndVision };
+export type { PreprocessOptions, PreprocessResult };
+
 interface CheckResult {
   isBlurry: boolean;
   isDark: boolean;
@@ -171,63 +176,23 @@ export function compressImage(
 }
 
 /**
- * Programmatically enhances image contrast/brightness using canvas for high-quality camera captures.
+ * Programmatically enhances image contrast/brightness, auto-rotates, deskews, and denoises using the preprocessing pipeline.
  */
-export function enhanceImageForOCR(base64Src: string): Promise<string> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          resolve(base64Src);
-          return;
-        }
-
-        ctx.drawImage(img, 0, 0);
-
-        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imgData.data;
-
-        // Apply automatic local contrast stretching and thresholding to improve handwritten OCR
-        let min = 255;
-        let max = 0;
-
-        for (let i = 0; i < data.length; i += 4) {
-          const r = data[i];
-          const g = data[i+1];
-          const b = data[i+2];
-          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-          if (lum < min) min = lum;
-          if (lum > max) max = lum;
-        }
-
-        const range = max - min;
-        if (range > 20) {
-          for (let i = 0; i < data.length; i += 4) {
-            // Contrast stretching
-            data[i]     = Math.min(255, Math.max(0, ((data[i] - min) / range) * 255));     // r
-            data[i + 1] = Math.min(255, Math.max(0, ((data[i + 1] - min) / range) * 255)); // g
-            data[i + 2] = Math.min(255, Math.max(0, ((data[i + 2] - min) / range) * 255)); // b
-          }
-          ctx.putImageData(imgData, 0, 0);
-        }
-
-        resolve(canvas.toDataURL("image/jpeg", 0.85));
-      } catch (err) {
-        console.error("[ImageEnhancer] OCR pre-enhancement error:", err);
-        resolve(base64Src);
-      }
-    };
-    img.onerror = () => {
-      resolve(base64Src);
-    };
-    img.src = base64Src;
-  });
+export async function enhanceImageForOCR(base64Src: string): Promise<string> {
+  try {
+    const result = await preprocessImageForOCRAndVision(base64Src, {
+      autoRotate: true,
+      deskew: true,
+      denoise: true,
+      improveContrast: true,
+      resizeIntelligently: true,
+      jpegQuality: 0.88
+    });
+    return result.processedDataUrl;
+  } catch (err) {
+    console.error("[ImageEnhancer] Pipeline preprocessing error, returning original:", err);
+    return base64Src;
+  }
 }
 
 /**

@@ -8,6 +8,14 @@ import {
   getConfiguredImageProviders,
   parseJsonResponse
 } from "./aiService";
+import {
+  AICapability,
+  hasAllCapabilities,
+  validateProviderCapabilities,
+  getRequiredCapabilitiesForTask,
+  filterCapableProviders,
+  PROVIDER_CAPABILITIES_REGISTRY
+} from "./providerCapabilities";
 
 export type AITaskType =
   | "general_chat"
@@ -188,7 +196,11 @@ export function detectTaskType(options: AIRouterOptions): AITaskType {
   return "general_chat";
 }
 
-export function getProviderFallbackSequence(taskType: AITaskType, preferredProvider?: string): AIProvider[] {
+export function getProviderFallbackSequence(
+  taskType: AITaskType,
+  preferredProvider?: string,
+  options?: { image?: string; isPdf?: boolean; isVoice?: boolean; forceWebSearch?: boolean }
+): AIProvider[] {
   const defaultSequences: Record<AITaskType, AIProvider[]> = {
     general_chat: ["gemini", "openai", "groq", "anthropic", "openrouter"],
     homework_help: ["gemini", "openai", "groq", "anthropic", "openrouter"],
@@ -206,10 +218,22 @@ export function getProviderFallbackSequence(taskType: AITaskType, preferredProvi
     summarization: ["gemini", "groq", "openai", "anthropic"]
   };
 
-  const seq = defaultSequences[taskType] || defaultSequences.general_chat;
+  const rawSeq = defaultSequences[taskType] || defaultSequences.general_chat;
+  const requiredCapabilities = getRequiredCapabilitiesForTask(taskType, options);
+
+  let seq = filterCapableProviders(rawSeq, requiredCapabilities) as AIProvider[];
+  if (seq.length === 0) {
+    seq = rawSeq; // fallback safety
+  }
+
   if (preferredProvider && preferredProvider !== "auto") {
     const p = preferredProvider as AIProvider;
-    return [p, ...seq.filter(x => x !== p)];
+    const { valid, missing } = validateProviderCapabilities(p, requiredCapabilities);
+    if (valid) {
+      return [p, ...seq.filter(x => x !== p)];
+    } else {
+      console.warn(`[AIRouter] Preferred provider '${preferredProvider}' lacks required capabilities [${missing.join(", ")}]. Skipping preference and using capable fallback sequence.`);
+    }
   }
   return seq;
 }

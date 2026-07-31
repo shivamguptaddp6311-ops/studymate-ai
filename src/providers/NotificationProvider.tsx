@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useMemo, useCallback } from "react";
 import { AppNotification } from "../types";
 import { useAuth } from "./AuthProvider";
+import { logger } from "../utils/logger";
 
 const MORNING_MOTIVATIONAL_POOL = [
   {
@@ -80,7 +81,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     type: "info" | "alert" | "success" | "reminder"
   ) => {
     if (focusLockdown) {
-      console.log(`[Focus Mode] Suppressed notification: ${title}`);
+      logger.info("NotificationProvider", `[Focus Mode] Suppressed notification: ${title}`);
       return;
     }
     const newNotice: AppNotification = {

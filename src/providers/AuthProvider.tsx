@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { Capacitor } from "@capacitor/core";
 import { auth, signOut, onAuthStateChanged } from "../lib/firebase";
 
 interface AuthContextType {
@@ -39,7 +40,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       window.localStorage.setItem("studymate_remember_me", "true");
       window.localStorage.setItem("studymate_logged_in_email", email);
       window.localStorage.setItem("studymate_token", token);
-      if (refreshToken) {
+      if (refreshToken && Capacitor.isNativePlatform()) {
         window.localStorage.setItem("studymate_refresh_token", refreshToken);
       }
     } else {
@@ -67,7 +68,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const refreshClientToken = async (): Promise<string | null> => {
     try {
-      const storedRefreshToken = sessionRefreshToken || window.localStorage.getItem("studymate_refresh_token") || "";
+      const storedRefreshToken = sessionRefreshToken || (Capacitor.isNativePlatform() ? window.localStorage.getItem("studymate_refresh_token") : null) || "";
       if (!storedRefreshToken) {
         handleLogout();
         return null;
@@ -87,7 +88,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         if (isRememberMe()) {
           window.localStorage.setItem("studymate_token", data.token);
-          if (data.refreshToken) {
+          if (data.refreshToken && Capacitor.isNativePlatform()) {
             window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
           }
         }
@@ -146,7 +147,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             window.localStorage.setItem("studymate_remember_me", "true");
             window.localStorage.setItem("studymate_logged_in_email", data.email);
             window.localStorage.setItem("studymate_token", data.token);
-            if (data.refreshToken) {
+            if (data.refreshToken && Capacitor.isNativePlatform()) {
               window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
             }
           } else {
@@ -193,7 +194,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (data.refreshToken) setSessionRefreshToken(data.refreshToken);
               window.localStorage.setItem("studymate_logged_in_email", data.email);
               window.localStorage.setItem("studymate_token", data.token);
-              if (data.refreshToken) window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
+              if (data.refreshToken && Capacitor.isNativePlatform()) {
+                window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
+              }
             }
           } catch (e) {
             console.warn("Auto guest session token provision failed:", e);

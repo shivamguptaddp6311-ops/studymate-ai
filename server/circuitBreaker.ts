@@ -3,6 +3,30 @@ import { serverLogger } from "./logger";
 
 dotenv.config();
 
+function safeLogInfo(category: string, message: string, data?: any) {
+  try {
+    if (typeof serverLogger !== "undefined" && serverLogger?.info) {
+      serverLogger.info(category, message, data);
+    } else {
+      console.log(`[${new Date().toISOString()}] [INFO] [${category}] ${message}`, data ? JSON.stringify(data) : "");
+    }
+  } catch {
+    console.log(`[${new Date().toISOString()}] [INFO] [${category}] ${message}`, data ? JSON.stringify(data) : "");
+  }
+}
+
+function safeLogWarn(category: string, message: string, data?: any) {
+  try {
+    if (typeof serverLogger !== "undefined" && serverLogger?.warn) {
+      serverLogger.warn(category, message, data);
+    } else {
+      console.warn(`[${new Date().toISOString()}] [WARN] [${category}] ${message}`, data ? JSON.stringify(data) : "");
+    }
+  } catch {
+    console.warn(`[${new Date().toISOString()}] [WARN] [${category}] ${message}`, data ? JSON.stringify(data) : "");
+  }
+}
+
 export type CircuitState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface ProviderCircuitStats {
@@ -51,7 +75,7 @@ export class AICircuitBreaker {
     const defaultProviders = ["gemini", "openai", "groq", "anthropic", "openrouter", "fal"];
     defaultProviders.forEach(p => this.initProvider(p));
 
-    serverLogger.info("CircuitBreaker", "Initialized AI Provider Circuit Breaker Manager", {
+    safeLogInfo("CircuitBreaker", "Initialized AI Provider Circuit Breaker Manager", {
       failureThreshold: this.failureThreshold,
       timeoutThreshold: this.timeoutThreshold,
       cooldownMs: this.cooldownMs
@@ -90,7 +114,7 @@ export class AICircuitBreaker {
       if (elapsed >= this.cooldownMs) {
         // Cooldown period elapsed -> transition to HALF_OPEN for trial probe
         p.state = "HALF_OPEN";
-        serverLogger.info("CircuitBreaker", `Provider [${provider}] cooldown (${this.cooldownMs}ms) expired. Transitioning to HALF_OPEN probe state.`);
+        safeLogInfo("CircuitBreaker", `Provider [${provider}] cooldown (${this.cooldownMs}ms) expired. Transitioning to HALF_OPEN probe state.`);
         return true;
       }
       // Still in cooldown period -> deny request to unhealthy provider
@@ -132,7 +156,7 @@ export class AICircuitBreaker {
     }
 
     if (p.state === "HALF_OPEN" || p.state === "OPEN") {
-      serverLogger.info("CircuitBreaker", `Provider [${provider}] successfully recovered! Circuit transition [${p.state}] -> [CLOSED].`);
+      safeLogInfo("CircuitBreaker", `Provider [${provider}] successfully recovered! Circuit transition [${p.state}] -> [CLOSED].`);
       p.state = "CLOSED";
       p.openedAt = undefined;
     }
@@ -165,7 +189,7 @@ export class AICircuitBreaker {
     if (shouldTrip && p.state !== "OPEN") {
       p.state = "OPEN";
       p.openedAt = Date.now();
-      serverLogger.warn("CircuitBreaker", `Circuit TRIPPED for provider [${provider}] -> [OPEN]. Consecutive failures: ${p.consecutiveFailures}, Consecutive timeouts: ${p.consecutiveTimeouts}. Cooldown: ${this.cooldownMs}ms. Reason: ${reason}`);
+      safeLogWarn("CircuitBreaker", `Circuit TRIPPED for provider [${provider}] -> [OPEN]. Consecutive failures: ${p.consecutiveFailures}, Consecutive timeouts: ${p.consecutiveTimeouts}. Cooldown: ${this.cooldownMs}ms. Reason: ${reason}`);
     } else if (p.state === "OPEN") {
       // Re-arm timer if failed during probe or extra request
       p.openedAt = Date.now();
@@ -217,7 +241,7 @@ export class AICircuitBreaker {
         this.stats[provider].consecutiveFailures = 0;
         this.stats[provider].consecutiveTimeouts = 0;
         this.stats[provider].openedAt = undefined;
-        serverLogger.info("CircuitBreaker", `Reset circuit breaker for provider [${provider}] -> [CLOSED].`);
+        safeLogInfo("CircuitBreaker", `Reset circuit breaker for provider [${provider}] -> [CLOSED].`);
       }
     } else {
       for (const p of Object.keys(this.stats)) {
@@ -226,7 +250,7 @@ export class AICircuitBreaker {
         this.stats[p].consecutiveTimeouts = 0;
         this.stats[p].openedAt = undefined;
       }
-      serverLogger.info("CircuitBreaker", "Reset circuit breaker for all AI providers.");
+      safeLogInfo("CircuitBreaker", "Reset circuit breaker for all AI providers.");
     }
   }
 }

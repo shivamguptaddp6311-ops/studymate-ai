@@ -5,6 +5,13 @@ import { firebaseDB } from "./firebase";
 import { serverLogger, recordAIAttempt, recordAISuccess, recordAIFailure } from "./logger";
 import { concurrencyQueue } from "./concurrencyQueue";
 import { circuitBreaker } from "./circuitBreaker";
+import {
+  AICapability,
+  hasAllCapabilities,
+  validateProviderCapabilities,
+  getRequiredCapabilitiesForTask,
+  filterCapableProviders
+} from "./providerCapabilities";
 
 dotenv.config();
 
@@ -112,6 +119,111 @@ export function getConfiguredImageProviders(ignoreCircuit = false) {
   };
 }
 
+export interface ImageProviderHealth {
+  provider: "fal" | "gemini" | "openai" | "pollinations";
+  configured: boolean;
+  status: "healthy" | "degraded" | "unhealthy";
+  consecutiveFailures: number;
+  lastFailureReason?: string;
+  lastSuccessTimestamp?: number;
+  cooldownUntil?: number;
+}
+
+const imageProviderHealthState: Record<"fal" | "gemini" | "openai" | "pollinations", ImageProviderHealth> = {
+  fal: { provider: "fal", configured: false, status: "healthy", consecutiveFailures: 0 },
+  gemini: { provider: "gemini", configured: false, status: "healthy", consecutiveFailures: 0 },
+  openai: { provider: "openai", configured: false, status: "healthy", consecutiveFailures: 0 },
+  pollinations: { provider: "pollinations", configured: true, status: "healthy", consecutiveFailures: 0 }
+};
+
+export function checkImageProviderHealth(): Record<string, ImageProviderHealth> {
+  const config = getConfiguredImageProviders(true);
+  const now = Date.now();
+
+  const update = (p: "fal" | "gemini" | "openai" | "pollinations", isConfigured: boolean) => {
+    const record = imageProviderHealthState[p];
+    record.configured = isConfigured;
+
+    if (!isConfigured) {
+      record.status = "unhealthy";
+      record.lastFailureReason = "API key not configured or invalid";
+    } else if (record.cooldownUntil && now < record.cooldownUntil) {
+      record.status = "unhealthy";
+    } else if (record.consecutiveFailures >= 3) {
+      record.status = "unhealthy";
+    } else if (record.consecutiveFailures > 0) {
+      record.status = "degraded";
+    } else {
+      record.status = "healthy";
+    }
+  };
+
+  update("fal", config.fal);
+  update("gemini", config.gemini);
+  update("openai", config.openai);
+  update("pollinations", true);
+
+  return { ...imageProviderHealthState };
+}
+
+export function recordImageProviderHealthSuccess(p: "fal" | "gemini" | "openai" | "pollinations") {
+  const record = imageProviderHealthState[p];
+  if (record) {
+    record.consecutiveFailures = 0;
+    record.status = "healthy";
+    record.lastSuccessTimestamp = Date.now();
+    record.cooldownUntil = undefined;
+    record.lastFailureReason = undefined;
+  }
+}
+
+export function recordImageProviderHealthFailure(p: "fal" | "gemini" | "openai" | "pollinations", reason: string, isPermanent = false) {
+  const record = imageProviderHealthState[p];
+  if (record) {
+    record.consecutiveFailures += 1;
+    record.lastFailureReason = reason;
+
+    if (isPermanent || record.consecutiveFailures >= 3) {
+      record.cooldownUntil = Date.now() + 2 * 60 * 1000; // 2 minutes cooldown
+      record.status = "unhealthy";
+    } else {
+      record.status = "degraded";
+    }
+  }
+}
+
+function isTransientImageError(err: any): boolean {
+  if (!err) return false;
+  const msg = (err.message || String(err)).toLowerCase();
+  const status = err.status || err.statusCode || err.response?.status;
+
+  if (status) {
+    if (status === 429) return true;
+    if (status >= 500 && status < 600) return true;
+    if (status === 401 || status === 403 || status === 400 || status === 404) return false;
+  }
+
+  if (
+    msg.includes("timeout") ||
+    msg.includes("timed out") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout") ||
+    msg.includes("fetch failed") ||
+    msg.includes("network error") ||
+    msg.includes("overloaded") ||
+    msg.includes("rate limit") ||
+    msg.includes("too many requests") ||
+    msg.includes("503") ||
+    msg.includes("502") ||
+    msg.includes("500") ||
+    msg.includes("504")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 // Convert common message roles to provider-specific formats
 function convertMessagesToOpenAIFormat(messages: AIMessage[], systemInstruction?: string) {
   const formatted: any[] = [];
@@ -213,7 +325,7 @@ async function retryWithBackoff<T>(
         throw error;
       }
 
-      // If it's a fatal billing, credit, or auth error, throw immediately without retrying
+      // If it's a fatal billing, credit, auth, or model unavailability/high demand error, throw immediately without retrying to allow instant fallback
       const errMsg = error?.message || String(error);
       const isFatal =
         errMsg.includes("credit balance") ||
@@ -221,7 +333,11 @@ async function retryWithBackoff<T>(
         errMsg.includes("billing") ||
         errMsg.includes("Billing") ||
         errMsg.includes("invalid_api_key") ||
-        errMsg.includes("invalid api key");
+        errMsg.includes("invalid api key") ||
+        errMsg.includes("503") ||
+        errMsg.includes("UNAVAILABLE") ||
+        errMsg.includes("high demand") ||
+        errMsg.includes("overloaded");
 
       if (isFatal) {
         throw error;
@@ -451,6 +567,19 @@ export async function executeAIRequest(options: {
       // Filter based on configured keys
       providersToTry = providersToTry.filter(p => config[p as keyof typeof config]);
 
+      // Validate provider capabilities against request requirements
+      const requiredCapabilities = getRequiredCapabilitiesForTask(
+        category === "pdf_parsing" ? "pdf_chat" : category === "ocr" ? "ocr" : image ? "vision_analysis" : "general_chat",
+        { image, isPdf }
+      );
+
+      const capabilityFiltered = filterCapableProviders(providersToTry, requiredCapabilities) as AIProvider[];
+      if (capabilityFiltered.length > 0) {
+        providersToTry = capabilityFiltered;
+      } else {
+        serverLogger.warn("AIService", `No configured provider supports all required capabilities: [${requiredCapabilities.join(", ")}].`);
+      }
+
       if (providersToTry.length === 0) {
         if (isValidKey(process.env.GEMINI_API_KEY)) {
           providersToTry = ["gemini"];
@@ -661,7 +790,7 @@ async function callGemini(
   };
 
   try {
-    return await executeCall("gemini-3.5-flash");
+    return await executeCall("gemini-2.5-flash");
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     if (
@@ -671,14 +800,22 @@ async function callGemini(
       errMsg.includes("503") ||
       errMsg.includes("UNAVAILABLE") ||
       errMsg.includes("high demand") ||
+      errMsg.includes("overloaded") ||
       errMsg.includes("timed out") ||
-      errMsg.includes("timeout")
+      errMsg.includes("timeout") ||
+      errMsg.includes("404") ||
+      errMsg.includes("not found")
     ) {
-      console.info(`[AIService] gemini-3.5-flash failed with: ${errMsg}. Instantly falling back to gemini-3.1-flash-lite...`);
+      console.info(`[AIService] gemini-2.5-flash failed with: ${errMsg}. Instantly falling back to gemini-1.5-flash...`);
       try {
-        return await executeCall("gemini-3.1-flash-lite");
+        return await executeCall("gemini-1.5-flash");
       } catch (fallbackErr) {
-        console.error("[AIService] gemini-3.1-flash-lite fallback failed:", fallbackErr);
+        console.error("[AIService] gemini-1.5-flash fallback failed, trying gemini-2.5-pro:", fallbackErr);
+        try {
+          return await executeCall("gemini-2.5-pro");
+        } catch (proErr) {
+          console.error("[AIService] gemini-2.5-pro fallback failed:", proErr);
+        }
       }
     }
     throw err;
@@ -1089,24 +1226,32 @@ export async function generateImagePollinations(
   else if (aspectRatio === "4:3") { width = 1024; height = 768; }
   else if (aspectRatio === "3:4") { width = 768; height = 1024; }
 
-  const seed = Math.floor(Math.random() * 1000000);
-  const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}`;
+  return await retryWithBackoff(async () => {
+    const seed = Math.floor(Math.random() * 1000000);
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}`;
 
-  try {
-    const res = await fetchWithTimeout(pollinationsUrl, { signal }, timeoutMs);
-    if (res.ok) {
-      const buffer = await res.arrayBuffer();
-      const b64 = Buffer.from(buffer).toString("base64");
-      const mime = res.headers.get("content-type") || "image/jpeg";
-      if (b64.length > 100) {
-        return { imageUrl: `data:${mime};base64,${b64}`, revisedPrompt: prompt };
+    try {
+      const res = await fetchWithTimeout(pollinationsUrl, { signal }, timeoutMs);
+      if (res.ok) {
+        const buffer = await res.arrayBuffer();
+        const b64 = Buffer.from(buffer).toString("base64");
+        const mime = res.headers.get("content-type") || "image/jpeg";
+        if (b64.length > 100) {
+          recordImageProviderHealthSuccess("pollinations");
+          return { imageUrl: `data:${mime};base64,${b64}`, revisedPrompt: prompt };
+        }
       }
+    } catch (e: any) {
+      serverLogger.warn("AIServiceImage", `Pollinations fetch failed: ${e.message}`);
+      if (!isTransientImageError(e)) {
+        throw e;
+      }
+      throw e;
     }
-  } catch (e: any) {
-    serverLogger.warn("AIServiceImage", `Pollinations fetch failed: ${e.message}`);
-  }
 
-  return { imageUrl: pollinationsUrl, revisedPrompt: prompt };
+    recordImageProviderHealthSuccess("pollinations");
+    return { imageUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true&seed=${Math.floor(Math.random() * 1000000)}`, revisedPrompt: prompt };
+  }, 2, 800, undefined, signal);
 }
 
 export async function generateImageGemini(
@@ -1118,7 +1263,14 @@ export async function generateImageGemini(
 ): Promise<{ imageUrl: string; revisedPrompt?: string }> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || !isValidKey(apiKey)) {
+    recordImageProviderHealthFailure("gemini", "GEMINI_API_KEY is missing or invalid", true);
     throw new Error("GEMINI_API_KEY is not configured or is invalid");
+  }
+
+  // Fast-path check: if marked unhealthy (e.g. 404 unsupported on key), fallback immediately
+  if (imageProviderHealthState.gemini.status === "unhealthy") {
+    serverLogger.info("AIServiceImage", "Gemini Imagen marked unhealthy; routing directly to Pollinations AI fallback.");
+    return await generateImagePollinations(prompt, aspectRatio, signal, timeoutMs);
   }
 
   let geminiRatio = "1:1";
@@ -1128,95 +1280,118 @@ export async function generateImageGemini(
 
   const candidateModels = ["imagen-3.0-generate-002", "imagen-3.0-fast-generate-001", "imagen-3.0-generate-001"];
 
-  // 1. Try GoogleGenAI SDK with candidate models
-  const gemini = getGeminiClient();
-  if (gemini && typeof (gemini.models as any).generateImages === "function") {
-    for (const modelCandidate of candidateModels) {
-      try {
-        const sdkRes = await withTimeoutAndSignal(
-          async () => {
-            return await (gemini.models as any).generateImages({
-              model: modelCandidate,
-              prompt,
-              config: {
-                numberOfImages: 1,
-                outputMimeType: "image/jpeg",
+  return await retryWithBackoff(async () => {
+    let is404Error = false;
+
+    // 1. Try GoogleGenAI SDK with candidate models
+    const gemini = getGeminiClient();
+    if (gemini && typeof (gemini.models as any).generateImages === "function") {
+      for (const modelCandidate of candidateModels) {
+        if (is404Error) break;
+        try {
+          const sdkRes = await withTimeoutAndSignal(
+            async () => {
+              return await (gemini.models as any).generateImages({
+                model: modelCandidate,
+                prompt,
+                config: {
+                  numberOfImages: 1,
+                  outputMimeType: "image/jpeg",
+                  aspectRatio: geminiRatio,
+                },
+              });
+            },
+            Math.min(timeoutMs, 10000),
+            "Gemini Imagen SDK request timed out",
+            signal
+          );
+
+          const imageObj = sdkRes?.generatedImages?.[0]?.image;
+          const rawBytes = imageObj?.imageBytes;
+          if (rawBytes) {
+            let b64Str = "";
+            if (typeof rawBytes === "string") {
+              b64Str = rawBytes.replace(/\s+/g, "");
+            } else if (Buffer.isBuffer(rawBytes) || rawBytes instanceof Uint8Array) {
+              b64Str = Buffer.from(rawBytes).toString("base64");
+            }
+            if (b64Str.length > 50) {
+              const mime = imageObj?.mimeType || "image/jpeg";
+              const imageUrl = b64Str.startsWith("data:") ? b64Str : `data:${mime};base64,${b64Str}`;
+              recordImageProviderHealthSuccess("gemini");
+              return { imageUrl, revisedPrompt: prompt };
+            }
+          }
+        } catch (e: any) {
+          const msg = e.message || String(e);
+          if (msg.includes("404") || msg.includes("NOT_FOUND")) {
+            is404Error = true;
+          } else {
+            serverLogger.warn("AIServiceImage", `Gemini SDK generateImages model ${modelCandidate} error: ${msg}`);
+          }
+        }
+      }
+    }
+
+    // 2. Try REST API predict endpoint if not 404
+    if (!is404Error) {
+      for (const modelCandidate of candidateModels) {
+        if (is404Error) break;
+        try {
+          const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelCandidate}:predict?key=${apiKey.trim()}`;
+          const response = await fetchWithTimeout(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              instances: [{ prompt }],
+              parameters: {
+                sampleCount: 1,
                 aspectRatio: geminiRatio,
-              },
-            });
-          },
-          Math.min(timeoutMs, 15000),
-          "Gemini Imagen SDK request timed out",
-          signal
-        );
+                outputOptions: { mimeType: "image/jpeg" }
+              }
+            }),
+            signal
+          }, Math.min(timeoutMs, 8000));
 
-        const imageObj = sdkRes?.generatedImages?.[0]?.image;
-        const rawBytes = imageObj?.imageBytes;
-        if (rawBytes) {
-          let b64Str = "";
-          if (typeof rawBytes === "string") {
-            b64Str = rawBytes.replace(/\s+/g, "");
-          } else if (Buffer.isBuffer(rawBytes) || rawBytes instanceof Uint8Array) {
-            b64Str = Buffer.from(rawBytes).toString("base64");
+          if (response.ok) {
+            const data = await response.json();
+            const bytes = data?.predictions?.[0]?.bytesBase64Encoded || data?.predictions?.[0]?.image?.imageBytes;
+            if (bytes) {
+              let cleanB64 = "";
+              if (typeof bytes === "string") {
+                cleanB64 = bytes.replace(/\s+/g, "");
+              } else if (Buffer.isBuffer(bytes) || bytes instanceof Uint8Array) {
+                cleanB64 = Buffer.from(bytes).toString("base64");
+              }
+
+              if (cleanB64 && cleanB64.length >= 50) {
+                const imageUrl = cleanB64.startsWith("data:") ? cleanB64 : `data:image/jpeg;base64,${cleanB64}`;
+                recordImageProviderHealthSuccess("gemini");
+                return { imageUrl, revisedPrompt: prompt };
+              }
+            }
+          } else {
+            const errText = await response.text().catch(() => "");
+            if (response.status === 404 || errText.includes("404") || errText.includes("NOT_FOUND")) {
+              is404Error = true;
+            } else {
+              serverLogger.warn("AIServiceImage", `Gemini REST predict with model ${modelCandidate} returned HTTP ${response.status}: ${errText}`);
+            }
           }
-          if (b64Str.length > 50) {
-            const mime = imageObj?.mimeType || "image/jpeg";
-            const imageUrl = b64Str.startsWith("data:") ? b64Str : `data:${mime};base64,${b64Str}`;
-            return { imageUrl, revisedPrompt: prompt };
-          }
+        } catch (e: any) {
+          serverLogger.warn("AIServiceImage", `Gemini REST predict error for model ${modelCandidate}: ${e.message}`);
         }
-      } catch (e: any) {
-        serverLogger.warn("AIServiceImage", `Gemini SDK generateImages with model ${modelCandidate} failed: ${e.message}`);
       }
     }
-  }
 
-  // 2. Try REST API predict endpoint with candidate models
-  for (const modelCandidate of candidateModels) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelCandidate}:predict?key=${apiKey.trim()}`;
-      const response = await fetchWithTimeout(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instances: [{ prompt }],
-          parameters: {
-            sampleCount: 1,
-            aspectRatio: geminiRatio,
-            outputOptions: { mimeType: "image/jpeg" }
-          }
-        }),
-        signal
-      }, Math.min(timeoutMs, 12000));
-
-      if (response.ok) {
-        const data = await response.json();
-        const bytes = data?.predictions?.[0]?.bytesBase64Encoded || data?.predictions?.[0]?.image?.imageBytes;
-        if (bytes) {
-          let cleanB64 = "";
-          if (typeof bytes === "string") {
-            cleanB64 = bytes.replace(/\s+/g, "");
-          } else if (Buffer.isBuffer(bytes) || bytes instanceof Uint8Array) {
-            cleanB64 = Buffer.from(bytes).toString("base64");
-          }
-
-          if (cleanB64 && cleanB64.length >= 50) {
-            const imageUrl = cleanB64.startsWith("data:") ? cleanB64 : `data:image/jpeg;base64,${cleanB64}`;
-            return { imageUrl, revisedPrompt: prompt };
-          }
-        }
-      } else {
-        const errText = await response.text().catch(() => "");
-        serverLogger.warn("AIServiceImage", `Gemini REST predict with model ${modelCandidate} returned HTTP ${response.status}: ${errText}`);
-      }
-    } catch (e: any) {
-      serverLogger.warn("AIServiceImage", `Gemini REST predict error for model ${modelCandidate}: ${e.message}`);
+    if (is404Error) {
+      recordImageProviderHealthFailure("gemini", "Gemini Imagen models unavailable on this API key", true);
     }
-  }
 
-  // 3. Fallback to Pollinations AI
-  serverLogger.info("AIServiceImage", "Gemini Imagen endpoints unavailable; using Pollinations AI fallback.");
-  return await generateImagePollinations(prompt, aspectRatio, signal);
+    // Fallback to Pollinations AI if Gemini Imagen endpoints fail or return 404
+    serverLogger.info("AIServiceImage", "Gemini Imagen endpoints unavailable on current key; using Pollinations AI fallback.");
+    return await generateImagePollinations(prompt, aspectRatio, signal, timeoutMs);
+  }, 1, 500, undefined, signal);
 }
 
 export async function generateImageOpenAI(
@@ -1228,6 +1403,7 @@ export async function generateImageOpenAI(
 ): Promise<{ imageUrl: string; revisedPrompt?: string }> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey || !isValidKey(apiKey)) {
+    recordImageProviderHealthFailure("openai", "OPENAI_API_KEY is missing or invalid", true);
     throw new Error("OPENAI_API_KEY is not configured or is invalid");
   }
 
@@ -1257,7 +1433,12 @@ export async function generateImageOpenAI(
 
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(`OpenAI DALL-E 3 HTTP ${response.status}: ${errData.error?.message || response.statusText}`);
+          const errMsg = errData.error?.message || response.statusText;
+          const isHardAuth = response.status === 401 || response.status === 403;
+          if (isHardAuth) {
+            recordImageProviderHealthFailure("openai", `OpenAI HTTP ${response.status}: ${errMsg}`, true);
+          }
+          throw new Error(`OpenAI DALL-E 3 HTTP ${response.status}: ${errMsg}`);
         }
 
         const data = await response.json();
@@ -1280,6 +1461,7 @@ export async function generateImageOpenAI(
           throw new Error("OpenAI DALL-E 3 returned no valid image URL or base64 data.");
         }
 
+        recordImageProviderHealthSuccess("openai");
         return {
           imageUrl,
           revisedPrompt: item.revised_prompt || prompt
@@ -1289,7 +1471,7 @@ export async function generateImageOpenAI(
       "OpenAI DALL-E 3 request timed out.",
       signal
     );
-  }, 1, 1000, undefined, signal);
+  }, 2, 800, undefined, signal);
 }
 
 export async function generateImageFal(
@@ -1301,6 +1483,7 @@ export async function generateImageFal(
 ): Promise<{ imageUrl: string; revisedPrompt?: string }> {
   const falKey = process.env.FAL_KEY || process.env.FAL_API_KEY;
   if (!falKey || !isValidKey(falKey)) {
+    recordImageProviderHealthFailure("fal", "FAL_KEY is missing or invalid", true);
     throw new Error("FAL_KEY is not configured or is invalid");
   }
 
@@ -1331,7 +1514,12 @@ export async function generateImageFal(
 
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          throw new Error(`Fal.ai FLUX HTTP ${response.status}: ${errData.detail || errData.error || response.statusText}`);
+          const errMsg = errData.detail || errData.error || response.statusText;
+          const isHardAuth = response.status === 401 || response.status === 403;
+          if (isHardAuth) {
+            recordImageProviderHealthFailure("fal", `Fal.ai HTTP ${response.status}: ${errMsg}`, true);
+          }
+          throw new Error(`Fal.ai FLUX HTTP ${response.status}: ${errMsg}`);
         }
 
         const data = await response.json();
@@ -1351,6 +1539,7 @@ export async function generateImageFal(
           throw new Error("Fal.ai FLUX returned no valid image URL.");
         }
 
+        recordImageProviderHealthSuccess("fal");
         return {
           imageUrl,
           revisedPrompt: data.prompt || prompt
@@ -1360,10 +1549,10 @@ export async function generateImageFal(
       "Fal.ai image generation request timed out.",
       signal
     );
-  }, 1, 1000, undefined, signal);
+  }, 2, 800, undefined, signal);
 }
 
-// Centralized AI Image Router with automatic fallback chain: Gemini -> OpenAI -> Fal.ai
+// Centralized AI Image Router with dynamic provider health check and multi-level automatic fallback
 export async function executeImageGenRequest(options: ImageGenOptions): Promise<ImageGenResponse> {
   const {
     prompt,
@@ -1404,129 +1593,145 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
     },
     async () => {
       const config = getConfiguredImageProviders();
+      const healthMap = checkImageProviderHealth();
 
-  // Strict fallback sequence: Gemini -> OpenAI -> Fal.ai
-  const fallbackOrder: ("gemini" | "openai" | "fal")[] = ["gemini", "openai", "fal"];
-  let providersToTry: ("gemini" | "openai" | "fal")[] = [];
+      // Primary fallback sequence: Fal -> Gemini -> OpenAI
+      const defaultSequence: ("fal" | "gemini" | "openai")[] = ["fal", "gemini", "openai"];
+      let providersToTry: ("fal" | "gemini" | "openai")[] = [];
 
-  if (preferredProvider && preferredProvider !== "auto") {
-    if (config[preferredProvider]) {
-      providersToTry.push(preferredProvider);
-    } else {
-      serverLogger.warn("AIServiceImage", `Preferred provider '${preferredProvider}' is not configured. Falling back to auto-selection.`);
-    }
-  }
-
-  fallbackOrder.forEach(p => {
-    if (!providersToTry.includes(p) && config[p]) {
-      providersToTry.push(p);
-    }
-  });
-
-  if (providersToTry.length === 0) {
-    const unconfigured = [
-      !config.gemini ? "GEMINI_API_KEY" : null,
-      !config.openai ? "OPENAI_API_KEY" : null,
-      !config.fal ? "FAL_KEY" : null,
-    ].filter(Boolean).join(", ");
-
-    throw new Error(`No image generation providers configured. Missing secrets: ${unconfigured || "GEMINI_API_KEY, OPENAI_API_KEY, FAL_KEY"}. Please configure at least one API key in settings.`);
-  }
-
-  const errors: string[] = [];
-  const startTime = Date.now();
-  let lastUsedProvider: AIImageProvider = providersToTry[0];
-
-  serverLogger.info("AIServiceImage", `[ImageGen Request Payload] Prompt: "${prompt.substring(0, 50)}...", Category: ${category || "General"}, AspectRatio: ${aspectRatio}, Quality: ${quality}, Preferred: ${preferredProvider}, Pipeline: [${providersToTry.join(" -> ")}]`);
-
-  for (let i = 0; i < providersToTry.length; i++) {
-    const provider = providersToTry[i];
-    lastUsedProvider = provider;
-    const providerStartTime = Date.now();
-    recordAIAttempt(provider);
-
-    if (signal?.aborted) {
-      throw new Error("Image generation request was cancelled by user.");
-    }
-
-    try {
-      serverLogger.info("AIServiceImage", `[Attempt ${i + 1}/${providersToTry.length}] Calling image provider: [${provider}]`);
-
-      let genResult: { imageUrl: string; revisedPrompt?: string } = { imageUrl: "" };
-
-      if (provider === "gemini") {
-        genResult = await generateImageGemini(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
-      } else if (provider === "openai") {
-        genResult = await generateImageOpenAI(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
-      } else if (provider === "fal") {
-        genResult = await generateImageFal(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
+      // 1. If a preferred provider is specified and configured, put it first
+      if (preferredProvider && preferredProvider !== "auto") {
+        if (config[preferredProvider]) {
+          providersToTry.push(preferredProvider);
+        } else {
+          serverLogger.warn("AIServiceImage", `Preferred provider '${preferredProvider}' is not configured. Falling back to auto-selection.`);
+        }
       }
 
-      if (!genResult.imageUrl || typeof genResult.imageUrl !== "string" || !genResult.imageUrl.trim()) {
-        throw new Error(`Provider [${provider}] returned an empty image payload.`);
-      }
+      // 2. Append remaining configured providers
+      const reorderedSequence = preferredProvider === "gemini"
+        ? ["gemini", "fal", "openai"] as ("fal" | "gemini" | "openai")[]
+        : preferredProvider === "openai"
+          ? ["openai", "fal", "gemini"] as ("fal" | "gemini" | "openai")[]
+          : defaultSequence;
 
-      const duration = Date.now() - providerStartTime;
-      recordAISuccess(provider, duration);
-      serverLogger.info("AIServiceImage", `Successfully generated image with provider [${provider}] in ${duration}ms. Payload size: ${genResult.imageUrl.length} chars. Image format: ${genResult.imageUrl.substring(0, 30)}...`);
-
-      imageCache.set(cacheKey, {
-        imageUrl: genResult.imageUrl,
-        providerUsed: provider,
-        timestamp: Date.now()
+      reorderedSequence.forEach(p => {
+        if (!providersToTry.includes(p) && config[p]) {
+          providersToTry.push(p);
+        }
       });
 
+      // Filter by image_generation capability
+      providersToTry = filterCapableProviders(providersToTry, ["image_generation"]) as ("fal" | "gemini" | "openai")[];
+
+      // 3. Prioritize healthy/degraded providers over known unhealthy ones
+      providersToTry.sort((a, b) => {
+        const healthA = healthMap[a]?.status || "unhealthy";
+        const healthB = healthMap[b]?.status || "unhealthy";
+        if (healthA === "healthy" && healthB !== "healthy") return -1;
+        if (healthA !== "healthy" && healthB === "healthy") return 1;
+        if (healthA === "degraded" && healthB === "unhealthy") return -1;
+        if (healthA === "unhealthy" && healthB === "degraded") return 1;
+        return 0;
+      });
+
+      const errors: string[] = [];
+      const startTime = Date.now();
+      let lastUsedProvider: AIImageProvider = providersToTry[0] || "fal";
+
+      serverLogger.info("AIServiceImage", `[ImageGen Request] Prompt: "${prompt.substring(0, 50)}...", Category: ${category || "General"}, AspectRatio: ${aspectRatio}, Quality: ${quality}, Preferred: ${preferredProvider}, Pipeline: [${providersToTry.join(" -> ")}]`);
+
+      for (let i = 0; i < providersToTry.length; i++) {
+        const provider = providersToTry[i];
+        lastUsedProvider = provider;
+        const providerStartTime = Date.now();
+        recordAIAttempt(provider);
+
+        if (signal?.aborted) {
+          throw new Error("Image generation request was cancelled by user.");
+        }
+
+        try {
+          serverLogger.info("AIServiceImage", `[Attempt ${i + 1}/${providersToTry.length}] Calling image provider: [${provider}]`);
+
+          let genResult: { imageUrl: string; revisedPrompt?: string } = { imageUrl: "" };
+
+          if (provider === "fal") {
+            genResult = await generateImageFal(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
+          } else if (provider === "gemini") {
+            genResult = await generateImageGemini(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
+          } else if (provider === "openai") {
+            genResult = await generateImageOpenAI(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
+          }
+
+          if (!genResult.imageUrl || typeof genResult.imageUrl !== "string" || !genResult.imageUrl.trim()) {
+            throw new Error(`Provider [${provider}] returned an empty image payload.`);
+          }
+
+          const duration = Date.now() - providerStartTime;
+          recordAISuccess(provider, duration);
+          recordImageProviderHealthSuccess(provider);
+
+          serverLogger.info("AIServiceImage", `Successfully generated image with provider [${provider}] in ${duration}ms. Format: ${genResult.imageUrl.substring(0, 30)}...`);
+
+          imageCache.set(cacheKey, {
+            imageUrl: genResult.imageUrl,
+            providerUsed: provider,
+            timestamp: Date.now()
+          });
+
+          firebaseDB.saveAIRequestLog({
+            id: `imglog-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+            provider,
+            endpoint: "generate-image",
+            responseTimeMs: duration,
+            success: true,
+            timestamp: new Date().toISOString()
+          }).catch(e => console.error("[AIServiceImage] Failed to save AI request log:", e));
+
+          return {
+            imageUrl: genResult.imageUrl,
+            providerUsed: provider,
+            revisedPrompt: genResult.revisedPrompt || revisedPrompt
+          };
+        } catch (err: any) {
+          const duration = Date.now() - providerStartTime;
+          const errMsg = err.message || String(err);
+          recordAIFailure(provider, errMsg);
+          recordImageProviderHealthFailure(provider, errMsg, !isTransientImageError(err));
+
+          const nextProvider = providersToTry[i + 1] || "pollinations";
+          serverLogger.aiFallback(provider, nextProvider, errMsg, duration);
+          errors.push(`[${provider.toUpperCase()}] ${errMsg}`);
+
+          if (err?.name === "AbortError" || err?.message?.includes("cancelled") || signal?.aborted) {
+            throw new Error("Image generation request was cancelled.");
+          }
+        }
+      }
+
+      const totalDuration = Date.now() - startTime;
       firebaseDB.saveAIRequestLog({
         id: `imglog-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
-        provider,
+        provider: lastUsedProvider,
         endpoint: "generate-image",
-        responseTimeMs: duration,
-        success: true,
+        responseTimeMs: totalDuration,
+        success: false,
+        error: errors.join(" | "),
         timestamp: new Date().toISOString()
-      }).catch(e => console.error("[AIServiceImage] Failed to save AI request log:", e));
+      }).catch(e => console.error("[AIServiceImage] Failed to save AI request failure log:", e));
 
-      return {
-        imageUrl: genResult.imageUrl,
-        providerUsed: provider,
-        revisedPrompt: genResult.revisedPrompt || revisedPrompt
-      };
-    } catch (err: any) {
-      const duration = Date.now() - providerStartTime;
-      const errMsg = err.message || String(err);
-      recordAIFailure(provider, errMsg);
-
-      const nextProvider = providersToTry[i + 1] || "none";
-      serverLogger.aiFallback(provider, nextProvider, errMsg, duration);
-      errors.push(`[${provider.toUpperCase()}] ${errMsg}`);
-
-      if (err?.name === "AbortError" || err?.message?.includes("cancelled") || signal?.aborted) {
-        throw new Error("Image generation request was cancelled.");
+      serverLogger.warn("AIServiceImage", `All configured image providers failed or none available (${errors.join("; ") || "No API keys"}). Falling back to Pollinations AI.`);
+      try {
+        const polRes = await generateImagePollinations(revisedPrompt, aspectRatio, signal, timeoutMs);
+        return {
+          imageUrl: polRes.imageUrl,
+          providerUsed: "fal", // Preserve frontend compatibility badge
+          revisedPrompt
+        };
+      } catch (finalErr: any) {
+        throw new Error(`All image generation attempts failed including fallback:\n${errors.join("\n")}`);
       }
-    }
-  }
-
-  const totalDuration = Date.now() - startTime;
-  firebaseDB.saveAIRequestLog({
-    id: `imglog-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
-    provider: lastUsedProvider,
-    endpoint: "generate-image",
-    responseTimeMs: totalDuration,
-    success: false,
-    error: errors.join(" | "),
-    timestamp: new Date().toISOString()
-  }).catch(e => console.error("[AIServiceImage] Failed to save AI request failure log:", e));
-
-  serverLogger.warn("AIServiceImage", `All configured image providers failed (${errors.join("; ")}). Falling back to Pollinations AI.`);
-  try {
-    const polRes = await generateImagePollinations(revisedPrompt, aspectRatio, signal);
-    return {
-      imageUrl: polRes.imageUrl,
-      providerUsed: "gemini" as any,
-      revisedPrompt
-    };
-  } catch (finalErr: any) {
-    throw new Error(`All image generation attempts failed:\n${errors.join("\n")}`);
-  }
     }
   );
 }

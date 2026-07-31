@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { UserProfile } from "../types";
 import { ChatMessage } from "../components/studymate-ai/types";
 import { isImageGenerationRequest } from "../utils/imageIntent";
+import { preprocessImageForOCRAndVision } from "../utils/imageOptimizer";
 
 export function useAI() {
   const [isLoading, setIsLoading] = useState(false);
@@ -59,6 +60,23 @@ export function useAI() {
     }, timeoutLimit);
 
     try {
+      let imagePayload = base64Image;
+      if (imagePayload && imagePayload.startsWith("data:image")) {
+        try {
+          const preprocessed = await preprocessImageForOCRAndVision(imagePayload, {
+            autoRotate: true,
+            deskew: true,
+            denoise: true,
+            improveContrast: true,
+            resizeIntelligently: true,
+            jpegQuality: 0.88
+          });
+          imagePayload = preprocessed.processedDataUrl;
+        } catch (prepErr) {
+          console.warn("[useAI] Preprocessing pipeline error for solveScannedQuestion:", prepErr);
+        }
+      }
+
       let token = localStorage.getItem("studymate_token") || window.localStorage.getItem("studymate_token") || "";
       let email = localStorage.getItem("studymate_logged_in_email") || window.localStorage.getItem("studymate_logged_in_email") || `guest-${Date.now()}@studymate.app`;
 
@@ -88,7 +106,7 @@ export function useAI() {
         },
         signal: controller.signal,
         body: JSON.stringify({
-          image: base64Image,
+          image: imagePayload,
           grade: profile.classGrade,
           favSubjects: profile.favoriteSubjects,
           weakSubjects: profile.weakSubjects,

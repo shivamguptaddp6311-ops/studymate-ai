@@ -246,7 +246,7 @@ export function StudyMateAI({
     setSelectedImage(null);
     setAttachedPdf(null);
 
-    const docContext = buildDocumentContextPrompt(notebookLM.documents, notebookLM.activeDocIds);
+    const docContext = buildDocumentContextPrompt(notebookLM.documents, notebookLM.activeDocIds, textToSend);
 
     handleSendAI({
       textToSend,

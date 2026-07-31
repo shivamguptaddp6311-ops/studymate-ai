@@ -1,5 +1,13 @@
 import * as pdfjsLib from "pdfjs-dist";
 import mammoth from "mammoth";
+import { preprocessImageForOCRAndVision } from "./imagePreprocessingPipeline";
+import { logger } from "./logger";
+import {
+  saveDocToIndexedDB,
+  getDocFromIndexedDB,
+  loadAllDocsFromIndexedDB,
+  deleteDocFromIndexedDB
+} from "./pdfChunkCache";
 
 // Configure pdfjs worker URL safely
 if (typeof window !== "undefined") {
@@ -25,7 +33,11 @@ export interface DocumentChunk {
   docId: string;
   docName: string;
   pageNumber: number;
+  startPage?: number;
+  endPage?: number;
+  headingHierarchy?: string;
   content: string;
+  tokenCountEstimate?: number;
 }
 
 export interface ProcessedDocument {
@@ -60,42 +72,136 @@ function calculateFileHash(fileName: string, fileSize: number, firstBytes: strin
 }
 
 /**
- * Split text into chunks with page numbers and overlap
+ * Helper to check if a line is a heading or section title
  */
-function createChunks(docId: string, docName: string, pages: DocumentPage[]): DocumentChunk[] {
+function isHeadingLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || trimmed.length > 90) return false;
+
+  // Markdown headings
+  if (/^#{1,4}\s+\S+/.test(trimmed)) return true;
+
+  // Chapter / Section / Unit / Module
+  if (/^(chapter|section|unit|module|part)\s+[\d\w]+/i.test(trimmed)) return true;
+
+  // Numbered headings like 1.1, 2.3.1
+  if (/^\d+(\.\d+)*\s+[A-Z]/.test(trimmed)) return true;
+
+  // Standalone all-caps line (e.g. "THERMODYNAMICS AND KINETICS")
+  if (/^[A-Z0-9\s\.\,\-\:\(\)]{4,60}$/.test(trimmed) && !trimmed.endsWith(".")) return true;
+
+  // Bold text line
+  if (/^\*\*[^*]+\*\*$/.test(trimmed)) return true;
+
+  return false;
+}
+
+/**
+ * Scalable Semantic Chunking Algorithm
+ * Chunks text by headings, paragraphs, and page boundaries with context breadcrumbs & overlapping windows
+ */
+export function createSemanticChunks(
+  docId: string,
+  docName: string,
+  pages: DocumentPage[]
+): DocumentChunk[] {
   const chunks: DocumentChunk[] = [];
   let chunkIdx = 0;
+  let activeHeadingStack: string[] = [];
+
+  const TARGET_CHUNK_CHARS = 1200; // ~300 words
+  const OVERLAP_CHARS = 150; // Context continuity overlap
 
   for (const page of pages) {
-    const text = page.text.trim();
-    if (!text) continue;
+    const rawText = page.text || "";
+    if (!rawText.trim()) continue;
 
-    // Split page into paragraphs/sentences if long
-    const MAX_CHUNK_LEN = 1000;
-    if (text.length <= MAX_CHUNK_LEN) {
-      chunkIdx++;
-      chunks.push({
-        id: `${docId}_c${chunkIdx}`,
-        docId,
-        docName,
-        pageNumber: page.pageNumber,
-        content: text
-      });
-    } else {
-      // Divide page text into overlapping windows
-      let start = 0;
-      while (start < text.length) {
-        const end = Math.min(start + MAX_CHUNK_LEN, text.length);
-        const subText = text.substring(start, end);
+    const lines = rawText.split(/\r?\n/);
+    let currentParagraphs: string[] = [];
+    let chunkStartPage = page.pageNumber;
+
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      if (!trimmedLine) {
+        if (currentParagraphs.length > 0) {
+          currentParagraphs.push("\n");
+        }
+        continue;
+      }
+
+      // Track headings
+      if (isHeadingLine(trimmedLine)) {
+        const cleanHeading = trimmedLine.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim();
+        if (trimmedLine.startsWith("# ")) {
+          activeHeadingStack = [cleanHeading];
+        } else if (trimmedLine.startsWith("## ")) {
+          activeHeadingStack = [activeHeadingStack[0] || "General", cleanHeading];
+        } else {
+          activeHeadingStack = [activeHeadingStack[0] || "Section", cleanHeading];
+        }
+      }
+
+      currentParagraphs.push(line);
+      const accumulatedLength = currentParagraphs.join("\n").length;
+
+      if (accumulatedLength >= TARGET_CHUNK_CHARS) {
+        const chunkContent = currentParagraphs.join("\n").trim();
+        const hierarchyStr = activeHeadingStack.join(" > ") || undefined;
+        chunkIdx++;
+
+        chunks.push({
+          id: `${docId}_c${chunkIdx}`,
+          docId,
+          docName,
+          pageNumber: page.pageNumber,
+          startPage: chunkStartPage,
+          endPage: page.pageNumber,
+          headingHierarchy: hierarchyStr,
+          content: chunkContent,
+          tokenCountEstimate: Math.ceil(chunkContent.length / 4)
+        });
+
+        // Prepare overlap window for continuity
+        const overlapText = chunkContent.slice(Math.max(0, chunkContent.length - OVERLAP_CHARS));
+        currentParagraphs = [overlapText];
+        chunkStartPage = page.pageNumber;
+      }
+    }
+
+    // Flush remaining paragraphs for page
+    if (currentParagraphs.length > 0) {
+      const remainingContent = currentParagraphs.join("\n").trim();
+      if (remainingContent.length > 30) {
+        const hierarchyStr = activeHeadingStack.join(" > ") || undefined;
         chunkIdx++;
         chunks.push({
           id: `${docId}_c${chunkIdx}`,
           docId,
           docName,
           pageNumber: page.pageNumber,
-          content: subText
+          startPage: chunkStartPage,
+          endPage: page.pageNumber,
+          headingHierarchy: hierarchyStr,
+          content: remainingContent,
+          tokenCountEstimate: Math.ceil(remainingContent.length / 4)
         });
-        start += MAX_CHUNK_LEN - 150; // 150 char overlap
+      }
+    }
+  }
+
+  // Fallback for short pages
+  if (chunks.length === 0 && pages.length > 0) {
+    for (const page of pages) {
+      if (page.text.trim()) {
+        chunkIdx++;
+        chunks.push({
+          id: `${docId}_c${chunkIdx}`,
+          docId,
+          docName,
+          pageNumber: page.pageNumber,
+          content: page.text.trim(),
+          tokenCountEstimate: Math.ceil(page.text.trim().length / 4)
+        });
       }
     }
   }
@@ -104,12 +210,18 @@ function createChunks(docId: string, docName: string, pages: DocumentPage[]): Do
 }
 
 /**
+ * Backward compatible chunk creator wrapping semantic chunking
+ */
+function createChunks(docId: string, docName: string, pages: DocumentPage[]): DocumentChunk[] {
+  return createSemanticChunks(docId, docName, pages);
+}
+
+/**
  * Detects whether extracted text is insufficient (indicating a scanned or image-based PDF page).
  */
 export function isInsufficientText(text: string): boolean {
   if (!text || !text.trim()) return true;
   const cleaned = text.replace(/\[Page \d+ content.*?\]/gi, "").trim();
-  // Count meaningful English letters, numbers, or Hindi Devanagari characters (\u0900-\u097F)
   const meaningfulChars = cleaned.replace(/[^a-zA-Z0-9\u0900-\u097F]/g, "");
   return meaningfulChars.length < 20;
 }
@@ -140,6 +252,21 @@ export async function renderPdfPageToDataUrl(page: any): Promise<string | null> 
  */
 export async function performPageOcr(imageDataUrl: string, pageNumber: number): Promise<string> {
   try {
+    let processedImage = imageDataUrl;
+    try {
+      const result = await preprocessImageForOCRAndVision(imageDataUrl, {
+        autoRotate: true,
+        deskew: true,
+        denoise: true,
+        improveContrast: true,
+        resizeIntelligently: true,
+        jpegQuality: 0.88
+      });
+      processedImage = result.processedDataUrl;
+    } catch (e) {
+      console.warn("[documentProcessor] Preprocessing failed for page image, proceeding with original:", e);
+    }
+
     let token = localStorage.getItem("studymate_token") || window.localStorage.getItem("studymate_token") || "";
     if (!token) {
       const email = localStorage.getItem("studymate_logged_in_email") || `guest-${Date.now()}@studymate.app`;
@@ -162,7 +289,7 @@ export async function performPageOcr(imageDataUrl: string, pageNumber: number): 
         "Authorization": `Bearer ${token}`
       },
       body: JSON.stringify({
-        image: imageDataUrl,
+        image: processedImage,
         pageNumber,
         provider: localStorage.getItem("studymate_ai_provider") || "auto"
       })
@@ -181,7 +308,8 @@ export async function performPageOcr(imageDataUrl: string, pageNumber: number): 
 }
 
 /**
- * Extract text from PDF file using pdfjs-dist with automatic OCR fallback for scanned pages
+ * Incremental Batch Extraction for large PDFs (500+ pages)
+ * Yields event-loop control to prevent UI freezing and OOM crashes
  */
 export async function extractPdfText(
   file: File,
@@ -193,10 +321,13 @@ export async function extractPdfText(
     throw new Error("PDF parser function (pdfjsLib.getDocument) is not available.");
   }
   const pdf = await getDoc({ data: arrayBuffer }).promise;
+  const totalPages = pdf.numPages;
   const pages: DocumentPage[] = [];
   let fullTextParts: string[] = [];
 
-  for (let i = 1; i <= pdf.numPages; i++) {
+  const BATCH_SIZE = 15;
+
+  for (let i = 1; i <= totalPages; i++) {
     const page = await pdf.getPage(i);
     const textContent = await page.getTextContent();
     let pageText = textContent.items
@@ -205,12 +336,10 @@ export async function extractPdfText(
       .replace(/\s+/g, " ")
       .trim();
 
-    // 1. Detect if digital text extraction is insufficient (scanned/image-based page)
     if (isInsufficientText(pageText)) {
       if (onProgress) {
-        onProgress(i, pdf.numPages, `Running AI OCR fallback on scanned page ${i}/${pdf.numPages}...`);
+        onProgress(i, totalPages, `Running AI OCR fallback on scanned page ${i}/${totalPages}...`);
       }
-      // 2. Render page to canvas and perform OCR
       const pageImageDataUrl = await renderPdfPageToDataUrl(page);
       if (pageImageDataUrl) {
         const ocrText = await performPageOcr(pageImageDataUrl, i);
@@ -218,25 +347,36 @@ export async function extractPdfText(
           pageText = ocrText;
         }
       }
-    } else if (onProgress) {
-      onProgress(i, pdf.numPages, `Extracted digital text for page ${i}/${pdf.numPages}`);
+    } else if (onProgress && (i % 5 === 0 || i === totalPages || i === 1)) {
+      onProgress(i, totalPages, `Parsing PDF page ${i}/${totalPages} (${Math.round((i / totalPages) * 100)}%)...`);
     }
 
     if (!pageText || !pageText.trim()) {
       pageText = `[Page ${i} content]`;
     }
 
-    // 3. Preserve page numbers and merge extracted text seamlessly
     pages.push({
       pageNumber: i,
       text: pageText
     });
-    fullTextParts.push(`--- Page ${i} ---\n${pageText}`);
+
+    if (totalPages <= 50 || i <= 20 || i > totalPages - 10 || i % 10 === 0) {
+      fullTextParts.push(`--- Page ${i} ---\n${pageText}`);
+    }
+
+    // Yield event loop every batch to prevent main thread lockup
+    if (i % BATCH_SIZE === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
   }
+
+  const fullText = totalPages > 50 
+    ? `${fullTextParts.slice(0, 30).join("\n\n")}\n\n[... PDF contains ${totalPages} total pages ...]\n\n${fullTextParts.slice(-10).join("\n\n")}`
+    : fullTextParts.join("\n\n");
 
   return {
     pages,
-    fullText: fullTextParts.join("\n\n")
+    fullText
   };
 }
 
@@ -248,7 +388,6 @@ export async function extractDocxText(file: File): Promise<{ pages: DocumentPage
   const result = await mammoth.extractRawText({ arrayBuffer });
   const rawText = result.value || "";
 
-  // Divide raw text into simulated pages (~1200 characters per page)
   const CHARS_PER_PAGE = 1200;
   const pages: DocumentPage[] = [];
   let fullTextParts: string[] = [];
@@ -329,9 +468,12 @@ function formatFileSize(bytes: number): string {
 }
 
 /**
- * Main function: Process file with caching
+ * Main function: Process file with hybrid IndexedDB + localStorage caching
  */
-export async function processDocumentFile(file: File): Promise<ProcessedDocument> {
+export async function processDocumentFile(
+  file: File,
+  onProgress?: (current: number, total: number, status: string) => void
+): Promise<ProcessedDocument> {
   const fileName = file.name;
   const fileSizeStr = formatFileSize(file.size);
   const ext = fileName.split(".").pop()?.toLowerCase() || "";
@@ -340,24 +482,31 @@ export async function processDocumentFile(file: File): Promise<ProcessedDocument
   if (ext === "docx" || ext === "doc") fileType = "docx";
   else if (ext === "txt") fileType = "txt";
 
-  const dataUrl = await fileToDataUrl(file);
-  const hash = calculateFileHash(fileName, file.size, dataUrl.slice(0, 200));
+  const dataUrl = file.size <= 8 * 1024 * 1024 ? await fileToDataUrl(file) : undefined;
+  const hash = calculateFileHash(fileName, file.size, (dataUrl || fileName).slice(0, 200));
 
-  // Check cache in localStorage
+  // 1. Check IndexedDB cache first
+  const indexedDbCached = await getDocFromIndexedDB(hash);
+  if (indexedDbCached) {
+    logger.info("DocumentProcessor", `Returning IndexedDB cached document for ${fileName}`);
+    return indexedDbCached;
+  }
+
+  // 2. Fallback check in localStorage
   const cachedDocs = loadCachedDocuments();
   const existing = cachedDocs.find((d) => d.hash === hash || (d.name === fileName && d.fileSize === fileSizeStr));
   if (existing) {
-    console.log(`[DocumentProcessor] Returning cached document for ${fileName}`);
+    logger.info("DocumentProcessor", `Returning localStorage cached document for ${fileName}`);
     return {
       ...existing,
-      dataUrl: existing.dataUrl || dataUrl // preserve dataUrl
+      dataUrl: existing.dataUrl || dataUrl
     };
   }
 
-  // Extract text based on file type
+  // 3. Extract text
   let extracted: { pages: DocumentPage[]; fullText: string };
   if (fileType === "pdf") {
-    extracted = await extractPdfText(file);
+    extracted = await extractPdfText(file, onProgress);
   } else if (fileType === "docx") {
     extracted = await extractDocxText(file);
   } else {
@@ -365,7 +514,7 @@ export async function processDocumentFile(file: File): Promise<ProcessedDocument
   }
 
   const docId = `doc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-  const chunks = createChunks(docId, fileName, extracted.pages);
+  const chunks = createSemanticChunks(docId, fileName, extracted.pages);
 
   const newDoc: ProcessedDocument = {
     id: docId,
@@ -382,12 +531,15 @@ export async function processDocumentFile(file: File): Promise<ProcessedDocument
     hash
   };
 
+  // 4. Save to IndexedDB & localStorage
+  await saveDocToIndexedDB(newDoc);
   saveDocumentToCache(newDoc);
+
   return newDoc;
 }
 
 /**
- * Caching operations
+ * Synchronous local storage caching
  */
 export function loadCachedDocuments(): ProcessedDocument[] {
   try {
@@ -400,18 +552,40 @@ export function loadCachedDocuments(): ProcessedDocument[] {
   }
 }
 
+/**
+ * Async IndexedDB caching loader
+ */
+export async function loadCachedDocumentsAsync(): Promise<ProcessedDocument[]> {
+  try {
+    const fromIdb = await loadAllDocsFromIndexedDB();
+    if (fromIdb && fromIdb.length > 0) {
+      return fromIdb;
+    }
+    return loadCachedDocuments();
+  } catch (e) {
+    return loadCachedDocuments();
+  }
+}
+
 export function saveDocumentToCache(doc: ProcessedDocument) {
   try {
     const docs = loadCachedDocuments();
-    const updated = [doc, ...docs.filter((d) => d.id !== doc.id)].slice(0, 15); // store up to 15 docs
+    // Trim heavy pages/dataUrls for localStorage metadata copy
+    const lightDoc: ProcessedDocument = {
+      ...doc,
+      dataUrl: doc.totalPages > 20 ? undefined : doc.dataUrl,
+      chunks: doc.chunks ? doc.chunks.slice(0, 100) : []
+    };
+    const updated = [lightDoc, ...docs.filter((d) => d.id !== doc.id)].slice(0, 15);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
   } catch (e) {
-    console.warn("Failed to cache document:", e);
+    console.warn("Failed to cache document in localStorage:", e);
   }
 }
 
 export function removeDocumentFromCache(docId: string): ProcessedDocument[] {
   try {
+    deleteDocFromIndexedDB(docId).catch(() => {});
     const docs = loadCachedDocuments();
     const filtered = docs.filter((d) => d.id !== docId);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
@@ -451,30 +625,58 @@ export function searchDocuments(docs: ProcessedDocument[], query: string): Searc
   const results: SearchMatch[] = [];
 
   for (const doc of docs) {
-    for (const page of doc.pages) {
-      const pageTextLower = page.text.toLowerCase();
-      let matchScore = 0;
+    // Search semantic chunks first for higher accuracy
+    if (doc.chunks && doc.chunks.length > 0) {
+      for (const chunk of doc.chunks) {
+        const contentLower = chunk.content.toLowerCase();
+        let matchScore = 0;
 
-      for (const term of terms) {
-        if (pageTextLower.includes(term)) {
-          matchScore += (pageTextLower.split(term).length - 1) * 2;
+        for (const term of terms) {
+          if (contentLower.includes(term)) {
+            matchScore += (contentLower.split(term).length - 1) * 3;
+          }
+        }
+
+        if (matchScore > 0) {
+          const firstTermIdx = Math.max(0, contentLower.indexOf(terms[0]));
+          const start = Math.max(0, firstTermIdx - 60);
+          const end = Math.min(chunk.content.length, firstTermIdx + 120);
+          const snippet = (start > 0 ? "..." : "") + chunk.content.substring(start, end) + (end < chunk.content.length ? "..." : "");
+
+          results.push({
+            docId: doc.id,
+            docName: doc.name,
+            pageNumber: chunk.pageNumber,
+            snippet: chunk.headingHierarchy ? `[${chunk.headingHierarchy}] ${snippet}` : snippet,
+            score: matchScore
+          });
         }
       }
+    } else {
+      for (const page of doc.pages) {
+        const pageTextLower = page.text.toLowerCase();
+        let matchScore = 0;
 
-      if (matchScore > 0) {
-        // Find best snippet window
-        const firstTermIdx = Math.max(0, pageTextLower.indexOf(terms[0]));
-        const start = Math.max(0, firstTermIdx - 60);
-        const end = Math.min(page.text.length, firstTermIdx + 120);
-        const snippet = (start > 0 ? "..." : "") + page.text.substring(start, end) + (end < page.text.length ? "..." : "");
+        for (const term of terms) {
+          if (pageTextLower.includes(term)) {
+            matchScore += (pageTextLower.split(term).length - 1) * 2;
+          }
+        }
 
-        results.push({
-          docId: doc.id,
-          docName: doc.name,
-          pageNumber: page.pageNumber,
-          snippet,
-          score: matchScore
-        });
+        if (matchScore > 0) {
+          const firstTermIdx = Math.max(0, pageTextLower.indexOf(terms[0]));
+          const start = Math.max(0, firstTermIdx - 60);
+          const end = Math.min(page.text.length, firstTermIdx + 120);
+          const snippet = (start > 0 ? "..." : "") + page.text.substring(start, end) + (end < page.text.length ? "..." : "");
+
+          results.push({
+            docId: doc.id,
+            docName: doc.name,
+            pageNumber: page.pageNumber,
+            snippet,
+            score: matchScore
+          });
+        }
       }
     }
   }
@@ -483,9 +685,14 @@ export function searchDocuments(docs: ProcessedDocument[], query: string): Searc
 }
 
 /**
- * Build grounded search context string for Gemini / AI Chat
+ * Token-Bounded Grounded Context Generator
+ * Prevents token overflow on 500+ page PDFs by dynamically selecting top semantic chunks
  */
-export function buildDocumentContextPrompt(docs: ProcessedDocument[], activeDocIds?: string[]): string {
+export function buildDocumentContextPrompt(
+  docs: ProcessedDocument[],
+  activeDocIds?: string[],
+  userQuery?: string
+): string {
   const targetDocs = activeDocIds && activeDocIds.length > 0 
     ? docs.filter((d) => activeDocIds.includes(d.id))
     : docs;
@@ -494,16 +701,93 @@ export function buildDocumentContextPrompt(docs: ProcessedDocument[], activeDocI
 
   let contextParts: string[] = [];
   contextParts.push("=== NOTEBOOKLM GROUNDED DOCUMENTS CONTEXT ===");
-  contextParts.push("The user has uploaded the following source document(s). You MUST base your answers ONLY on these documents unless Web Search is explicitly requested.");
+  contextParts.push("The user has uploaded source document(s). Base answers strictly on these documents.");
   contextParts.push("Rule: Always provide page citations in standard format like [DocumentName, p. X] or [Page X] whenever referencing facts, formulas, or answers from the documents.\n");
 
+  const MAX_TOTAL_CONTEXT_CHARS = 16000; // ~4,000 tokens context budget
+  let currentLength = contextParts.join("\n").length;
+
   for (const doc of targetDocs) {
+    if (currentLength >= MAX_TOTAL_CONTEXT_CHARS) break;
+
     contextParts.push(`DOCUMENT: "${doc.name}" (Type: ${doc.fileType.toUpperCase()}, Total Pages: ${doc.totalPages})`);
-    
-    // Include top pages text (limit per page to keep context budget optimal)
-    for (const page of doc.pages) {
-      const pageTrim = page.text.length > 1500 ? page.text.substring(0, 1500) + "..." : page.text;
-      contextParts.push(`[${doc.name} | Page ${page.pageNumber}]\n${pageTrim}\n`);
+
+    // 1. Small Document (<= 15 pages): Full page context
+    if (doc.totalPages <= 15) {
+      for (const page of doc.pages) {
+        if (currentLength >= MAX_TOTAL_CONTEXT_CHARS) break;
+        const pageTrim = page.text.length > 1200 ? page.text.substring(0, 1200) + "..." : page.text;
+        const entry = `[${doc.name} | Page ${page.pageNumber}]\n${pageTrim}\n`;
+        contextParts.push(entry);
+        currentLength += entry.length;
+      }
+    } 
+    // 2. Large Document (15 to 500+ pages): Semantic Chunk Retrieval + Outline
+    else {
+      const outlineHeadings: string[] = [];
+      const seenHeadings = new Set<string>();
+
+      for (const chunk of doc.chunks || []) {
+        if (chunk.headingHierarchy && !seenHeadings.has(chunk.headingHierarchy)) {
+          seenHeadings.add(chunk.headingHierarchy);
+          outlineHeadings.push(` - ${chunk.headingHierarchy} (p. ${chunk.pageNumber})`);
+          if (outlineHeadings.length >= 15) break;
+        }
+      }
+
+      if (outlineHeadings.length > 0) {
+        const outlineBlock = `[Document Outline / Table of Contents]:\n${outlineHeadings.join("\n")}\n`;
+        contextParts.push(outlineBlock);
+        currentLength += outlineBlock.length;
+      }
+
+      let selectedChunks: DocumentChunk[] = [];
+
+      if (userQuery && userQuery.trim().length > 2) {
+        const queryTerms = userQuery.toLowerCase().trim().split(/\s+/).filter((t) => t.length > 2);
+        
+        const scored = (doc.chunks || []).map((chunk) => {
+          const contentLower = chunk.content.toLowerCase();
+          const hierarchyLower = (chunk.headingHierarchy || "").toLowerCase();
+          let score = 0;
+
+          for (const term of queryTerms) {
+            if (contentLower.includes(term)) {
+              score += (contentLower.split(term).length - 1) * 3;
+            }
+            if (hierarchyLower.includes(term)) {
+              score += 10;
+            }
+          }
+          return { chunk, score };
+        });
+
+        scored.sort((a, b) => b.score - a.score);
+        selectedChunks = scored.filter((s) => s.score > 0).slice(0, 15).map((s) => s.chunk);
+
+        if (selectedChunks.length === 0 && doc.chunks && doc.chunks.length > 0) {
+          const step = Math.max(1, Math.floor(doc.chunks.length / 10));
+          for (let idx = 0; idx < doc.chunks.length; idx += step) {
+            selectedChunks.push(doc.chunks[idx]);
+          }
+        }
+      } else {
+        const allChunks = doc.chunks || [];
+        if (allChunks.length > 0) {
+          const step = Math.max(1, Math.floor(allChunks.length / 12));
+          for (let idx = 0; idx < allChunks.length; idx += step) {
+            selectedChunks.push(allChunks[idx]);
+          }
+        }
+      }
+
+      for (const chunk of selectedChunks) {
+        if (currentLength >= MAX_TOTAL_CONTEXT_CHARS) break;
+        const headingMeta = chunk.headingHierarchy ? ` | Section: ${chunk.headingHierarchy}` : "";
+        const entry = `[${doc.name} | Page ${chunk.pageNumber}${headingMeta}]\n${chunk.content}\n`;
+        contextParts.push(entry);
+        currentLength += entry.length;
+      }
     }
   }
 

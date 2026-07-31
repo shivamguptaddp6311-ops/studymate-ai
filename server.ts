@@ -10,7 +10,7 @@ import compression from "compression";
 import { rateLimit } from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { Type } from "@google/genai";
-import { executeAIRequest, getConfiguredProviders, getConfiguredImageProviders, generateImageWithFallback, executeImageGenRequest, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter } from "./server/aiService";
+import { executeAIRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter } from "./server/aiService";
 import { shouldSearchWeb, executeWebSearch, compressContext, generateCitationsContext } from "./server/webSearch";
 import { firebaseDB, runAutomatedMigration, ChatUser, ChatMessage, ChatReport, AdminLog, SyncData, UserMemory } from "./server/firebase";
 import { getQuestions } from "./server/questionService";
@@ -388,18 +388,27 @@ app.use((req, res, next) => {
   next();
 });
 
-// 3. Setup CORS with Credentials support and strict matching
-const allowedOrigins = [
+// 3. Setup CORS with Credentials support and strict explicit matching
+const envOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map(o => o.trim())
+  .filter(Boolean);
+
+const defaultOrigins = [
   "https://ais-dev-7trcurr3ybqbdmvjkvx3x7-634393143987.asia-southeast1.run.app",
   "https://ais-pre-7trcurr3ybqbdmvjkvx3x7-634393143987.asia-southeast1.run.app",
 ];
+if (process.env.APP_URL) {
+  defaultOrigins.push(process.env.APP_URL.trim());
+}
+
+const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]));
+
 app.use(cors({
   origin: function (origin, callback) {
     if (!origin) return callback(null, true);
     const isLocal = origin.startsWith("http://localhost:") || origin.startsWith("http://127.0.0.1:");
-    const isDevPre = allowedOrigins.includes(origin) || origin.endsWith(".run.app") || origin.endsWith(".google.com") || origin.endsWith(".google");
-    const isAppUrl = process.env.APP_URL && origin === process.env.APP_URL;
-    if (isLocal || isDevPre || isAppUrl) {
+    if (allowedOrigins.includes(origin) || isLocal) {
       callback(null, true);
     } else {
       callback(null, false); // Securely reject unauthorized domains
@@ -603,7 +612,7 @@ app.post("/api/auth/guest-token", authLimiter, async (req, res) => {
 // Secure Backend Authentication Endpoint
 app.post("/api/auth/login", authLimiter, async (req, res) => {
   try {
-    const { email, idToken, password } = req.body;
+    const { email, idToken } = req.body || {};
     
     if (!email || typeof email !== "string") {
       return res.status(400).json({ error: "Google account email is required." });
@@ -621,18 +630,34 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
       return res.status(429).json({ error: `Account temporarily locked due to 5 failed logins. Please try again in ${waitMinutes} minute(s).` });
     }
 
-    let verifiedEmail = emailNorm;
-    let verifiedUid = emailNorm.replace(/[^a-zA-Z0-9]/g, "_");
+    // 1. Make idToken mandatory
+    if (!idToken || typeof idToken !== "string") {
+      return res.status(401).json({ error: "Authentication token required" });
+    }
 
-    // If idToken is provided, verify it; otherwise fallback to silent session issue
-    if (idToken && typeof idToken === "string") {
-      try {
-        const decoded = await firebaseDB.verifyFirebaseIdToken(idToken);
-        verifiedEmail = decoded.email;
-        verifiedUid = decoded.uid;
-      } catch (err: any) {
-        console.warn("[Auth Notice] ID token verification bypassed or invalid, falling back to secure session creation:", err.message);
-      }
+    let verifiedEmail: string;
+    let verifiedUid: string;
+
+    // 2. Verify Firebase ID token
+    try {
+      const decoded = await firebaseDB.verifyFirebaseIdToken(idToken);
+      verifiedEmail = (decoded.email || emailNorm).toLowerCase().trim();
+      verifiedUid = decoded.uid || verifiedEmail.replace(/[^a-zA-Z0-9]/g, "_");
+    } catch (err: any) {
+      // 3. Wire up failedLoginAttempts on failed token verification
+      const currentFailed = failedLoginAttempts[emailNorm] || { count: 0, blockUntil: 0 };
+      const newCount = currentFailed.count + 1;
+      const blockUntil = newCount >= 5 ? Date.now() + 15 * 60 * 1000 : currentFailed.blockUntil;
+      failedLoginAttempts[emailNorm] = { count: newCount, blockUntil };
+
+      console.warn(`[Auth Security] ID token verification failed for [${emailNorm}]. Attempt ${newCount}:`, err.message);
+      return res.status(401).json({ error: "Invalid authentication token" });
+    }
+
+    // Clear failed login attempts on successful login
+    delete failedLoginAttempts[emailNorm];
+    if (verifiedEmail !== emailNorm) {
+      delete failedLoginAttempts[verifiedEmail];
     }
 
     let user = await firebaseDB.getUser(verifiedUid, verifiedEmail);
@@ -649,8 +674,6 @@ app.post("/api/auth/login", authLimiter, async (req, res) => {
       };
       await firebaseDB.saveUser(verifiedUid, user);
     }
-
-    delete failedLoginAttempts[verifiedEmail];
 
     if (user.isBanned) {
       return res.status(403).json({ error: `Your account has been banned. Reason: ${user.banReason || "Moderator directive."}` });
@@ -1616,9 +1639,19 @@ app.delete("/api/ai/memory", requireAuth, async (req, res) => {
   }
 });
 
-// Production Multi-Provider AI Image Generator (Gemini -> OpenAI -> Fal.ai)
+// Production Multi-Provider AI Image Generator (Fal.ai -> Gemini -> OpenAI -> Pollinations)
 app.get("/api/ai/image-providers", requireAuth, (req, res) => {
-  res.json({ providers: getConfiguredImageProviders() });
+  res.json({
+    providers: getConfiguredImageProviders(),
+    health: checkImageProviderHealth()
+  });
+});
+
+app.get("/api/ai/image-health", requireAuth, (req, res) => {
+  res.json({
+    timestamp: new Date().toISOString(),
+    providers: checkImageProviderHealth()
+  });
 });
 
 // 2.5. Dynamic CBSE Chapter Material Generator (Textbook details on-demand)
@@ -2566,7 +2599,7 @@ app.get("/api/ai/circuit-breaker", (req, res) => {
 });
 
 // 6. Reset Circuit Breaker Endpoint
-app.post("/api/ai/circuit-breaker/reset", (req, res) => {
+app.post("/api/ai/circuit-breaker/reset", requireAdmin, (req, res) => {
   const { provider } = req.body || {};
   circuitBreaker.reset(provider);
   res.json({

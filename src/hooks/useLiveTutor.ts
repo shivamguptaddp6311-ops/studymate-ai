@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { logger } from "../utils/logger";
 
 export type ConnectionState = "idle" | "connecting" | "connected" | "error" | "disconnected";
 
@@ -126,7 +127,7 @@ export function useLiveTutor() {
 
       const audioCtx = outputAudioCtxRef.current;
       if (audioCtx.state === "suspended") {
-        audioCtx.resume();
+        audioCtx.resume().catch(() => {});
       }
 
       try {
@@ -298,7 +299,7 @@ export function useLiveTutor() {
       wsRef.current = ws;
 
       ws.onopen = () => {
-        console.log("[LiveTutor] Client WebSocket connected");
+        logger.info("LiveTutor", "Client WebSocket connected");
       };
 
       ws.onmessage = (event) => {
@@ -334,7 +335,7 @@ export function useLiveTutor() {
       };
 
       ws.onclose = () => {
-        console.log("WebSocket closed");
+        logger.info("LiveTutor", "WebSocket closed");
         setConnectionState((prev) => (prev === "connected" ? "disconnected" : prev));
       };
 

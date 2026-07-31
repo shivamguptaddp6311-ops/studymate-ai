@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { checkImageQuality, compressImage, enhanceImageForOCR, rotateBase64Image } from "../utils/imageOptimizer";
+import { logger } from "../utils/logger";
+import { checkImageQuality, compressImage, enhanceImageForOCR, rotateBase64Image, preprocessImageForOCRAndVision } from "../utils/imageOptimizer";
 
 export type HomeworkSourceType = "camera" | "gallery" | "pdf" | "screenshot";
 export type HomeworkActionType = "solve" | "explain" | "summarize" | "translate" | "notes" | "flashcards" | "quiz";
@@ -493,7 +494,7 @@ export function useOCR() {
 
     // Check duplicate request cache
     if (ocrCacheRef.current.has(cacheKey)) {
-      console.log("[HomeworkScanner] Returning deduplicated cached result for key:", cacheKey);
+      logger.info("HomeworkScanner", "Returning deduplicated cached result for key", { cacheKey });
       const cached = ocrCacheRef.current.get(cacheKey)!;
       setScannedSolution(cached);
       return cached;
@@ -510,10 +511,22 @@ export function useOCR() {
     setOcrError(null);
 
     try {
-      // 3. Compress image payload if not already compressed or if it's a raw camera/file capture
+      // 3. Apply automatic preprocessing pipeline (Auto-rotate, Deskew, Denoise, Contrast & Intelligent Resize)
       let finalPayload = activePayload;
       if (finalPayload.startsWith("data:image")) {
-        finalPayload = await compressImage(finalPayload, 1200, 0.80);
+        try {
+          const preprocessed = await preprocessImageForOCRAndVision(finalPayload, {
+            autoRotate: true,
+            deskew: true,
+            denoise: true,
+            improveContrast: true,
+            resizeIntelligently: true,
+            jpegQuality: 0.88
+          });
+          finalPayload = preprocessed.processedDataUrl;
+        } catch (e) {
+          finalPayload = await compressImage(finalPayload, 1200, 0.80);
+        }
       }
 
       // 4. Construct high-precision Vision OCR Prompt specifying multi-type recognition and targeted action

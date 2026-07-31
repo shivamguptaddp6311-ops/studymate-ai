@@ -1,5 +1,6 @@
 import { defineConfig } from "drizzle-kit";
 import * as dotenv from "dotenv";
+import { logger } from "../utils/logger";
 
 dotenv.config();
 
@@ -20,7 +21,7 @@ if (!user) {
 if (!password) {
   throw new Error("SQL_ADMIN_PASSWORD must be set in environment variables.");
 }
-console.log(`Using user: ${user} to connect to database.`);
+logger.info("DrizzleConfig", `Using user: ${user} to connect to database.`);
 
 export default defineConfig({
   schema: "./src/db/schema.ts",

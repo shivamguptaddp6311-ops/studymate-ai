@@ -159,7 +159,7 @@ Query: "${message}"`;
 
       const response = await Promise.race([
         gemini.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-2.5-flash",
           contents: [{ role: "user", parts: [{ text: classificationPrompt }] }],
           config: {
             temperature: 0.1,

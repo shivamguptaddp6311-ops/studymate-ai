@@ -3,6 +3,7 @@ import {
   ProcessedDocument,
   processDocumentFile,
   loadCachedDocuments,
+  loadCachedDocumentsAsync,
   saveDocumentToCache,
   removeDocumentFromCache,
   renameDocumentInCache,
@@ -41,7 +42,7 @@ export function useNotebookLM() {
 
   const docInputRef = useRef<HTMLInputElement>(null);
 
-  // Load cached documents on mount
+  // Load cached documents on mount (synchronously first, then asynchronously from IndexedDB)
   useEffect(() => {
     const cached = loadCachedDocuments();
     if (cached.length > 0) {
@@ -49,6 +50,14 @@ export function useNotebookLM() {
       setActiveDocIds(cached.map((d) => d.id));
       setSelectedDocId(cached[0].id);
     }
+
+    loadCachedDocumentsAsync().then((fullDocs) => {
+      if (fullDocs.length > 0) {
+        setDocuments(fullDocs);
+        setActiveDocIds((prev) => (prev.length > 0 ? prev : fullDocs.map((d) => d.id)));
+        setSelectedDocId((prev) => prev || fullDocs[0].id);
+      }
+    }).catch((e) => console.warn("[useNotebookLM] Async cache load notice:", e));
   }, []);
 
   // Update active search when query or documents change
@@ -200,8 +209,6 @@ export function useNotebookLM() {
     setStudioQuiz([]);
     setStudioMindMap(null);
 
-    const docContext = buildDocumentContextPrompt(activeDocs);
-
     const toolPrompts: Record<StudioToolType, string> = {
       summary: `Provide an Executive Summary & Key Takeaways from the uploaded document(s). Group by major topics with page citations [DocName, p. X].`,
       explain: `Explain the core concepts, theories, and complex mechanisms in the uploaded document(s) in clean, student-friendly terms with analogies and page citations. ${customInstruction || ""}`,
@@ -250,6 +257,9 @@ Format your response STRICTLY as a JSON object inside a \`\`\`json markdown bloc
 }
 \`\`\``
     };
+
+    const targetToolPrompt = toolPrompts[tool];
+    const docContext = buildDocumentContextPrompt(activeDocs, undefined, targetToolPrompt);
 
     try {
       let token = localStorage.getItem("studymate_token") || "";
