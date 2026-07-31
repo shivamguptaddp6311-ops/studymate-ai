@@ -586,6 +586,24 @@ const authLimiter = rateLimit({
 });
 
 // Auto-Session Guest Token Endpoint for Seamless Access
+app.post("/api/auth/validate-token", (req, res) => {
+  try {
+    const authHeader = req.headers["authorization"];
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      return res.status(401).json({ valid: false, error: "Missing or invalid authorization header" });
+    }
+    const token = authHeader.split(" ")[1];
+    const user = verifyAccessToken(token);
+    if (!user) {
+      return res.status(401).json({ valid: false, error: "Invalid or expired token" });
+    }
+    res.json({ valid: true, email: user.email });
+  } catch (err: any) {
+    res.status(401).json({ valid: false, error: "Token validation failed" });
+  }
+});
+
+// Auto-Session Guest Token Endpoint for Seamless Access
 app.post("/api/auth/guest-token", authLimiter, validateRequest(guestTokenSchema), async (req, res) => {
   try {
     const rawEmail = req.body?.email || req.query?.email;
@@ -606,6 +624,7 @@ app.post("/api/auth/guest-token", authLimiter, validateRequest(guestTokenSchema)
 
     let user = await firebaseDB.getUser(uid, finalEmail);
     if (!user) {
+      console.log(`[Guest Auth] Created new guest profile: ${finalEmail}`);
       user = {
         email: finalEmail,
         username: finalEmail.startsWith("guest_") ? `Guest_${finalEmail.split("@")[0].slice(-6)}` : finalEmail.split("@")[0],
@@ -617,6 +636,8 @@ app.post("/api/auth/guest-token", authLimiter, validateRequest(guestTokenSchema)
         isBanned: false
       };
       await firebaseDB.saveUser(uid, user);
+    } else {
+      console.log(`[Guest Auth] Reusing existing guest profile: ${finalEmail}`);
     }
 
     res.json({

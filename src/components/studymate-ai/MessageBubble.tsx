@@ -71,6 +71,16 @@ export const MessageBubble = React.memo(function MessageBubble({
             </span>
             <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700" />
             <span className="font-mono text-[9px]">{getFormattedTime()}</span>
+            <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700" />
+            <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
+              {msg.providerUsed ? (
+                msg.providerUsed.toLowerCase().includes("anthropic") || msg.providerUsed.toLowerCase().includes("claude") ? "Claude" :
+                msg.providerUsed.toLowerCase().includes("groq") || msg.providerUsed.toLowerCase().includes("grok") ? "Grok" :
+                msg.providerUsed.toLowerCase().includes("openai") || msg.providerUsed.toLowerCase().includes("gpt") ? "OpenAI" :
+                msg.providerUsed.toLowerCase().includes("openrouter") ? "OpenRouter" :
+                msg.providerUsed.toLowerCase().includes("fal") ? "Fal" : "Gemini"
+              ) : "Gemini"}
+            </span>
           </>
         )}
       </div>

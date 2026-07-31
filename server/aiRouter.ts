@@ -6,7 +6,8 @@ import {
   executeImageGenRequest,
   getConfiguredProviders,
   getConfiguredImageProviders,
-  parseJsonResponse
+  parseJsonResponse,
+  normalizeProvider
 } from "./aiService";
 import {
   AICapability,
@@ -227,12 +228,9 @@ export function getProviderFallbackSequence(
   }
 
   if (preferredProvider && preferredProvider !== "auto") {
-    const p = preferredProvider as AIProvider;
-    const { valid, missing } = validateProviderCapabilities(p, requiredCapabilities);
-    if (valid) {
-      return [p, ...seq.filter(x => x !== p)];
-    } else {
-      console.warn(`[AIRouter] Preferred provider '${preferredProvider}' lacks required capabilities [${missing.join(", ")}]. Skipping preference and using capable fallback sequence.`);
+    const p = normalizeProvider(preferredProvider);
+    if (p !== "auto") {
+      return [p];
     }
   }
   return seq;

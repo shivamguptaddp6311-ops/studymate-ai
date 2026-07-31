@@ -4,10 +4,12 @@ import { Plus, Send, Camera, Image as ImageIcon, CloudUpload, FileText, Mic, Che
 import { AttachedPdf } from "./PDFUploader";
 
 const MODEL_OPTIONS = [
-  { id: "gemini-2.5-flash", label: "✨ Flash", fullName: "Gemini 2.5 Flash" },
-  { id: "gemini-2.5-pro", label: "🚀 Pro", fullName: "Gemini 2.5 Pro" },
-  { id: "auto", label: "⚡ Auto AI", fullName: "Auto AI" },
-  { id: "gpt-4o", label: "🤖 GPT-4o", fullName: "GPT-4o" },
+  { id: "auto", label: "⚡ Auto AI", fullName: "Auto Intelligent Fallback" },
+  { id: "gemini", label: "♊ Gemini", fullName: "Google Gemini 2.5" },
+  { id: "openai", label: "🧠 OpenAI", fullName: "OpenAI GPT-4o" },
+  { id: "groq", label: "⚡ Grok", fullName: "Grok LLaMA 3" },
+  { id: "anthropic", label: "🦉 Claude", fullName: "Anthropic Claude 3.5" },
+  { id: "openrouter", label: "📡 OpenRouter", fullName: "OpenRouter Hub" },
 ];
 
 interface PromptInputProps {
@@ -44,7 +46,7 @@ export function PromptInput({
   onSend,
   isListening,
   onToggleVoice,
-  selectedModel = "gemini-2.5-flash",
+  selectedModel = "auto",
   setSelectedModel
 }: PromptInputProps) {
   return (

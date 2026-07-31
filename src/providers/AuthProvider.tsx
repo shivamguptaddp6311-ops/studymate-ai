@@ -19,6 +19,16 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// FIX: guest email caching
+const getOrCreateGuestEmail = (): string => {
+  const cachedEmail = window.localStorage.getItem("studymate_logged_in_email");
+  if (cachedEmail) {
+    return cachedEmail;
+  }
+  const randomId = Math.random().toString(36).substring(2, 10);
+  return `guest-${randomId}@studymate.app`;
+};
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [loggedInEmail, setLoggedInEmail] = useState<string | null>(null);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
@@ -44,8 +54,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         window.localStorage.setItem("studymate_refresh_token", refreshToken);
       }
     } else {
-      window.localStorage.clear();
-      window.sessionStorage.clear();
+      // FIX: selective clear only
+      window.localStorage.removeItem("studymate_token");
+      window.localStorage.removeItem("studymate_refresh_token");
+      window.localStorage.removeItem("studymate_remember_me");
     }
     setLoggedInEmail(email);
     setSessionToken(token);
@@ -103,31 +115,69 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return null;
   };
 
+  const isTokenValid = async (token: string): Promise<boolean> => {
+    try {
+      const res = await fetch("/api/auth/validate-token", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        return !!data.valid;
+      }
+    } catch (e) {
+      console.warn("Token validation request failed:", e);
+    }
+    return false;
+  };
+
   useEffect(() => {
+    let isMounted = true;
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser && firebaseUser.email) {
-        try {
+      try {
+        const cachedToken = window.localStorage.getItem("studymate_token");
+        const cachedEmail = window.localStorage.getItem("studymate_logged_in_email");
+
+        if (cachedToken && cachedEmail) {
+          let tokenToUse: string | null = null;
+          if (await isTokenValid(cachedToken)) {
+            tokenToUse = cachedToken;
+          } else {
+            tokenToUse = await refreshClientToken();
+          }
+
+          if (tokenToUse) {
+            if (isMounted) {
+              setLoggedInEmail(cachedEmail);
+              setSessionToken(tokenToUse);
+              const cachedRefreshToken = window.localStorage.getItem("studymate_refresh_token");
+              if (cachedRefreshToken) {
+                setSessionRefreshToken(cachedRefreshToken);
+              }
+            }
+            return;
+          }
+        }
+
+        if (firebaseUser && firebaseUser.email) {
           const email = firebaseUser.email;
           let idToken = "";
           try {
             idToken = await firebaseUser.getIdToken();
           } catch (tokenErr) {
-            console.warn("Could not retrieve fresh Firebase ID token, using cached session:", tokenErr);
+            console.warn("Could not retrieve fresh Firebase ID token:", tokenErr);
           }
-          
-          let res: Response | null = null;
+
           if (idToken) {
+            let res: Response | null = null;
             for (let attempt = 0; attempt < 3; attempt++) {
               try {
                 res = await fetch("/api/auth/login", {
                   method: "POST",
-                  headers: {
-                    "Content-Type": "application/json"
-                  },
-                  body: JSON.stringify({
-                    email,
-                    idToken
-                  })
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ email, idToken })
                 });
                 if (res.ok) break;
               } catch (fetchErr) {
@@ -135,77 +185,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
               }
             }
-          }
-          
-          if (res && res.ok) {
-            const data = await res.json();
-            setLoggedInEmail(data.email);
-            setSessionToken(data.token);
-            if (data.refreshToken) {
-              setSessionRefreshToken(data.refreshToken);
-            }
-            window.localStorage.setItem("studymate_remember_me", "true");
-            window.localStorage.setItem("studymate_logged_in_email", data.email);
-            window.localStorage.setItem("studymate_token", data.token);
-            if (data.refreshToken && Capacitor.isNativePlatform()) {
-              window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
-            }
-          } else {
-            const cachedEmail = window.localStorage.getItem("studymate_logged_in_email") || email;
-            const cachedToken = window.localStorage.getItem("studymate_token");
-            if (cachedToken) {
-              setLoggedInEmail(cachedEmail);
-              setSessionToken(cachedToken);
-            } else {
-              console.warn("Backend login rejected or no cached token on auto-restore.");
-              handleLogout();
-            }
-          }
-        } catch (e) {
-          console.warn("Auto restore session operating in offline fallback mode:", e);
-          const cachedEmail = window.localStorage.getItem("studymate_logged_in_email");
-          const cachedToken = window.localStorage.getItem("studymate_token");
-          if (cachedEmail && cachedToken) {
-            setLoggedInEmail(cachedEmail);
-            setSessionToken(cachedToken);
-          }
-        } finally {
-          setBooted(true);
-        }
-      } else {
-        const cachedEmail = window.localStorage.getItem("studymate_logged_in_email");
-        const cachedToken = window.localStorage.getItem("studymate_token");
 
-        if (cachedToken) {
-          setLoggedInEmail(cachedEmail || `guest-${Date.now()}@studymate.app`);
-          setSessionToken(cachedToken);
-        } else {
-          try {
-            const emailToUse = cachedEmail || `guest-${Date.now()}@studymate.app`;
-            const res = await fetch("/api/auth/guest-token", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email: emailToUse })
-            });
-            if (res.ok) {
+            if (res && res.ok) {
               const data = await res.json();
-              setLoggedInEmail(data.email);
-              setSessionToken(data.token);
-              if (data.refreshToken) setSessionRefreshToken(data.refreshToken);
+              if (isMounted) {
+                setLoggedInEmail(data.email);
+                setSessionToken(data.token);
+                if (data.refreshToken) {
+                  setSessionRefreshToken(data.refreshToken);
+                }
+              }
+              window.localStorage.setItem("studymate_remember_me", "true");
               window.localStorage.setItem("studymate_logged_in_email", data.email);
               window.localStorage.setItem("studymate_token", data.token);
               if (data.refreshToken && Capacitor.isNativePlatform()) {
                 window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
               }
+              return;
             }
-          } catch (e) {
-            console.warn("Auto guest session token provision failed:", e);
           }
         }
-        setBooted(true);
+
+        try {
+          const emailToUse = getOrCreateGuestEmail();
+          const res = await fetch("/api/auth/guest-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: emailToUse })
+          });
+          if (res.ok) {
+            const data = await res.json();
+            if (isMounted) {
+              setLoggedInEmail(data.email);
+              setSessionToken(data.token);
+              if (data.refreshToken) {
+                setSessionRefreshToken(data.refreshToken);
+              }
+            }
+            window.localStorage.setItem("studymate_logged_in_email", data.email);
+            window.localStorage.setItem("studymate_token", data.token);
+            if (data.refreshToken && Capacitor.isNativePlatform()) {
+              window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
+            }
+            return;
+          }
+        } catch (e) {
+          console.warn("Auto guest session token provision failed:", e);
+        }
+      } finally {
+        if (isMounted) {
+          setBooted(true);
+        }
       }
     });
-    return () => unsubscribe();
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
   }, []);
 
   return (

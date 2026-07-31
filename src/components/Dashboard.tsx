@@ -32,6 +32,29 @@ interface DashboardProps {
   onOpenSearch?: () => void;
 }
 
+const formatDate = (d: Date) => {
+  const options: Intl.DateTimeFormatOptions = { weekday: "long", month: "short", day: "numeric" };
+  return d.toLocaleDateString("en-US", options);
+};
+
+function LiveClockBadge() {
+  const [time, setTime] = useState(() => new Date());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setTime(new Date());
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-300 bg-indigo-500/20 border border-indigo-400/30 px-3 py-1 rounded-full backdrop-blur-md flex items-center gap-1.5">
+      <Clock className="w-3 h-3 text-indigo-400" />
+      {formatDate(time)} &bull; {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+    </span>
+  );
+}
+
 export default function Dashboard({
   profile,
   tasks,
@@ -47,6 +70,7 @@ export default function Dashboard({
   onToggleHabitDate,
   onOpenSearch
 }: DashboardProps) {
+  const shouldReduceMotion = useReducedMotion();
   const [quote, setQuote] = useState({ quote: "", author: "" });
   const [time, setTime] = useState(new Date());
   const [quickTaskTitle, setQuickTaskTitle] = useState("");
@@ -262,23 +286,6 @@ export default function Dashboard({
   // Timetable events for today
   const daysOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-function LiveClockBadge() {
-  const [time, setTime] = useState(() => new Date());
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTime(new Date());
-    }, 1000);
-    return () => clearInterval(interval);
-  }, []);
-
-  return (
-    <span className="text-[10px] font-extrabold uppercase tracking-widest text-indigo-300 bg-indigo-500/20 border border-indigo-400/30 px-3 py-1 rounded-full backdrop-blur-md flex items-center gap-1.5">
-      <Clock className="w-3 h-3 text-indigo-400" />
-      {formatDate(time)} &bull; {time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-    </span>
-  );
-}
   const currentDayName = daysOfWeek[time.getDay()];
   const todayTimetable = timetable.filter((item) => item.day === currentDayName);
 
@@ -302,12 +309,6 @@ function LiveClockBadge() {
     e.preventDefault();
     onLogStudyHours(Number(logAmount));
     setShowLogHours(false);
-  };
-
-  // Format date elegantly
-  const formatDate = (d: Date) => {
-    const options: Intl.DateTimeFormatOptions = { weekday: "long", month: "short", day: "numeric" };
-    return d.toLocaleDateString("en-US", options);
   };
 
   // Dynamic welcome salutation
@@ -395,8 +396,6 @@ function LiveClockBadge() {
 
   const rawDisplayName = profile.nickname || profile.fullName.split(" ")[0] || "Student";
   const displayName = rawDisplayName.charAt(0).toUpperCase() + rawDisplayName.slice(1);
-
-  const shouldReduceMotion = useReducedMotion();
 
   const getDaysToBoardExam = () => {
     const customDate = localStorage.getItem("studymate_target_exam_date");

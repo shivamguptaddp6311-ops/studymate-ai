@@ -182,6 +182,30 @@ function getGeminiClient(): GoogleGenAI | null {
 export type AIProvider = "auto" | "gemini" | "openai" | "groq" | "openrouter" | "anthropic" | "fal";
 export type AIImageProvider = "auto" | "gemini" | "openai" | "fal";
 
+export function normalizeProvider(provider?: string): AIProvider {
+  if (!provider || provider === "auto") return "auto";
+  const p = provider.toLowerCase().trim();
+  if (p.includes("claude") || p.includes("anthropic")) return "anthropic";
+  if (p.includes("grok") || p.includes("groq")) return "groq";
+  if (p.includes("gemini")) return "gemini";
+  if (p.includes("gpt") || p.includes("openai")) return "openai";
+  if (p.includes("openrouter")) return "openrouter";
+  if (p.includes("fal")) return "fal";
+  return "auto";
+}
+
+export function getProviderDisplayName(provider?: string): string {
+  if (!provider) return "Gemini";
+  const p = provider.toLowerCase().trim();
+  if (p === "anthropic" || p === "claude") return "Claude";
+  if (p === "groq" || p === "grok") return "Grok";
+  if (p === "openai") return "OpenAI";
+  if (p === "openrouter") return "OpenRouter";
+  if (p === "gemini") return "Gemini";
+  if (p === "fal") return "Fal";
+  return "Gemini";
+}
+
 export interface ImageGenOptions {
   prompt: string;
   category?: string;
@@ -679,66 +703,46 @@ export async function executeAIRequest(options: {
     async () => {
       // Determine list of providers to try
       const config = getConfiguredProviders();
-      // Standard fallback sequence requested by user
-      const fallbackOrder: AIProvider[] = ["gemini", "openai", "groq", "anthropic", "openrouter"];
-      
+      const normalizedSelected = normalizeProvider(preferredProvider);
       let providersToTry: AIProvider[] = [];
 
-      if (preferredProvider !== "auto" && preferredProvider !== undefined) {
-        providersToTry.push(preferredProvider);
-        fallbackOrder.forEach(p => {
-          if (p !== preferredProvider) {
-            providersToTry.push(p);
-          }
-        });
+      if (normalizedSelected !== "auto") {
+        // STRICT MANUAL MODE: Call ONLY the selected provider.
+        // Never fall back to Gemini or any other provider when a specific provider is manually selected.
+        providersToTry = [normalizedSelected];
       } else {
-        providersToTry = [...fallbackOrder];
-      }
+        // AUTO MODE: Fallback sequence in order: Gemini -> OpenAI -> Grok -> Claude -> OpenRouter
+        const fallbackOrder: AIProvider[] = ["gemini", "openai", "groq", "anthropic", "openrouter"];
+        providersToTry = fallbackOrder.filter(p => config[p as keyof typeof config]);
 
-      // Filter based on configured keys
-      providersToTry = providersToTry.filter(p => config[p as keyof typeof config]);
+        // Validate provider capabilities against request requirements in Auto mode
+        const requiredCapabilities = getRequiredCapabilitiesForTask(
+          category === "pdf_parsing" ? "pdf_chat" : category === "ocr" ? "ocr" : image ? "vision_analysis" : "general_chat",
+          { image, isPdf }
+        );
 
-      // Validate provider capabilities against request requirements
-      const requiredCapabilities = getRequiredCapabilitiesForTask(
-        category === "pdf_parsing" ? "pdf_chat" : category === "ocr" ? "ocr" : image ? "vision_analysis" : "general_chat",
-        { image, isPdf }
-      );
-
-      const capabilityFiltered = filterCapableProviders(providersToTry, requiredCapabilities) as AIProvider[];
-      if (capabilityFiltered.length > 0) {
-        providersToTry = capabilityFiltered;
-      } else {
-        serverLogger.warn("AIService", `No configured provider supports all required capabilities: [${requiredCapabilities.join(", ")}].`);
-      }
-
-      if (providersToTry.length === 0) {
-        if (isValidKey(process.env.GEMINI_API_KEY)) {
-          providersToTry = ["gemini"];
-        } else {
-          throw new Error(
-            "No AI Providers are configured. Please set GEMINI_API_KEY or other keys (OPENAI_API_KEY, GROQ_API_KEY, etc.) in the Secrets Settings."
-          );
+        const capabilityFiltered = filterCapableProviders(providersToTry, requiredCapabilities) as AIProvider[];
+        if (capabilityFiltered.length > 0) {
+          providersToTry = capabilityFiltered;
         }
-      }
 
-      // Failure-Aware Reordering: Move recently failed providers to end, allowing healthy providers to bypass failed cache
-      const failedProviders = providersToTry.filter(p => isProviderInFailureCache(p, cacheKey));
-      const healthyProviders = providersToTry.filter(p => !isProviderInFailureCache(p, cacheKey));
+        if (providersToTry.length === 0) {
+          if (isValidKey(process.env.GEMINI_API_KEY)) {
+            providersToTry = ["gemini"];
+          } else {
+            throw new Error(
+              "No AI Providers are configured. Please set GEMINI_API_KEY or other keys (OPENAI_API_KEY, GROQ_API_KEY, etc.) in the Secrets Settings."
+            );
+          }
+        }
 
-      if (failedProviders.length > 0) {
-        if (healthyProviders.length > 0) {
+        // Failure-Aware Reordering (Auto mode only): Move recently failed providers to end
+        const failedProviders = providersToTry.filter(p => isProviderInFailureCache(p, cacheKey));
+        const healthyProviders = providersToTry.filter(p => !isProviderInFailureCache(p, cacheKey));
+
+        if (failedProviders.length > 0 && healthyProviders.length > 0) {
           cacheMetrics.failureCacheBypasses++;
-          serverLogger.info(
-            "AIService",
-            `Healthy providers [${healthyProviders.join(", ")}] bypassing recently failed cache entries for providers [${failedProviders.join(", ")}].`
-          );
           providersToTry = [...healthyProviders, ...failedProviders];
-        } else {
-          cacheMetrics.failureCacheHits++;
-          serverLogger.warn(
-            "AIService",
-            `All candidate providers [${failedProviders.join(", ")}] are in failure cache. Attempting execution as fallback.`
-          );
         }
       }
 
@@ -746,11 +750,16 @@ export async function executeAIRequest(options: {
       let success = false;
       let finalResult: AIResponse | null = null;
       const startTime = Date.now();
-      let providerUsed: AIProvider = preferredProvider;
+      let providerUsed: AIProvider = normalizedSelected === "auto" ? "gemini" : normalizedSelected;
+      let fallbackUsed = false;
+      let fallbackReason: string | undefined = undefined;
 
       try {
         for (let i = 0; i < providersToTry.length; i++) {
           const provider = providersToTry[i];
+          if (i > 0) {
+            fallbackUsed = true;
+          }
           if (signal?.aborted) {
             throw new Error("Request was cancelled by user.");
           }
@@ -760,8 +769,12 @@ export async function executeAIRequest(options: {
           try {
             // Validate support for document/PDF format
             if (isPdf && ["openai", "groq", "anthropic"].includes(provider)) {
-              serverLogger.info("AIService", `Skipping provider [${provider}] for PDF document input (natively supported by Gemini/OpenRouter)`);
-              continue;
+              if (normalizedSelected !== "auto") {
+                throw new Error(`The selected provider '${provider}' does not natively support PDF document uploads. Please use Gemini or OpenRouter, or switch to Auto AI.`);
+              } else {
+                serverLogger.info("AIService", `Skipping provider [${provider}] for PDF document input in Auto mode.`);
+                continue;
+              }
             }
 
             serverLogger.info("AIService", `Attempting AI request using provider: [${provider}]`);
@@ -787,6 +800,8 @@ export async function executeAIRequest(options: {
               resultText = await callOpenRouter(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
             } else if (provider === "anthropic") {
               resultText = await callAnthropic(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+            } else {
+              throw new Error(`Unsupported AI provider requested: ${provider}`);
             }
 
             if (!resultText || resultText.trim() === "") {
@@ -799,7 +814,6 @@ export async function executeAIRequest(options: {
             recordAISuccess(provider, providerDuration, inputChars, outputChars, false);
             serverLogger.info("AIService", `Successfully received response from provider: [${provider}] in ${providerDuration}ms`);
             
-            // On success, clear failure cache entry and store response in success cache ONLY
             clearFailureCache(provider, cacheKey);
             responseCache.set(cacheKey, {
               text: resultText,
@@ -819,6 +833,10 @@ export async function executeAIRequest(options: {
             recordAIFailure(provider, errMsg);
             recordFailureCache(provider, cacheKey, errMsg);
 
+            if (!fallbackReason) {
+              fallbackReason = `${provider} failed: ${errMsg}`;
+            }
+
             if (provider === "anthropic" && (errMsg.includes("credit balance") || errMsg.includes("Credit balance") || errMsg.includes("billing") || errMsg.includes("Billing") || errMsg.includes("status 400"))) {
               serverLogger.warn("AIService", "Disabling Anthropic provider dynamically due to credit balance/billing failure.");
               isAnthropicDisabled = true;
@@ -835,10 +853,24 @@ export async function executeAIRequest(options: {
           }
         }
 
+        const requestDuration = Date.now() - startTime;
+        const routingLog = {
+          selectedProvider: normalizedSelected,
+          actualProvider: success ? providerUsed : (providersToTry[0] || normalizedSelected),
+          fallbackUsed,
+          fallbackReason: fallbackUsed ? fallbackReason : undefined,
+          requestDuration
+        };
+        console.log("[AIRoutingLog]", JSON.stringify(routingLog, null, 2));
+        serverLogger.info("AIRoutingLog", JSON.stringify(routingLog));
+
         if (finalResult) {
           return finalResult;
         }
-        throw new Error(`All configured AI Providers failed to respond. Please try again shortly.`);
+        if (lastError) {
+          throw lastError;
+        }
+        throw new Error(`The selected AI provider '${normalizedSelected}' failed to generate a response.`);
       } catch (err: any) {
         lastError = err;
         throw err;
@@ -1750,61 +1782,35 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
     async () => {
       const config = getConfiguredImageProviders();
       const healthMap = checkImageProviderHealth();
+      const normalizedImageProvider = normalizeProvider(preferredProvider);
 
-      // Primary fallback sequence: Fal -> Gemini -> OpenAI
-      const defaultSequence: ("fal" | "gemini" | "openai")[] = ["fal", "gemini", "openai"];
       let providersToTry: ("fal" | "gemini" | "openai")[] = [];
 
-      // 1. If a preferred provider is specified and configured, put it first
-      if (preferredProvider && preferredProvider !== "auto") {
-        if (config[preferredProvider]) {
-          providersToTry.push(preferredProvider);
-        } else {
-          serverLogger.warn("AIServiceImage", `Preferred provider '${preferredProvider}' is not configured. Falling back to auto-selection.`);
-        }
-      }
+      if (normalizedImageProvider !== "auto") {
+        providersToTry = [normalizedImageProvider as ("fal" | "gemini" | "openai")];
+      } else {
+        // Primary fallback sequence for image generation: Fal -> Gemini -> OpenAI
+        const defaultSequence: ("fal" | "gemini" | "openai")[] = ["fal", "gemini", "openai"];
+        providersToTry = defaultSequence.filter(p => config[p]);
 
-      // 2. Append remaining configured providers
-      const reorderedSequence = preferredProvider === "gemini"
-        ? ["gemini", "fal", "openai"] as ("fal" | "gemini" | "openai")[]
-        : preferredProvider === "openai"
-          ? ["openai", "fal", "gemini"] as ("fal" | "gemini" | "openai")[]
-          : defaultSequence;
+        // Prioritize healthy/degraded providers over known unhealthy ones in auto mode
+        providersToTry.sort((a, b) => {
+          const healthA = healthMap[a]?.status || "unhealthy";
+          const healthB = healthMap[b]?.status || "unhealthy";
+          if (healthA === "healthy" && healthB !== "healthy") return -1;
+          if (healthA !== "healthy" && healthB === "healthy") return 1;
+          if (healthA === "degraded" && healthB === "unhealthy") return -1;
+          if (healthA === "unhealthy" && healthB === "degraded") return 1;
+          return 0;
+        });
 
-      reorderedSequence.forEach(p => {
-        if (!providersToTry.includes(p) && config[p]) {
-          providersToTry.push(p);
-        }
-      });
+        // Failure-Aware Reordering in auto mode
+        const failedProviders = providersToTry.filter(p => isProviderInFailureCache(p, cacheKey));
+        const healthyProviders = providersToTry.filter(p => !isProviderInFailureCache(p, cacheKey));
 
-      // Filter by image_generation capability
-      providersToTry = filterCapableProviders(providersToTry, ["image_generation"]) as ("fal" | "gemini" | "openai")[];
-
-      // 3. Prioritize healthy/degraded providers over known unhealthy ones
-      providersToTry.sort((a, b) => {
-        const healthA = healthMap[a]?.status || "unhealthy";
-        const healthB = healthMap[b]?.status || "unhealthy";
-        if (healthA === "healthy" && healthB !== "healthy") return -1;
-        if (healthA !== "healthy" && healthB === "healthy") return 1;
-        if (healthA === "degraded" && healthB === "unhealthy") return -1;
-        if (healthA === "unhealthy" && healthB === "degraded") return 1;
-        return 0;
-      });
-
-      // 4. Failure-Aware Reordering: Move recently failed image providers to end
-      const failedProviders = providersToTry.filter(p => isProviderInFailureCache(p, cacheKey));
-      const healthyProviders = providersToTry.filter(p => !isProviderInFailureCache(p, cacheKey));
-
-      if (failedProviders.length > 0) {
-        if (healthyProviders.length > 0) {
+        if (failedProviders.length > 0 && healthyProviders.length > 0) {
           cacheMetrics.failureCacheBypasses++;
-          serverLogger.info(
-            "AIServiceImage",
-            `Healthy image providers [${healthyProviders.join(", ")}] bypassing failed cache entries for providers [${failedProviders.join(", ")}].`
-          );
           providersToTry = [...healthyProviders, ...failedProviders];
-        } else {
-          cacheMetrics.failureCacheHits++;
         }
       }
 
