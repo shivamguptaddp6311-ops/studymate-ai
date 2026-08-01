@@ -707,8 +707,12 @@ export async function executeAIRequest(options: {
       let providersToTry: AIProvider[] = [];
 
       if (normalizedSelected !== "auto") {
-        // STRICT MANUAL MODE: Call ONLY the selected provider.
-        // Never fall back to Gemini or any other provider when a specific provider is manually selected.
+        if (!(config as any)[normalizedSelected]) {
+          throw new Error(
+            `${normalizedSelected.toUpperCase()} provider is not configured or API key is invalid.`
+          );
+        }
+
         providersToTry = [normalizedSelected];
       } else {
         // AUTO MODE: Fallback sequence in order: Gemini -> OpenAI -> Grok -> Claude -> OpenRouter
@@ -855,11 +859,14 @@ export async function executeAIRequest(options: {
 
         const requestDuration = Date.now() - startTime;
         const routingLog = {
-          selectedProvider: normalizedSelected,
+          selectedProvider: preferredProvider || "auto",
+          normalizedSelected,
           actualProvider: success ? providerUsed : (providersToTry[0] || normalizedSelected),
+          providerConfigured: !!(config as any)[normalizedSelected],
+          providerError: lastError ? (lastError.message || String(lastError)) : undefined,
+          requestDuration,
           fallbackUsed,
-          fallbackReason: fallbackUsed ? fallbackReason : undefined,
-          requestDuration
+          fallbackReason: fallbackUsed ? fallbackReason : undefined
         };
         console.log("[AIRoutingLog]", JSON.stringify(routingLog, null, 2));
         serverLogger.info("AIRoutingLog", JSON.stringify(routingLog));
@@ -1919,5 +1926,39 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
 
 export const generateImageWithFallback = executeImageGenRequest;
 
+import { generateVideo, getGenerationStatus as getVideoStatus, cancelGeneration as cancelVideoGen, getUserVideoHistory } from "./videoProviders/orchestrator";
+import { VideoGenerationInput, NormalizedVideoResult } from "./videoProviders/types";
+
+export async function executeVideoGenRequest(
+  options: VideoGenerationInput
+): Promise<NormalizedVideoResult> {
+  return concurrencyQueue.enqueue(
+    {
+      category: "image_generation",
+      taskName: `video_gen:${options.prompt.slice(0, 20)}`,
+      timeoutMs: options.timeoutMs || 240000,
+      signal: options.signal
+    },
+    async () => {
+      const result = await generateVideo(options);
+
+      firebaseDB.saveAIRequestLog({
+        id: `vidlog-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`,
+        provider: result.provider,
+        endpoint: "generate-video",
+        responseTimeMs: 0,
+        success: result.success,
+        error: result.error,
+        timestamp: new Date().toISOString()
+      }).catch(e => console.error("[AIServiceVideo] Failed to save video AI request log:", e));
+
+      return result;
+    }
+  );
+}
+
+export { getVideoStatus, cancelVideoGen, getUserVideoHistory };
+
 export { AIRouter } from "./aiRouter";
 export type { AITaskType, AIRouterOptions, AIRouterResult } from "./aiRouter";
+

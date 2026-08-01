@@ -114,6 +114,25 @@ export const MessageBubble = React.memo(function MessageBubble({
           </div>
         )}
 
+        {/* Generated Video Player */}
+        {msg.videoUrl && (
+          <div className="mb-3.5 max-w-md rounded-2xl overflow-hidden border border-black/10 dark:border-white/10 shadow-lg relative group bg-slate-900/20 dark:bg-slate-950/60">
+            <video
+              src={msg.videoUrl}
+              controls
+              autoPlay
+              loop
+              muted
+              playsInline
+              className="w-full h-auto max-h-[360px] object-contain rounded-2xl"
+            />
+            <div className="absolute top-2.5 right-2.5 bg-black/70 backdrop-blur-md px-3 py-1 rounded-full text-[10px] text-white font-extrabold flex items-center gap-1.5 shadow-md">
+              <Sparkles className="w-3 h-3 text-pink-400" />
+              <span>AI Video Rendered</span>
+            </div>
+          </div>
+        )}
+
         {/* Attached PDF Preview */}
         {msg.pdf && (
           <div className="mb-3.5 max-w-sm rounded-2xl p-3 bg-slate-100/90 dark:bg-slate-800/90 border border-slate-200/60 dark:border-slate-700/60 shadow-md flex items-center space-x-3">

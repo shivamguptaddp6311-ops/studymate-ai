@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { UserProfile } from "../types";
 import { ChatMessage } from "../components/studymate-ai/types";
 import { isImageGenerationRequest } from "../utils/imageIntent";
+import { isVideoGenerationRequest } from "../utils/videoIntent";
 import { preprocessImageForOCRAndVision } from "../utils/imageOptimizer";
 
 export function useAI() {
@@ -233,8 +234,9 @@ ${data.conceptualExplanation || ""}`;
     setIsLoading(true);
     setErrorMessage(null);
 
-    const isImageGen = isImageGenerationRequest(textToSend);
-    if (isImageGen) {
+    const isVideoGen = isVideoGenerationRequest(textToSend);
+    const isImageGen = !isVideoGen && isImageGenerationRequest(textToSend);
+    if (isImageGen || isVideoGen) {
       setIsGeneratingImage(true);
     } else {
       const searchTriggers = [
@@ -252,7 +254,7 @@ ${data.conceptualExplanation || ""}`;
 
     const timeoutId = setTimeout(() => {
       controller.abort();
-    }, timeoutLimit);
+    }, isVideoGen ? 240000 : timeoutLimit);
 
     try {
       let token = localStorage.getItem("studymate_token") || window.localStorage.getItem("studymate_token") || "";
@@ -272,6 +274,81 @@ ${data.conceptualExplanation || ""}`;
             window.localStorage.setItem("studymate_logged_in_email", guestData.email);
           }
         } catch (e) {}
+      }
+
+      // --- ROUTING BRANCH 0: VIDEO GENERATION REQUEST ---
+      if (isVideoGen) {
+        const subRes = await fetch("/api/video/generate", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            prompt: textToSend,
+            aspectRatio: "16:9",
+            duration: "5s",
+            resolution: "720p",
+            generateAudio: true
+          })
+        });
+
+        if (!subRes.ok) {
+          const errData = await subRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Failed to initiate video generation (status ${subRes.status})`);
+        }
+
+        const subData = await subRes.json();
+        const jobId = subData.jobId;
+
+        // Poll for video completion
+        let videoResult: any = null;
+        const pollStartTime = Date.now();
+        const maxPollMs = 210000; // 3.5 minutes
+
+        while (!videoResult) {
+          if (controller.signal.aborted) {
+            throw new Error("Video generation request cancelled.");
+          }
+          if (Date.now() - pollStartTime > maxPollMs) {
+            throw new Error("Video generation request timed out during render processing.");
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, 4000));
+
+          const statusRes = await fetch(`/api/video/status/${jobId}`, {
+            headers: { "Authorization": `Bearer ${token}` },
+            signal: controller.signal
+          });
+
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.status === "completed" && statusData.videoUrl) {
+              videoResult = statusData;
+              break;
+            } else if (statusData.status === "failed") {
+              throw new Error(statusData.error || "Video generation process failed across available providers.");
+            } else if (statusData.status === "cancelled") {
+              throw new Error("Video generation process was cancelled.");
+            }
+          }
+        }
+
+        clearTimeout(timeoutId);
+
+        onAddMessage({
+          id: `msg-model-${Date.now()}`,
+          role: "model",
+          text: `🎬 **Video Generated Successfully!**\n\nPrompt: _"${textToSend}"_`,
+          videoUrl: videoResult.videoUrl,
+          timestamp: new Date()
+        });
+
+        if (onAwardXP) {
+          onAwardXP(15, "Generated AI Video Asset");
+        }
+        return;
       }
 
       // --- ROUTING BRANCH 1: IMAGE GENERATION REQUEST ---

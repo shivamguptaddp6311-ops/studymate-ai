@@ -200,3 +200,15 @@ export const imageGenRateLimiter = createRateLimiter({
   sustainedMax: Number(process.env.AI_IMAGE_RATE_LIMIT_SUSTAINED_MAX) || 20,
   sustainedWindowMs: Number(process.env.AI_IMAGE_RATE_LIMIT_SUSTAINED_WINDOW_MS) || 900000
 });
+
+/**
+ * Dedicated rate limiter for high-cost video generation endpoints (5 requests/hour/user)
+ */
+export const videoGenRateLimiter = createRateLimiter({
+  keyPrefix: "ai-video-gen",
+  burstMax: Number(process.env.AI_VIDEO_RATE_LIMIT_BURST_MAX) || 2,
+  burstWindowMs: 60000,
+  sustainedMax: Number(process.env.AI_VIDEO_RATE_LIMIT_SUSTAINED_MAX) || 5,
+  sustainedWindowMs: 3600000 // 1 hour
+});
+

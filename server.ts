@@ -10,7 +10,7 @@ import compression from "compression";
 import { rateLimit } from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { Type } from "@google/genai";
-import { executeAIRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter, getAICacheMetrics, clearAICaches } from "./server/aiService";
+import { executeAIRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, executeVideoGenRequest, getVideoStatus, cancelVideoGen, getUserVideoHistory, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter, getAICacheMetrics, clearAICaches } from "./server/aiService";
 import { shouldSearchWeb, executeWebSearch, compressContext, generateCitationsContext, groundResponseCitations } from "./server/webSearch";
 import { firebaseDB, runAutomatedMigration, ChatUser, ChatMessage, ChatReport, AdminLog, SyncData, UserMemory } from "./server/firebase";
 import { getQuestions } from "./server/questionService";
@@ -32,7 +32,7 @@ import {
   getAIHealthMetrics,
   getAIHealthDashboardData
 } from "./server/logger";
-import { aiRateLimiter, imageGenRateLimiter } from "./server/middleware/rateLimiter";
+import { aiRateLimiter, imageGenRateLimiter, videoGenRateLimiter } from "./server/middleware/rateLimiter";
 import { validateRequest } from "./server/middleware/validateRequest";
 import {
   guestTokenSchema,
@@ -59,8 +59,12 @@ import {
   clientLogsSchema,
   circuitBreakerResetSchema
 } from "./server/schemas/apiSchemas";
+import { validateVideoProviderKeys } from "./server/utils/validateEnv";
 
 dotenv.config();
+
+// Validate video generation AI provider API keys on startup
+validateVideoProviderKeys();
 
 const app = express();
 app.set("trust proxy", 1);
@@ -1406,6 +1410,116 @@ app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, validateReq
   }
 });
 
+// AI Video Generation Routes (Veo -> PixVerse -> Luma -> Kling Fallback Orchestrator)
+app.post("/api/video/generate", requireAuth, videoGenRateLimiter, async (req, res) => {
+  try {
+    const { prompt, aspectRatio = "16:9", duration = "5s", resolution = "720p", generateAudio = true } = req.body;
+
+    if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
+      return res.status(400).json({ error: "A valid non-empty prompt string is required." });
+    }
+
+    if (prompt.trim().length > 1500) {
+      return res.status(400).json({ error: "Video prompt exceeds maximum character limit of 1,500." });
+    }
+
+    const userEmail = (req as any).user?.email?.toLowerCase().trim() || "anonymous";
+    const jobId = `vid-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    // Kick off non-blocking background video generation execution
+    executeVideoGenRequest({
+      jobId,
+      prompt: prompt.trim(),
+      aspectRatio,
+      duration,
+      resolution,
+      generateAudio,
+      userEmail
+    }).catch((err) => {
+      console.error(`[APIVideo] Background video job [${jobId}] failed:`, err);
+    });
+
+    // Respond immediately with initial job polling state
+    res.status(202).json({
+      success: true,
+      jobId,
+      status: "processing",
+      prompt: prompt.trim(),
+      aspectRatio,
+      resolution,
+      duration,
+      createdAt: new Date().toISOString(),
+      userEmail
+    });
+  } catch (error: any) {
+    console.error("AI Video Generation submission error:", error);
+    res.status(500).json({ error: error.message || "Failed to submit video generation request." });
+  }
+});
+
+app.get("/api/video/status/:id", requireAuth, async (req, res) => {
+  try {
+    const jobId = req.params.id;
+    if (!jobId) {
+      return res.status(400).json({ error: "Missing video job ID" });
+    }
+
+    const job = getVideoStatus(jobId);
+    if (!job) {
+      return res.status(404).json({ error: `Video job [${jobId}] not found` });
+    }
+
+    const userEmail = (req as any).user?.email?.toLowerCase().trim();
+    if (userEmail && job.userEmail && job.userEmail.toLowerCase().trim() !== userEmail && !(req as any).user?.isAdmin) {
+      return res.status(403).json({ error: "Forbidden: You do not own this video generation job" });
+    }
+
+    res.json(job);
+  } catch (error: any) {
+    console.error("AI Video Status fetch error:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch video job status" });
+  }
+});
+
+app.post("/api/video/cancel/:id", requireAuth, async (req, res) => {
+  try {
+    const jobId = req.params.id;
+    if (!jobId) {
+      return res.status(400).json({ error: "Missing video job ID" });
+    }
+
+    const job = getVideoStatus(jobId);
+    if (job) {
+      const userEmail = (req as any).user?.email?.toLowerCase().trim();
+      if (userEmail && job.userEmail && job.userEmail.toLowerCase().trim() !== userEmail && !(req as any).user?.isAdmin) {
+        return res.status(403).json({ error: "Forbidden: You do not own this video generation job" });
+      }
+    }
+
+    const cancelled = cancelVideoGen(jobId);
+    res.json({
+      success: true,
+      jobId,
+      status: "cancelled",
+      message: cancelled ? "Job successfully cancelled" : "Job was not actively running or already completed"
+    });
+  } catch (error: any) {
+    console.error("AI Video Cancellation error:", error);
+    res.status(500).json({ error: error.message || "Failed to cancel video generation job" });
+  }
+});
+
+app.get("/api/video/history", requireAuth, async (req, res) => {
+  try {
+    const userEmail = (req as any).user?.email?.toLowerCase().trim();
+    const history = getUserVideoHistory(userEmail);
+    res.json({ success: true, count: history.length, history });
+  } catch (error: any) {
+    console.error("AI Video History fetch error:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch video history" });
+  }
+});
+
 // 2. Interactive Tutor Chat - Follow-up and conversation with full memory & reasoning
 app.post("/api/gemini/chat", requireAuth, validateRequest(geminiChatSchema), async (req, res) => {
   const controller = new AbortController();
@@ -1414,7 +1528,8 @@ app.post("/api/gemini/chat", requireAuth, validateRequest(geminiChatSchema), asy
   });
 
   try {
-    const { message, history, image, provider = "auto", timeoutMs } = req.body;
+    const { message, history, image, provider, preferredProvider: reqPreferredProvider, timeoutMs } = req.body;
+    const preferredProvider = reqPreferredProvider || provider || "auto";
 
     // Validate request inputs
     if (message && typeof message !== "string") {
@@ -1581,7 +1696,7 @@ Before generating your final response, execute these internal steps:
         messages,
         systemInstruction,
         image,
-        preferredProvider: provider as AIProvider,
+        preferredProvider: preferredProvider as AIProvider,
         timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
         signal: controller.signal
       });

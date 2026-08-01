@@ -5,6 +5,8 @@ export interface ChatMessage {
   role: "user" | "model";
   text: string;
   image?: string; // Base64 string for reference
+  videoUrl?: string; // Generated video URL
+  providerUsed?: string;
   pdf?: {
     name: string;
     source: "Google Drive" | "Local File";
