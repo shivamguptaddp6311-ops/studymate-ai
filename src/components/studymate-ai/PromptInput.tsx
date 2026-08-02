@@ -4,12 +4,12 @@ import { Plus, Send, Camera, Image as ImageIcon, CloudUpload, FileText, Mic, Che
 import { AttachedPdf } from "./PDFUploader";
 
 const MODEL_OPTIONS = [
-  { id: "auto", label: "⚡ Auto AI", fullName: "Auto Intelligent Fallback" },
+  { id: "auto", label: "⚡ Auto", fullName: "Auto (Smart Selector)" },
+  { id: "gpt-5", label: "🧠 GPT-5", fullName: "OpenAI GPT-5" },
   { id: "gemini", label: "♊ Gemini", fullName: "Google Gemini 2.5" },
-  { id: "openai", label: "🧠 OpenAI", fullName: "OpenAI GPT-4o" },
-  { id: "groq", label: "⚡ Grok", fullName: "Grok LLaMA 3" },
-  { id: "anthropic", label: "🦉 Claude", fullName: "Anthropic Claude 3.5" },
-  { id: "openrouter", label: "📡 OpenRouter", fullName: "OpenRouter Hub" },
+  { id: "claude", label: "🦉 Claude", fullName: "Anthropic Claude 3.5" },
+  { id: "grok", label: "⚡ Grok", fullName: "xAI Grok 3" },
+  { id: "deepseek", label: "🐋 DeepSeek", fullName: "DeepSeek R1" },
 ];
 
 interface PromptInputProps {

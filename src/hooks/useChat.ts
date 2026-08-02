@@ -14,6 +14,8 @@ function sanitizeMessage(m: any): ChatMessage {
     role: m?.role === "user" ? "user" : "model",
     text: String(m?.text || ""),
     image: typeof m?.image === "string" ? m.image : undefined,
+    videoUrl: typeof m?.videoUrl === "string" ? m.videoUrl : undefined,
+    providerUsed: typeof m?.providerUsed === "string" ? m.providerUsed : undefined,
     pdf: m?.pdf && typeof m.pdf === "object" ? {
       name: String(m.pdf.name || "Document.pdf"),
       source: m.pdf.source === "Google Drive" ? "Google Drive" : "Local File",
@@ -26,7 +28,10 @@ function sanitizeMessage(m: any): ChatMessage {
     sources: Array.isArray(m?.sources) 
       ? m.sources.filter((s: any) => s && typeof s.title === "string" && typeof s.url === "string")
       : undefined,
-    searchError: Boolean(m?.searchError)
+    searchError: Boolean(m?.searchError),
+    videoSettingsPicker: m?.videoSettingsPicker && typeof m.videoSettingsPicker === "object" ? m.videoSettingsPicker : undefined,
+    videoSegments: Array.isArray(m?.videoSegments) ? m.videoSegments : undefined,
+    lectureJobId: typeof m?.lectureJobId === "string" ? m.lectureJobId : undefined
   };
 }
 
@@ -156,6 +161,25 @@ export function useChat(profile?: UserProfile) {
     });
   }, [activeSessionId]);
 
+  const updateMessage = useCallback((messageId: string, updater: (prev: ChatMessage) => ChatMessage) => {
+    setSessions(prevSessions => {
+      return prevSessions.map(sess => {
+        if (sess.id !== activeSessionId) return sess;
+        const updatedMessages = sess.messages.map(m => {
+          if (m.id === messageId) {
+            return sanitizeMessage(updater(m));
+          }
+          return m;
+        });
+        return {
+          ...sess,
+          updatedAt: new Date(),
+          messages: updatedMessages
+        };
+      });
+    });
+  }, [activeSessionId]);
+
   const createNewSession = useCallback((title?: string) => {
     const newSess = createDefaultSession(profile, title);
     setSessions(prev => [newSess, ...prev]);
@@ -275,6 +299,7 @@ export function useChat(profile?: UserProfile) {
     inputText,
     setInputText,
     addMessage,
+    updateMessage,
     createNewSession,
     deleteSession,
     deleteActiveChat,

@@ -278,6 +278,7 @@ ${data.conceptualExplanation || ""}`;
 
       // --- ROUTING BRANCH 0: VIDEO GENERATION REQUEST ---
       if (isVideoGen) {
+        const videoProviderSetting = localStorage.getItem("studymate_video_provider") || "veo";
         const subRes = await fetch("/api/video/generate", {
           method: "POST",
           headers: {
@@ -287,10 +288,12 @@ ${data.conceptualExplanation || ""}`;
           signal: controller.signal,
           body: JSON.stringify({
             prompt: textToSend,
+            imageUrl: userMessage.image || undefined,
             aspectRatio: "16:9",
             duration: "5s",
             resolution: "720p",
-            generateAudio: true
+            generateAudio: true,
+            preferredProvider: videoProviderSetting
           })
         });
 
@@ -439,7 +442,7 @@ ${data.conceptualExplanation || ""}`;
         .slice(-15)
         .map(m => ({
           role: m.role,
-          message: m.text
+          content: m.text
         }));
 
       let finalPrompt = textToSend;
@@ -504,7 +507,14 @@ ${data.conceptualExplanation || ""}`;
 
       if (response.status === 504) throw new Error("The AI partner timed out. Please try again.");
       if (response.status === 499) throw new Error("Request cancelled.");
-      if (!response.ok) throw new Error(`Server returned status ${response.status}`);
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(
+          err.message ||
+          err.error ||
+          `Server returned status ${response.status}`
+        );
+      }
 
       const data = await response.json();
       if (data.error) throw new Error(data.error);
@@ -557,6 +567,134 @@ ${data.conceptualExplanation || ""}`;
     }
   };
 
+  const onRequestVideoLesson = (
+    messageId: string,
+    topicText: string,
+    onAddMessage: (msg: ChatMessage) => void
+  ) => {
+    const lines = topicText.split("\n").map(l => l.replace(/^[#*\-\s]+/, "").trim()).filter(Boolean);
+    const cleanTopic = (lines[0] || topicText).slice(0, 100);
+
+    const pickerMsg: ChatMessage = {
+      id: `msg-picker-${Date.now()}`,
+      role: "model",
+      text: `🎬 **Video Lesson Setup**: Choose settings below to generate a video lesson.`,
+      videoSettingsPicker: {
+        topic: cleanTopic,
+        forMessageId: messageId
+      },
+      timestamp: new Date()
+    };
+    onAddMessage(pickerMsg);
+  };
+
+  const onSubmitVideoSettings = async (
+    forMessageId: string,
+    settings: any,
+    messages: ChatMessage[],
+    onUpdateMessage: (msgId: string, updater: (prev: ChatMessage) => ChatMessage) => void,
+    onAddMessage: (msg: ChatMessage) => void
+  ) => {
+    const pickerMsg = messages.find(m => m.videoSettingsPicker?.forMessageId === forMessageId || m.id === forMessageId);
+    const targetMsgId = pickerMsg ? pickerMsg.id : `msg-video-lecture-${Date.now()}`;
+
+    if (!pickerMsg) {
+      onAddMessage({
+        id: targetMsgId,
+        role: "model",
+        text: `🎬 **Video Lesson**: Generating "${settings.topic}"...`,
+        timestamp: new Date()
+      });
+    } else {
+      onUpdateMessage(targetMsgId, (m) => ({
+        ...m,
+        text: `🎬 **Video Lesson**: Generating "${settings.topic}"...`,
+        videoSettingsPicker: undefined
+      }));
+    }
+
+    try {
+      const sourceMsg = messages.find(m => m.id === forMessageId);
+      const sourceText = sourceMsg?.text || settings.topic;
+
+      const res = await fetch("/api/video/lecture/plan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: settings.topic,
+          sourceText,
+          settings
+        })
+      });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || "Failed to plan video lecture.");
+      }
+
+      const planData = await res.json();
+      const jobId = planData.jobId;
+      const initialSegments = planData.segments || [];
+
+      onUpdateMessage(targetMsgId, (m) => ({
+        ...m,
+        lectureJobId: jobId,
+        videoSegments: initialSegments
+      }));
+
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/video/lecture/status/${jobId}`);
+          if (!statusRes.ok) return;
+
+          const statusData = await statusRes.json();
+          if (statusData.segments) {
+            onUpdateMessage(targetMsgId, (m) => ({
+              ...m,
+              videoSegments: statusData.segments
+            }));
+          }
+
+          const isFinished = statusData.status === "completed" || 
+                             statusData.status === "failed" || 
+                             statusData.status === "cancelled" ||
+                             (statusData.segments && statusData.segments.every((s: any) => s.status === "completed" || s.status === "failed"));
+
+          if (isFinished) {
+            clearInterval(pollInterval);
+          }
+        } catch (pollErr) {
+          console.warn("[VideoLecture] Polling error:", pollErr);
+        }
+      }, 3500);
+
+    } catch (err: any) {
+      onUpdateMessage(targetMsgId, (m) => ({
+        ...m,
+        text: `⚠️ Video lesson generation failed: ${err.message || err}`,
+        videoSettingsPicker: undefined
+      }));
+    }
+  };
+
+  const onCancelVideoLecture = async (
+    jobId: string,
+    messageId: string,
+    onUpdateMessage: (msgId: string, updater: (prev: ChatMessage) => ChatMessage) => void
+  ) => {
+    try {
+      await fetch(`/api/video/lecture/cancel/${jobId}`, { method: "POST" });
+    } catch (e) {
+      console.warn("Cancel request error:", e);
+    }
+    onUpdateMessage(messageId, (m) => ({
+      ...m,
+      videoSegments: m.videoSegments?.map(s => 
+        (s.status === "pending" || s.status === "generating") ? { ...s, status: "failed" } : s
+      )
+    }));
+  };
+
   return {
     isLoading,
     isWebSearching,
@@ -567,5 +705,8 @@ ${data.conceptualExplanation || ""}`;
     handleRetry,
     solveScannedQuestion,
     handleSendAI,
+    onRequestVideoLesson,
+    onSubmitVideoSettings,
+    onCancelVideoLecture
   };
 }

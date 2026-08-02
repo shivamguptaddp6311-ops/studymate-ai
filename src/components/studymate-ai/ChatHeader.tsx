@@ -13,6 +13,7 @@ interface ChatHeaderProps {
   totalSessionsCount: number;
   onOpenClearConfirm: () => void;
   onOpenSessionsMenu: () => void;
+  onOpenWorkspacePanel?: () => void;
   onCreateNewChat: () => void;
   onDeleteCurrentChat: () => void;
   onOpenLiveVoiceTutor?: () => void;
@@ -33,6 +34,7 @@ export function ChatHeader({
   totalSessionsCount,
   onOpenClearConfirm,
   onOpenSessionsMenu,
+  onOpenWorkspacePanel,
   onCreateNewChat,
   onDeleteCurrentChat,
   onOpenLiveVoiceTutor,
@@ -51,18 +53,23 @@ export function ChatHeader({
             <h1 className="font-extrabold text-base md:text-lg text-slate-900 dark:text-slate-100 tracking-tight leading-none">
               StudyMate AI
             </h1>
-            <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800/80 px-2 py-0.5 rounded-full">
-              AI Workspace
-            </span>
+            <button
+              type="button"
+              onClick={onOpenWorkspacePanel || onOpenSessionsMenu}
+              className="text-[10px] font-extrabold text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 px-2.5 py-0.5 rounded-full border border-purple-200/80 dark:border-purple-800/60 transition cursor-pointer flex items-center gap-1 shadow-2xs"
+            >
+              <Sparkles className="w-2.5 h-2.5 text-purple-500" />
+              <span>AI Workspace</span>
+            </button>
           </div>
 
           {/* Single AI Workspace Button with Dropdown Indicator */}
           <div className="mt-1">
             <button
               type="button"
-              onClick={onOpenSessionsMenu}
+              onClick={onOpenWorkspacePanel || onOpenSessionsMenu}
               className="inline-flex items-center space-x-1.5 text-xs font-semibold px-2.5 py-0.5 bg-slate-100/90 dark:bg-slate-800/70 hover:bg-slate-200/90 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200/80 dark:border-slate-700/60 transition cursor-pointer max-w-[220px] sm:max-w-[320px] truncate"
-              title="Switch or manage chat threads"
+              title="Open AI Workspace panel"
             >
               <span className="truncate">{activeSession?.title || "AI Workspace"}</span>
               <span className="text-[9px] font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-1.5 py-0.2 rounded shrink-0">

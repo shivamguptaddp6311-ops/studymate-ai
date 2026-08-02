@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import { motion } from "motion/react";
 import { 
-  Sparkles, Check, Globe, Volume2, VolumeX, Copy, ExternalLink, CloudUpload 
+  Sparkles, Check, Globe, Volume2, VolumeX, Copy, ExternalLink, CloudUpload, Video, Loader2, StopCircle, AlertCircle
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
-import { ChatMessage } from "./types";
+import { ChatMessage, VideoSettings } from "./types";
+import { VideoSettingsPicker } from "./VideoSettingsPicker";
 
 interface ChatMessageBubbleProps {
   msg: ChatMessage;
@@ -12,6 +13,10 @@ interface ChatMessageBubbleProps {
   onSpeakText: (text: string, msgId: string) => void;
   isSpeaking: boolean;
   onJumpToCitation?: (docName: string, pageNumber: number) => void;
+  onRequestVideoLesson?: (messageId: string, topicText: string) => void;
+  onSubmitVideoSettings?: (forMessageId: string, settings: VideoSettings) => void;
+  onCancelVideoLecture?: (jobId: string, messageId: string) => void;
+  onQuickAction?: (actionPrompt: string) => void;
 }
 
 export const MessageBubble = React.memo(function MessageBubble({ 
@@ -19,7 +24,11 @@ export const MessageBubble = React.memo(function MessageBubble({
   onCopyText, 
   onSpeakText,
   isSpeaking,
-  onJumpToCitation
+  onJumpToCitation,
+  onRequestVideoLesson,
+  onSubmitVideoSettings,
+  onCancelVideoLecture,
+  onQuickAction
 }: ChatMessageBubbleProps) {
   const isUser = msg?.role === "user";
   const [copied, setCopied] = useState(false);
@@ -213,12 +222,186 @@ export const MessageBubble = React.memo(function MessageBubble({
           </div>
         )}
 
+        {/* Inline Video Settings Picker Card */}
+        {msg.videoSettingsPicker && onSubmitVideoSettings && (
+          <div className="my-2">
+            <VideoSettingsPicker
+              data={msg.videoSettingsPicker}
+              onSubmit={(settings) => onSubmitVideoSettings(msg.videoSettingsPicker!.forMessageId, settings)}
+            />
+          </div>
+        )}
+
+        {/* Multi-segment Video Lecture Display */}
+        {msg.videoSegments && msg.videoSegments.length > 0 && (
+          <div className="my-3 space-y-3">
+            <div className="flex items-center justify-between pb-1.5 border-b border-slate-200/50 dark:border-slate-800/50">
+              <span className="text-[10px] font-black uppercase tracking-wider text-indigo-500 flex items-center gap-1">
+                <Video className="w-3.5 h-3.5" />
+                <span>Video Lesson ({msg.videoSegments.length} {msg.videoSegments.length === 1 ? "part" : "parts"})</span>
+              </span>
+
+              {/* Stop / Cancel button if any segment is running */}
+              {onCancelVideoLecture && msg.lectureJobId && msg.videoSegments.some(s => s.status === "pending" || s.status === "generating") && (
+                <button
+                  type="button"
+                  onClick={() => onCancelVideoLecture(msg.lectureJobId!, msg.id)}
+                  className="px-2 py-0.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/30 text-[10px] font-bold flex items-center gap-1 transition cursor-pointer"
+                >
+                  <StopCircle className="w-3 h-3 text-rose-500" />
+                  <span>Stop Generation</span>
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 gap-3">
+              {msg.videoSegments.map((seg, idx) => (
+                <div 
+                  key={idx}
+                  className="rounded-2xl p-3 bg-slate-900/90 text-white border border-slate-800 shadow-md relative overflow-hidden"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold text-slate-200 truncate pr-2">
+                      {seg.label || `Part ${seg.order} of ${seg.total}`}
+                    </span>
+                    <span className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full ${
+                      seg.status === "completed" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
+                      seg.status === "failed" ? "bg-rose-500/20 text-rose-400 border border-rose-500/30" :
+                      "bg-amber-500/20 text-amber-300 border border-amber-500/30 animate-pulse"
+                    }`}>
+                      {seg.status}
+                    </span>
+                  </div>
+
+                  {seg.status === "completed" && seg.videoUrl && (
+                    <div className="rounded-xl overflow-hidden border border-slate-700 bg-black relative">
+                      <video
+                        src={seg.videoUrl}
+                        controls
+                        autoPlay={idx === 0}
+                        loop
+                        muted
+                        playsInline
+                        className="w-full h-auto max-h-[300px] object-contain rounded-xl"
+                      />
+                    </div>
+                  )}
+
+                  {(seg.status === "pending" || seg.status === "generating") && (
+                    <div className="p-6 rounded-xl border border-slate-800 bg-slate-950/60 flex flex-col items-center justify-center space-y-2 text-center">
+                      <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
+                      <p className="text-xs font-extrabold text-indigo-300 animate-pulse">
+                        Rendering {seg.label || `Part ${seg.order} of ${seg.total}`}...
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        Generating frame motion, lighting, and camera motion
+                      </p>
+                    </div>
+                  )}
+
+                  {seg.status === "failed" && (
+                    <div className="p-3 rounded-xl border border-rose-900/50 bg-rose-950/30 text-rose-300 text-xs flex items-center space-x-2">
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                      <span>This video segment could not be completed.</span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Quick AI Actions for AI responses */}
+        {!isUser && msg.text && msg.text.trim().length > 30 && (
+          <div className="mt-3 pt-2 border-t border-slate-200/30 dark:border-slate-800/40 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+            <button
+              type="button"
+              onClick={() => onQuickAction?.(`Summarize the following response into key bullet points:\n\n${msg.text}`)}
+              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
+            >
+              📝 Summarize
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onQuickAction?.(`Explain the following response in much simpler terms with a real-world analogy:\n\n${msg.text}`)}
+              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
+            >
+              💡 Explain Simpler
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onQuickAction?.(`Generate a 5-question practice quiz based on this content:\n\n${msg.text}`)}
+              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
+            >
+              🎯 Make Quiz
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onQuickAction?.(`Create 5 high-yield revision flashcards for this topic:\n\n${msg.text}`)}
+              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
+            >
+              🃏 Flashcards
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onQuickAction?.(`Translate the following explanation into simple Hindi and English bilingual format:\n\n${msg.text}`)}
+              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
+            >
+              🌐 Translate
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                try {
+                  const saved = JSON.parse(localStorage.getItem("studymate_saved_notes") || "[]");
+                  const newNotes = [msg.text.slice(0, 150) + "...", ...saved];
+                  localStorage.setItem("studymate_saved_notes", JSON.stringify(newNotes));
+                  alert("Saved to Study Notes!");
+                } catch {
+                  // ignore
+                }
+              }}
+              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
+            >
+              📌 Save to Notes
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onQuickAction?.(`Continue expanding in deeper academic detail on this response:\n\n${msg.text}`)}
+              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
+            >
+              ➡️ Continue
+            </button>
+          </div>
+        )}
+
         {/* Action Toolbar for AI responses */}
         {!isUser && (
           <div className="mt-3 pt-2.5 border-t border-slate-200/40 dark:border-slate-800/40 flex items-center justify-between opacity-80 group-hover:opacity-100 transition-opacity">
-            <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-indigo-500" /> Adaptive Academic Model
-            </span>
+            <div className="flex items-center space-x-2">
+              <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-indigo-500" /> Adaptive Academic Model
+              </span>
+
+              {/* "🎬 Learn through video" Button */}
+              {onRequestVideoLesson && msg.text && msg.text.trim().length > 80 && !msg.videoUrl && !msg.videoSegments && !msg.videoSettingsPicker && (
+                <button
+                  type="button"
+                  onClick={() => onRequestVideoLesson(msg.id, msg.text)}
+                  className="px-2.5 py-1 bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-indigo-500/20 border border-indigo-500/30 text-indigo-600 dark:text-indigo-300 hover:text-indigo-700 dark:hover:text-white rounded-xl text-xs font-extrabold transition flex items-center space-x-1.5 shadow-2xs group cursor-pointer"
+                  title="Learn this topic through an interactive video lesson"
+                >
+                  <Video className="w-3.5 h-3.5 text-purple-500 group-hover:scale-110 transition-transform" />
+                  <span>🎬 Learn through video</span>
+                </button>
+              )}
+            </div>
 
             <div className="flex items-center space-x-1.5">
               {/* Voice Read Aloud */}

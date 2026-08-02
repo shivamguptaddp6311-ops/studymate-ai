@@ -1,7 +1,7 @@
 import React, { RefObject, useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Sparkles, Globe, ArrowDown, Image as ImageIcon } from "lucide-react";
-import { ChatMessage } from "./types";
+import { ChatMessage, VideoSettings } from "./types";
 import { MessageBubble } from "./MessageBubble";
 import { PremiumErrorCard } from "../PremiumErrorCard";
 
@@ -21,6 +21,10 @@ interface MessageListProps {
   suggestions: Array<{ label: string; text: string }>;
   onSelectSuggestion: (text: string) => void;
   onJumpToCitation?: (docName: string, pageNumber: number, snippet?: string) => void;
+  onRequestVideoLesson?: (messageId: string, topicText: string) => void;
+  onSubmitVideoSettings?: (forMessageId: string, settings: VideoSettings) => void;
+  onCancelVideoLecture?: (jobId: string, messageId: string) => void;
+  onQuickAction?: (actionPrompt: string) => void;
 }
 
 export function MessageList({
@@ -38,7 +42,11 @@ export function MessageList({
   speakingMsgId,
   suggestions,
   onSelectSuggestion,
-  onJumpToCitation
+  onJumpToCitation,
+  onRequestVideoLesson,
+  onSubmitVideoSettings,
+  onCancelVideoLecture,
+  onQuickAction
 }: MessageListProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const isAtBottomRef = useRef(true);
@@ -87,6 +95,10 @@ export function MessageList({
           onSpeakText={onSpeakText}
           isSpeaking={speakingMsgId === msg.id}
           onJumpToCitation={onJumpToCitation}
+          onRequestVideoLesson={onRequestVideoLesson}
+          onSubmitVideoSettings={onSubmitVideoSettings}
+          onCancelVideoLecture={onCancelVideoLecture}
+          onQuickAction={onQuickAction}
         />
       ))}
 

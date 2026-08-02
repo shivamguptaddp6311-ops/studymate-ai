@@ -5,6 +5,9 @@ export type VideoProviderName = "veo" | "pixverse" | "luma" | "kling";
 export interface VideoGenerationInput {
   jobId?: string;
   prompt: string;
+  imageUrl?: string;
+  imageBase64?: string;
+  imageMimeType?: string;
   aspectRatio?: "16:9" | "9:16" | "1:1" | "4:3";
   duration?: "5s" | "10s" | "5" | "10";
   resolution?: "540p" | "720p" | "1080p";
@@ -12,6 +15,7 @@ export interface VideoGenerationInput {
   userEmail?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
+  preferredProvider?: VideoProviderName;
 }
 
 export interface NormalizedVideoResult {

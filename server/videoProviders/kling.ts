@@ -1,13 +1,14 @@
 import { VideoGenerationInput, NormalizedVideoResult, classifyVideoError, VideoProviderError } from "./types";
 import { fetchJson, pollUntil } from "./httpUtils";
 
-const KLING_QUEUE_URL = "https://queue.fal.run/fal-ai/kling-video/v1.6/standard/text-to-video";
+const KLING_TEXT_QUEUE_URL = "https://queue.fal.run/fal-ai/kling-video/v1.6/standard/text-to-video";
+const KLING_IMAGE_QUEUE_URL = "https://queue.fal.run/fal-ai/kling-video/v1.6/standard/image-to-video";
 const MINIMAX_QUEUE_URL = "https://queue.fal.run/fal-ai/minimax/video-01";
 
 export async function generateKling(input: VideoGenerationInput): Promise<NormalizedVideoResult> {
-  const falKey = (process.env.FAL_KEY || process.env.FAL_API_KEY)?.trim();
+  const falKey = (process.env.FAL_KEY || process.env.FAL_API_KEY || process.env.KLING_API_KEY)?.trim();
   if (!falKey) {
-    throw new VideoProviderError("kling", "FAL_KEY environment variable is missing", "not_configured", false);
+    throw new VideoProviderError("kling", "FAL_KEY or KLING_API_KEY environment variable is missing", "not_configured", false);
   }
 
   const headers = {
@@ -15,17 +16,27 @@ export async function generateKling(input: VideoGenerationInput): Promise<Normal
   };
 
   const durationStr = input.duration?.includes("10") ? "10" : "5";
+  const hasImage = Boolean(input.imageUrl || input.imageBase64);
+  const queueUrl = hasImage ? KLING_IMAGE_QUEUE_URL : KLING_TEXT_QUEUE_URL;
 
-  // Try Primary: Kling v1.6
+  const requestBody: Record<string, any> = {
+    prompt: input.prompt || "Animate cinematic action",
+    duration: durationStr,
+    generate_audio: input.generateAudio ?? true,
+    aspect_ratio: input.aspectRatio || "16:9"
+  };
+
+  if (hasImage) {
+    const imgUrl = input.imageUrl || (input.imageBase64?.startsWith("data:") ? input.imageBase64 : `data:${input.imageMimeType || "image/png"};base64,${input.imageBase64}`);
+    requestBody.image_url = imgUrl;
+  }
+
+  // Primary: Kling v1.6 (Text-to-Video or Image-to-Video)
   try {
     return await executeFalQueueJob({
-      queueUrl: KLING_QUEUE_URL,
+      queueUrl,
       headers,
-      body: {
-        prompt: input.prompt,
-        duration: durationStr,
-        generate_audio: input.generateAudio ?? true
-      },
+      body: requestBody,
       input,
       providerName: "kling"
     });
@@ -37,17 +48,22 @@ export async function generateKling(input: VideoGenerationInput): Promise<Normal
       throw classified;
     }
 
-    // Secondary Fallback: MiniMax Video-01 via fal.ai
+    // Fallback: MiniMax Video-01 via fal.ai
     console.warn(`[VideoProvider:kling] Kling primary queue failed (${classified.message}). Falling back to MiniMax video-01...`);
     
     try {
+      const fallbackBody: Record<string, any> = {
+        prompt: input.prompt || "Animate cinematic action",
+        prompt_optimizer: true
+      };
+      if (hasImage) {
+        fallbackBody.image_url = requestBody.image_url;
+      }
+
       return await executeFalQueueJob({
         queueUrl: MINIMAX_QUEUE_URL,
         headers,
-        body: {
-          prompt: input.prompt,
-          prompt_optimizer: true
-        },
+        body: fallbackBody,
         input,
         providerName: "kling"
       });
@@ -87,7 +103,7 @@ async function executeFalQueueJob(options: {
   if (!statusUrl || !responseUrl) {
     throw new VideoProviderError(
       "kling",
-      `fal.ai queue submission failed: ${submitRes.error || "Missing status_url in response"}`,
+      `Kling API queue submission failed: ${submitRes.error || "Missing status_url in response"}`,
       "provider_error",
       true
     );
@@ -112,7 +128,7 @@ async function executeFalQueueJob(options: {
     },
     {
       intervalMs: 4000,
-      maxTimeoutMs: input.timeoutMs || 180000,
+      maxTimeoutMs: input.timeoutMs || 240000,
       signal: input.signal
     }
   );
@@ -134,7 +150,7 @@ async function executeFalQueueJob(options: {
   if (!videoUrl) {
     throw new VideoProviderError(
       "kling",
-      `fal.ai completed job but video URL was not present in response payload`,
+      `Kling completed job but video URL was not present in response payload`,
       "invalid_response",
       true
     );

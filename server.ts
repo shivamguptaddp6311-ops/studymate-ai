@@ -1410,10 +1410,21 @@ app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, validateReq
   }
 });
 
-// AI Video Generation Routes (Veo -> PixVerse -> Luma -> Kling Fallback Orchestrator)
+// AI Video Generation Routes (Veo -> Kling -> PixVerse -> Luma Fallback Orchestrator)
 app.post("/api/video/generate", requireAuth, videoGenRateLimiter, async (req, res) => {
   try {
-    const { prompt, aspectRatio = "16:9", duration = "5s", resolution = "720p", generateAudio = true } = req.body;
+    const {
+      prompt,
+      imageUrl,
+      imageBase64,
+      imageMimeType,
+      aspectRatio = "16:9",
+      duration = "5s",
+      resolution = "720p",
+      generateAudio = true,
+      preferredProvider,
+      provider
+    } = req.body;
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
       return res.status(400).json({ error: "A valid non-empty prompt string is required." });
@@ -1425,16 +1436,21 @@ app.post("/api/video/generate", requireAuth, videoGenRateLimiter, async (req, re
 
     const userEmail = (req as any).user?.email?.toLowerCase().trim() || "anonymous";
     const jobId = `vid-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const effectiveProvider = preferredProvider || provider || "veo";
 
     // Kick off non-blocking background video generation execution
     executeVideoGenRequest({
       jobId,
       prompt: prompt.trim(),
+      imageUrl,
+      imageBase64,
+      imageMimeType,
       aspectRatio,
       duration,
       resolution,
       generateAudio,
-      userEmail
+      userEmail,
+      preferredProvider: effectiveProvider as any
     }).catch((err) => {
       console.error(`[APIVideo] Background video job [${jobId}] failed:`, err);
     });
@@ -1517,6 +1533,201 @@ app.get("/api/video/history", requireAuth, async (req, res) => {
   } catch (error: any) {
     console.error("AI Video History fetch error:", error);
     res.status(500).json({ error: error.message || "Failed to fetch video history" });
+  }
+});
+
+// --- INLINE VIDEO LECTURE PLANNER & EXPLAINER ORCHESTRATOR ---
+interface LectureSegmentInternal {
+  order: number;
+  total: number;
+  label: string;
+  status: "pending" | "generating" | "completed" | "failed";
+  jobId: string;
+  videoUrl?: string;
+  error?: string;
+}
+
+interface LectureJobInternal {
+  jobId: string;
+  topic: string;
+  userEmail: string;
+  segments: LectureSegmentInternal[];
+  status: "processing" | "completed" | "failed" | "cancelled";
+  createdAt: string;
+}
+
+const activeLectureJobs = new Map<string, LectureJobInternal>();
+
+app.post("/api/video/lecture/plan", async (req, res) => {
+  try {
+    const { topic, sourceText, settings } = req.body;
+    if (!topic || typeof topic !== "string") {
+      return res.status(400).json({ error: "Valid topic string is required." });
+    }
+
+    const userEmail = (req as any).user?.email?.toLowerCase().trim() || "anonymous";
+    const lectureJobId = `lec-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+
+    const depth = settings?.depth || "overview";
+    const aspectRatio = settings?.aspectRatio || "16:9";
+    const resolution = settings?.quality || "720p";
+
+    let segmentPrompts: { label: string; prompt: string }[] = [];
+
+    if (depth === "full") {
+      segmentPrompts = [
+        {
+          label: `Part 1 of 2: Core Concepts of ${topic.slice(0, 50)}`,
+          prompt: `Cinematic educational animation explaining the fundamental core concepts, structure, and definition of ${topic.slice(0, 150)}.`
+        },
+        {
+          label: `Part 2 of 2: Practical Examples & Applications of ${topic.slice(0, 50)}`,
+          prompt: `Dynamic visual animation illustrating real-world applications, step-by-step examples, and practical problem solving for ${topic.slice(0, 150)}.`
+        }
+      ];
+    } else {
+      segmentPrompts = [
+        {
+          label: `Part 1 of 1: Visual Overview of ${topic.slice(0, 60)}`,
+          prompt: `High quality cinematic 3D visual explanation covering key highlights of ${topic.slice(0, 150)}.`
+        }
+      ];
+    }
+
+    const segments: LectureSegmentInternal[] = [];
+
+    for (let i = 0; i < segmentPrompts.length; i++) {
+      const segId = `${lectureJobId}-seg-${i + 1}`;
+      const sp = segmentPrompts[i];
+
+      segments.push({
+        order: i + 1,
+        total: segmentPrompts.length,
+        label: sp.label,
+        status: "pending",
+        jobId: segId
+      });
+
+      executeVideoGenRequest({
+        jobId: segId,
+        prompt: sp.prompt,
+        aspectRatio,
+        duration: "5s",
+        resolution,
+        generateAudio: true,
+        userEmail
+      }).catch((err) => {
+        console.error(`[LectureVideo] Segment job [${segId}] failed:`, err);
+      });
+    }
+
+    const lectureJob: LectureJobInternal = {
+      jobId: lectureJobId,
+      topic,
+      userEmail,
+      segments,
+      status: "processing",
+      createdAt: new Date().toISOString()
+    };
+
+    activeLectureJobs.set(lectureJobId, lectureJob);
+
+    res.status(202).json({
+      success: true,
+      jobId: lectureJobId,
+      status: "processing",
+      topic,
+      segments: segments.map(s => ({
+        order: s.order,
+        total: s.total,
+        label: s.label,
+        status: s.status
+      }))
+    });
+  } catch (error: any) {
+    console.error("[LectureVideo] Plan error:", error);
+    res.status(500).json({ error: error.message || "Failed to create video lecture plan." });
+  }
+});
+
+app.get("/api/video/lecture/status/:jobId", async (req, res) => {
+  try {
+    const jobId = req.params.jobId;
+    const lectureJob = activeLectureJobs.get(jobId);
+
+    if (!lectureJob) {
+      return res.status(404).json({ error: `Lecture job [${jobId}] not found.` });
+    }
+
+    let allCompleted = true;
+    let anyFailed = false;
+
+    for (const seg of lectureJob.segments) {
+      if (seg.status === "completed" || seg.status === "failed") continue;
+
+      const segStatus = getVideoStatus(seg.jobId);
+      if (segStatus) {
+        if (segStatus.status === "completed" && segStatus.videoUrl) {
+          seg.status = "completed";
+          seg.videoUrl = segStatus.videoUrl;
+        } else if (segStatus.status === "failed" || segStatus.status === "cancelled") {
+          seg.status = "failed";
+          seg.error = segStatus.error || "Generation failed";
+          anyFailed = true;
+        } else {
+          seg.status = "generating";
+          allCompleted = false;
+        }
+      } else {
+        allCompleted = false;
+      }
+    }
+
+    if (allCompleted) {
+      lectureJob.status = "completed";
+    } else if (anyFailed && lectureJob.segments.every(s => s.status === "completed" || s.status === "failed")) {
+      lectureJob.status = "failed";
+    }
+
+    res.json({
+      jobId: lectureJob.jobId,
+      status: lectureJob.status,
+      topic: lectureJob.topic,
+      segments: lectureJob.segments.map(s => ({
+        order: s.order,
+        total: s.total,
+        label: s.label,
+        status: s.status,
+        videoUrl: s.videoUrl,
+        error: s.error
+      }))
+    });
+  } catch (error: any) {
+    console.error("[LectureVideo] Status fetch error:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch lecture video status." });
+  }
+});
+
+app.post("/api/video/lecture/cancel/:jobId", async (req, res) => {
+  try {
+    const jobId = req.params.jobId;
+    const lectureJob = activeLectureJobs.get(jobId);
+
+    if (lectureJob) {
+      lectureJob.status = "cancelled";
+      for (const seg of lectureJob.segments) {
+        if (seg.status === "pending" || seg.status === "generating") {
+          cancelVideoGen(seg.jobId);
+          seg.status = "failed";
+          seg.error = "Cancelled by user";
+        }
+      }
+    }
+
+    res.json({ success: true, jobId, message: "Lecture video generation cancelled." });
+  } catch (error: any) {
+    console.error("[LectureVideo] Cancel error:", error);
+    res.status(500).json({ error: error.message || "Failed to cancel lecture video." });
   }
 });
 

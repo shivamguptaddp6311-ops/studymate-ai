@@ -9,19 +9,60 @@ export async function generateVeo(input: VideoGenerationInput): Promise<Normaliz
   }
 
   const startTime = Date.now();
-  const timeoutMs = input.timeoutMs || 180000;
+  const timeoutMs = input.timeoutMs || 240000;
 
   try {
-    const ai = new GoogleGenAI({ apiKey });
-
-    let operation = await ai.models.generateVideos({
-      model: "veo-3.0-fast-generate-001",
-      prompt: input.prompt,
-      config: {
-        aspectRatio: input.aspectRatio || "16:9",
-        personGeneration: "dont_allow"
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build"
+        }
       }
     });
+
+    const modelCandidates = ["veo-3.1-lite-generate-preview", "veo-3.0-fast-generate-001", "veo-2.0-generate-001"];
+    let operation: any = null;
+    let lastError: any = null;
+
+    // Prepare image payload if image-to-video is requested
+    let imagePayload: any = undefined;
+    if (input.imageBase64) {
+      const cleanBase64 = input.imageBase64.includes(",") ? input.imageBase64.split(",")[1] : input.imageBase64;
+      imagePayload = {
+        imageBytes: cleanBase64,
+        mimeType: input.imageMimeType || "image/png"
+      };
+    }
+
+    for (const modelName of modelCandidates) {
+      try {
+        const genOptions: any = {
+          model: modelName,
+          prompt: input.prompt || "Animate with dynamic cinematic movement",
+          config: {
+            aspectRatio: input.aspectRatio || "16:9",
+            numberOfVideos: 1
+          }
+        };
+
+        if (imagePayload) {
+          genOptions.image = imagePayload;
+        }
+
+        operation = await ai.models.generateVideos(genOptions);
+        if (operation && operation.name) {
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[Veo] Model [${modelName}] initialization failed: ${err?.message || err}. Trying next model...`);
+      }
+    }
+
+    if (!operation) {
+      throw lastError || new Error("Failed to initialize Veo video generation across available model candidates");
+    }
 
     while (!operation.done) {
       if (input.signal?.aborted) {

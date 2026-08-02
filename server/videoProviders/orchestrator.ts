@@ -23,7 +23,7 @@ const activeVideoJobs = new Map<string, ActiveVideoJob>();
 // Persisted history store for completed/failed video generations
 const videoJobHistory = new Map<string, NormalizedVideoResult>();
 
-// List of provider adapter functions in primary fallback order
+// List of provider adapter functions in primary fallback order (Veo -> Kling -> PixVerse -> Luma)
 const PROVIDER_SEQUENCE: Array<{
   name: VideoProviderName;
   checkConfigured: () => boolean;
@@ -35,6 +35,11 @@ const PROVIDER_SEQUENCE: Array<{
     fn: generateVeo
   },
   {
+    name: "kling",
+    checkConfigured: () => Boolean((process.env.FAL_KEY || process.env.FAL_API_KEY || process.env.KLING_API_KEY)?.trim()),
+    fn: generateKling
+  },
+  {
     name: "pixverse",
     checkConfigured: () => Boolean(process.env.PIXVERSE_API_KEY?.trim()),
     fn: generatePixVerse
@@ -43,11 +48,6 @@ const PROVIDER_SEQUENCE: Array<{
     name: "luma",
     checkConfigured: () => Boolean(process.env.LUMA_API_KEY?.trim()),
     fn: generateLuma
-  },
-  {
-    name: "kling",
-    checkConfigured: () => Boolean((process.env.FAL_KEY || process.env.FAL_API_KEY)?.trim()),
-    fn: generateKling
   }
 ];
 
@@ -123,8 +123,18 @@ export async function generateVideo(input: VideoGenerationInput): Promise<Normal
 
   const failureLogs: Array<{ provider: VideoProviderName; reason: string; attempts: number }> = [];
 
+  // Determine provider execution order based on default (Veo primary) or preferredProvider
+  const sequenceToRun = [...PROVIDER_SEQUENCE];
+  if (input.preferredProvider) {
+    const prefIdx = sequenceToRun.findIndex((p) => p.name === input.preferredProvider);
+    if (prefIdx > 0) {
+      const [preferred] = sequenceToRun.splice(prefIdx, 1);
+      sequenceToRun.unshift(preferred);
+    }
+  }
+
   try {
-    for (const providerSpec of PROVIDER_SEQUENCE) {
+    for (const providerSpec of sequenceToRun) {
       const pName = providerSpec.name;
 
       if (controller.signal.aborted) {
