@@ -20,6 +20,49 @@ export interface VideoSettings {
   topic: string;
 }
 
+export interface QuizQuestion {
+  id: string;
+  questionNumber: number;
+  question: string;
+  options: string[];
+  correctOption: number; // 0, 1, 2, or 3
+  explanation: string;
+  topic?: string;
+}
+
+export interface QuizData {
+  type: "quiz";
+  id?: string;
+  title: string;
+  subject: string;
+  chapter?: string;
+  difficulty?: "Easy" | "Medium" | "Hard" | "Exam Level";
+  estimatedTime?: string;
+  questions: QuizQuestion[];
+}
+
+export interface FlashcardData {
+  id: string;
+  question: string; // concept or question on front
+  concept?: string;
+  difficulty?: "Easy" | "Medium" | "Hard";
+  answer: string; // answer on back
+  explanation?: string;
+  memoryTip?: string;
+  isBookmarked?: boolean;
+  isDifficult?: boolean;
+  lastReviewed?: string;
+}
+
+export interface FlashcardDeckData {
+  type: "flashcards";
+  id?: string;
+  title: string;
+  subject: string;
+  chapter?: string;
+  cards: FlashcardData[];
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "model";
@@ -38,6 +81,10 @@ export interface ChatMessage {
   searchQuery?: string;
   sources?: Array<{ title: string; url: string }>;
   searchError?: boolean;
+
+  // Structured Quiz & Flashcards Data
+  quizData?: QuizData;
+  flashcardsData?: FlashcardDeckData;
 
   // Inline video lecture features
   videoSettingsPicker?: VideoSettingsPickerData;

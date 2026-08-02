@@ -245,18 +245,21 @@ export default function Habits({ habits, onToggleHabitDate, onAddHabit, onDelete
       });
 
       if (response.status === 401) {
-        // Reauth flow similar to StudyMateAI
-        const email = localStorage.getItem("studymate_logged_in_email") || "";
-        if (email) {
-          const reauthRes = await fetch("/api/auth/login", {
+        // Reauth flow using guest-token endpoint
+        const email = localStorage.getItem("studymate_logged_in_email") || `guest-${Date.now()}@studymate.app`;
+        try {
+          const reauthRes = await fetch("/api/auth/guest-token", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ emailAddress: email })
+            body: JSON.stringify({ email })
           });
           if (reauthRes.ok) {
             const reauthData = await reauthRes.json();
             const newToken = reauthData.token;
             localStorage.setItem("studymate_token", newToken);
+            if (reauthData.email) {
+              localStorage.setItem("studymate_logged_in_email", reauthData.email);
+            }
             response = await fetch("/api/gemini/chat", {
               method: "POST",
               headers: { 
@@ -270,13 +273,16 @@ export default function Habits({ habits, onToggleHabitDate, onAddHabit, onDelete
               })
             });
           }
+        } catch (e) {
+          console.warn("Reauth failed in Habits coach advice:", e);
         }
       }
 
       if (response.ok) {
         const data = await response.json();
-        if (data.text) {
-          setAiInsight(data.text);
+        const insightText = data.reply || data.text || data.response || "";
+        if (insightText) {
+          setAiInsight(insightText);
           triggerToast("✨ Custom AI habit summary updated!");
         }
       } else {

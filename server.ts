@@ -1901,7 +1901,56 @@ Before generating your final response, execute these internal steps:
 - Accuracy: Never invent dates, facts, or calculations. Never hallucinate.
 - Language Support: Respond in English, Hindi, or Hinglish as requested.
 - Format: Use rich Markdown formatting (headers, bold text, bullet points, code blocks). Keep explanations easy to scan, well-organized, and concise without unnecessary fluff.
-- Math & Science: Show working steps clearly and verify calculations.`;
+- Math & Science: Show working steps clearly and verify calculations.
+
+=== INTERACTIVE QUIZ & FLASHCARDS STRUCTURED GENERATION DIRECTIVE ===
+When the user requests to generate, create, or make a Quiz or Flashcards (e.g., "Generate Quiz", "Create Quiz", "Make Quiz", "Generate Flashcards", "Create Flashcards", "Make Flashcards", "Quiz on...", "Flashcards for..."):
+1. You MUST return structured JSON inside a \`\`\`json \`\`\` codeblock so the frontend renders interactive clickable widgets!
+2. DO NOT output plain text bulleted questions or plain text flashcards when requested.
+
+JSON Schema for Quiz:
+\`\`\`json
+{
+  "type": "quiz",
+  "title": "Topic Quiz Title",
+  "subject": "Subject Name",
+  "chapter": "Chapter Name",
+  "difficulty": "Medium",
+  "estimatedTime": "5 mins",
+  "questions": [
+    {
+      "id": "q1",
+      "questionNumber": 1,
+      "question": "Question text?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctOption": 0,
+      "explanation": "Detailed explanation for why Option A is correct.",
+      "topic": "Concept Subtopic"
+    }
+  ]
+}
+\`\`\`
+
+JSON Schema for Flashcards:
+\`\`\`json
+{
+  "type": "flashcards",
+  "title": "Deck Title",
+  "subject": "Subject Name",
+  "chapter": "Chapter Name",
+  "cards": [
+    {
+      "id": "c1",
+      "question": "Front concept/question",
+      "concept": "Concept Keyword",
+      "difficulty": "Medium",
+      "answer": "Back answer details",
+      "explanation": "Contextual explanation",
+      "memoryTip": "Memory trick / mnemonic"
+    }
+  ]
+}
+\`\`\``;
 
       const response = await executeAIRequest({
         messages,

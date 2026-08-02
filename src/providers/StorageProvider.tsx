@@ -60,6 +60,7 @@ const MORNING_MOTIVATIONAL_POOL = [
 interface StorageContextType {
   profile: UserProfile | null;
   setProfile: React.Dispatch<React.SetStateAction<UserProfile | null>>;
+  isNewAccount?: boolean; // FIX: distinguish new-user vs fetch-failure
   tasks: Task[];
   setTasks: React.Dispatch<React.SetStateAction<Task[]>>;
   alarms: Alarm[];
@@ -148,6 +149,7 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const { notifications, setNotifications, handleAddNotification } = useNotifications();
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [isNewAccount, setIsNewAccount] = useState<boolean>(false); // FIX: distinguish new-user vs fetch-failure
   const [tasks, setTasks] = useState<Task[]>([]);
   const [alarms, setAlarms] = useState<Alarm[]>([]);
   const [timetable, setTimetable] = useState<TimetableItem[]>([]);
@@ -290,7 +292,9 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
       setSyncStatus("syncing");
 
       let serverData: any = null;
-      let hasNetworkError = false;
+      let isConfirmedNewAccount = false; // FIX: distinguish new-user vs fetch-failure
+      let hasNetworkError = false; // FIX: distinguish new-user vs fetch-failure
+
       try {
         let token = sessionToken || window.localStorage.getItem("studymate_token") || "";
         let res = await fetch("/api/sync/pull", {
@@ -311,13 +315,22 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
         if (res.ok) {
           const result = await res.json();
-          if (result.success && result.data) {
-            serverData = result.data;
+          if (result.success) {
+            if (result.data && result.data.profile) {
+              serverData = result.data;
+              isConfirmedNewAccount = false; // FIX: distinguish new-user vs fetch-failure
+            } else {
+              isConfirmedNewAccount = true; // FIX: distinguish new-user vs fetch-failure
+            }
+          } else {
+            hasNetworkError = true; // FIX: distinguish new-user vs fetch-failure
           }
+        } else {
+          hasNetworkError = true; // FIX: distinguish new-user vs fetch-failure
         }
       } catch (err) {
         console.warn("Failed to contact sync server, falling back to offline cache:", err);
-        hasNetworkError = true;
+        hasNetworkError = true; // FIX: distinguish new-user vs fetch-failure
       }
 
       const dbPrefix = loggedInEmail.replace(/[^a-zA-Z0-9]/g, "_");
@@ -328,8 +341,16 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (serverData && serverData.profile) {
         finalProfile = serverData.profile;
         localStorage.setItem(`studymate_profile_${dbPrefix}`, JSON.stringify(finalProfile));
+        setIsNewAccount(false); // FIX: distinguish new-user vs fetch-failure
       } else if (localProfile) {
         finalProfile = localProfile;
+        setIsNewAccount(false); // FIX: distinguish new-user vs fetch-failure
+      } else if (isConfirmedNewAccount && !hasNetworkError) {
+        finalProfile = null;
+        setIsNewAccount(true); // FIX: distinguish new-user vs fetch-failure
+      } else {
+        finalProfile = null;
+        setIsNewAccount(false); // FIX: distinguish new-user vs fetch-failure
       }
 
       if (finalProfile) {
@@ -612,6 +633,7 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
       streakCounter: 1,
       lastLoginDate: new Date().toISOString().split("T")[0]
     };
+    setIsNewAccount(false); // FIX: distinguish new-user vs fetch-failure
     setProfile(freshProfile);
     const dbPrefix = (loggedInEmail || data.emailAddress).replace(/[^a-zA-Z0-9]/g, "_");
     localStorage.setItem(`studymate_profile_${dbPrefix}`, JSON.stringify(freshProfile));
@@ -957,6 +979,7 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const contextValue = useMemo(() => ({
     profile,
     setProfile,
+    isNewAccount, // FIX: distinguish new-user vs fetch-failure
     tasks,
     setTasks,
     alarms,
@@ -1001,6 +1024,7 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
     handleDeleteAccount
   }), [
     profile,
+    isNewAccount, // FIX: distinguish new-user vs fetch-failure
     tasks,
     alarms,
     timetable,

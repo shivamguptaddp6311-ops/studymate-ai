@@ -22,14 +22,20 @@ export function isImageGenerationRequest(text: string): boolean {
     "big picture",
     "get the picture",
     "word picture",
-    "picture this concept"
+    "picture this concept",
+    "drawback",
+    "drawbacks",
+    "withdraw",
+    "withdrawal",
+    "redraw",
+    "give an illustration of"
   ];
 
   if (negativePhrases.some(p => lower.includes(p))) {
     return false;
   }
 
-  // Explicit image intent trigger phrases
+  // Explicit image intent trigger phrases matched with word boundaries
   const explicitPhrases = [
     "generate image", "generate an image", "generate images",
     "create image", "create an image", "create images",
@@ -45,7 +51,7 @@ export function isImageGenerationRequest(text: string): boolean {
     "photorealistic picture", "digital art of", "vector art of"
   ];
 
-  if (explicitPhrases.some(phrase => lower.includes(phrase))) {
+  if (explicitPhrases.some(phrase => new RegExp(`\\b${phrase}\\b`, "i").test(lower))) {
     return true;
   }
 
@@ -57,3 +63,4 @@ export function isImageGenerationRequest(text: string): boolean {
 
   return intentPatterns.some(pattern => pattern.test(lower));
 }
+

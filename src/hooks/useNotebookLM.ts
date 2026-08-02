@@ -301,7 +301,7 @@ Format your response STRICTLY as a JSON object inside a \`\`\`json markdown bloc
       }
 
       const resData = await response.json();
-      const rawOutput = resData.response || "No output generated.";
+      const rawOutput = resData.reply || resData.response || resData.text || "No output generated.";
 
       setStudioOutputText(rawOutput);
 

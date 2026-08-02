@@ -88,26 +88,76 @@ export function useVoice() {
   const speakText = (text: string, msgId: string) => {
     if (!window.speechSynthesis) return;
 
-    if (window.speechSynthesis.speaking) {
+    const isSpeaking = window.speechSynthesis.speaking || window.speechSynthesis.pending;
+    if (isSpeaking) {
       window.speechSynthesis.cancel();
-      setSpeakingMsgId(null);
-      return;
+      if (speakingMsgId === msgId) {
+        setSpeakingMsgId(null);
+        return;
+      }
     }
 
     const cleanText = text
       .replace(/[*_#`~]/g, "")
       .replace(/\[(.*?)\]\(.*?\)/g, "$1")
-      .slice(0, 500);
+      .trim();
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate = 1.0;
-    utterance.pitch = 1.0;
+    if (!cleanText) {
+      setSpeakingMsgId(null);
+      return;
+    }
 
-    utterance.onend = () => setSpeakingMsgId(null);
-    utterance.onerror = () => setSpeakingMsgId(null);
+    // Split text into reasonable sentence/phrase chunks to avoid truncation issues in long AI replies
+    const rawChunks = cleanText.match(/[^.!?\n]+[.!?\n]*|\n+/g) || [cleanText];
+    const chunks: string[] = [];
+    let currentChunk = "";
+
+    for (const rawPart of rawChunks) {
+      const part = rawPart.trim();
+      if (!part) continue;
+
+      if ((currentChunk + " " + part).trim().length <= 200) {
+        currentChunk = (currentChunk + " " + part).trim();
+      } else {
+        if (currentChunk) chunks.push(currentChunk);
+        if (part.length > 200) {
+          const words = part.split(/\s+/);
+          let sub = "";
+          for (const word of words) {
+            if ((sub + " " + word).trim().length <= 200) {
+              sub = (sub + " " + word).trim();
+            } else {
+              if (sub) chunks.push(sub);
+              sub = word;
+            }
+          }
+          if (sub) currentChunk = sub;
+          else currentChunk = "";
+        } else {
+          currentChunk = part;
+        }
+      }
+    }
+    if (currentChunk) chunks.push(currentChunk);
+
+    if (chunks.length === 0) {
+      chunks.push(cleanText);
+    }
 
     setSpeakingMsgId(msgId);
-    window.speechSynthesis.speak(utterance);
+
+    chunks.forEach((chunk, index) => {
+      const utterance = new SpeechSynthesisUtterance(chunk);
+      utterance.rate = 1.0;
+      utterance.pitch = 1.0;
+
+      if (index === chunks.length - 1) {
+        utterance.onend = () => setSpeakingMsgId(null);
+      }
+      utterance.onerror = () => setSpeakingMsgId(null);
+
+      window.speechSynthesis.speak(utterance);
+    });
   };
 
   return {

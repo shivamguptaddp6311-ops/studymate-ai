@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { logger } from "../utils/logger";
 import { checkImageQuality, compressImage, enhanceImageForOCR, rotateBase64Image, preprocessImageForOCRAndVision } from "../utils/imageOptimizer";
+import { fetchWithRetry } from "../utils/apiClient";
 
 export type HomeworkSourceType = "camera" | "gallery" | "pdf" | "screenshot";
 export type HomeworkActionType = "solve" | "explain" | "summarize" | "translate" | "notes" | "flashcards" | "quiz";
@@ -84,8 +85,10 @@ export function useOCR() {
       }
     } catch (err: any) {
       console.warn("Camera streaming not supported or blocked, opening gallery.", err);
-      perms.camera = "denied";
-      localStorage.setItem("studymate_permissions_store", JSON.stringify(perms));
+      if (err?.name === "NotAllowedError" || err?.name === "PermissionDeniedError") {
+        perms.camera = "denied";
+        localStorage.setItem("studymate_permissions_store", JSON.stringify(perms));
+      }
       onError("Camera access failed or was blocked. Opening file upload as fallback.");
       setCameraActive(false);
       fileFallbackTrigger();
@@ -575,12 +578,19 @@ Instructions:
         } catch (e) {}
       }
 
-      const response = await fetch("/api/gemini/chat", {
+      const resData = await fetchWithRetry<{
+        reply?: string;
+        response?: string;
+        text?: string;
+        error?: string;
+      }>("/api/gemini/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${token}`
         },
+        timeoutMs: 35000,
+        retries: 2,
         body: JSON.stringify({
           message: promptText,
           image: finalPayload,
@@ -588,14 +598,7 @@ Instructions:
           timeoutMs: 35000
         })
       });
-
-      if (!response.ok) {
-        const errJson = await response.json().catch(() => ({}));
-        throw new Error(errJson.error || `Server error: ${response.status}`);
-      }
-
-      const resData = await response.json();
-      const rawOutput = resData.response || "No response received from Homework Scanner.";
+      const rawOutput = resData.reply || resData.response || resData.text || "No response received from Homework Scanner.";
 
       // 6. Parse structured JSON outputs for Flashcards or Quiz if applicable
       let flashcards: Array<{ question: string; answer: string; category?: string }> | undefined;

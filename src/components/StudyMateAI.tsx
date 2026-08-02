@@ -504,6 +504,46 @@ export function StudyMateAI({
           onCancelVideoLecture={(jobId, msgId) => {
             onCancelVideoLecture(jobId, msgId, updateMessage);
           }}
+          onSaveQuizToWorkspace={(quiz) => {
+            if (!activeWorkspace) return;
+            const updated = workspaces.map((w) => {
+              if (w.id === activeWorkspace.id) {
+                return {
+                  ...w,
+                  quizzes: [
+                    { id: quiz.id || `quiz-${Date.now()}`, title: quiz.title || "Interactive Quiz", questionCount: quiz.questions?.length || 0 },
+                    ...(w.quizzes || [])
+                  ]
+                };
+              }
+              return w;
+            });
+            setWorkspaces(updated);
+            localStorage.setItem("studymate_workspaces_data", JSON.stringify(updated));
+            if (onAddNotification) {
+              onAddNotification("Quiz Saved", `Saved "${quiz.title}" to ${activeWorkspace.name}`, "success");
+            }
+          }}
+          onSaveFlashcardsToWorkspace={(deck) => {
+            if (!activeWorkspace) return;
+            const updated = workspaces.map((w) => {
+              if (w.id === activeWorkspace.id) {
+                return {
+                  ...w,
+                  flashcards: [
+                    { id: deck.id || `deck-${Date.now()}`, title: deck.title || "Flashcards Deck", cardCount: deck.cards?.length || 0 },
+                    ...(w.flashcards || [])
+                  ]
+                };
+              }
+              return w;
+            });
+            setWorkspaces(updated);
+            localStorage.setItem("studymate_workspaces_data", JSON.stringify(updated));
+            if (onAddNotification) {
+              onAddNotification("Deck Saved", `Saved "${deck.title}" to ${activeWorkspace.name}`, "success");
+            }
+          }}
         />
 
         {/* Attachment Banners */}

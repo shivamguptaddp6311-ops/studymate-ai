@@ -262,23 +262,35 @@ export default function Pomodoro({
 
   // Real-time ticking effect
   useEffect(() => {
-    if (isRunning) {
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            setIsRunning(false);
-            handleTimerComplete();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } else {
+    if (!isRunning) {
       if (timerRef.current) clearInterval(timerRef.current);
+      return;
     }
+
+    const endTimestamp = Date.now() + timeLeft * 1000;
+
+    const updateTimer = () => {
+      const remaining = Math.max(0, Math.round((endTimestamp - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        setIsRunning(false);
+        handleTimerComplete();
+      }
+    };
+
+    timerRef.current = setInterval(updateTimer, 1000);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        updateTimer();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, [isRunning, isBreak]);
 

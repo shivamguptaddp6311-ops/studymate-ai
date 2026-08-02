@@ -4,6 +4,7 @@ import { ChatMessage } from "../components/studymate-ai/types";
 import { isImageGenerationRequest } from "../utils/imageIntent";
 import { isVideoGenerationRequest } from "../utils/videoIntent";
 import { preprocessImageForOCRAndVision } from "../utils/imageOptimizer";
+import { fetchWithRetry } from "../utils/apiClient";
 
 export function useAI() {
   const [isLoading, setIsLoading] = useState(false);
@@ -279,7 +280,7 @@ ${data.conceptualExplanation || ""}`;
       // --- ROUTING BRANCH 0: VIDEO GENERATION REQUEST ---
       if (isVideoGen) {
         const videoProviderSetting = localStorage.getItem("studymate_video_provider") || "veo";
-        const subRes = await fetch("/api/video/generate", {
+        let subRes = await fetch("/api/video/generate", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -296,6 +297,40 @@ ${data.conceptualExplanation || ""}`;
             preferredProvider: videoProviderSetting
           })
         });
+
+        if (subRes.status === 401) {
+          try {
+            const reauthRes = await fetch("/api/auth/guest-token", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: controller.signal,
+              body: JSON.stringify({ email })
+            });
+            if (reauthRes.ok) {
+              const reauthData = await reauthRes.json();
+              token = reauthData.token;
+              window.localStorage.setItem("studymate_token", token);
+              window.localStorage.setItem("studymate_logged_in_email", reauthData.email);
+              subRes = await fetch("/api/video/generate", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${token}`
+                },
+                signal: controller.signal,
+                body: JSON.stringify({
+                  prompt: textToSend,
+                  imageUrl: userMessage.image || undefined,
+                  aspectRatio: "16:9",
+                  duration: "5s",
+                  resolution: "720p",
+                  generateAudio: true,
+                  preferredProvider: videoProviderSetting
+                })
+              });
+            }
+          } catch (e) {}
+        }
 
         if (!subRes.ok) {
           const errData = await subRes.json().catch(() => ({}));
@@ -455,68 +490,85 @@ ${data.conceptualExplanation || ""}`;
         finalPrompt += `\n\n[Personalization Context: Student Grade level is "${profile.classGrade}", targeting exam "${profile.targetExam}". Favorite subjects are: ${profile.favoriteSubjects.join(", ") || "None"}. Weak subjects needing extra patient guidance are: ${profile.weakSubjects.join(", ") || "None"}.]`;
       }
 
-      let response = await fetch("/api/gemini/chat", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          message: finalPrompt,
-          history: recentHistory,
-          image: userMessage.image || undefined,
-          provider: localStorage.getItem("studymate_ai_provider") || "auto",
-          timeoutMs: timeoutLimit
-        })
-      });
-
-      if (response.status === 401) {
-        try {
-          const reauthRes = await fetch("/api/auth/guest-token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            signal: controller.signal,
-            body: JSON.stringify({ email })
-          });
-          if (reauthRes.ok) {
-            const reauthData = await reauthRes.json();
-            token = reauthData.token;
-            window.localStorage.setItem("studymate_token", token);
-            window.localStorage.setItem("studymate_logged_in_email", reauthData.email);
-            response = await fetch("/api/gemini/chat", {
+      let data: any;
+      try {
+        data = await fetchWithRetry<{
+          error?: string;
+          reply?: string;
+          imageUrl?: string;
+          searched?: boolean;
+          searchQuery?: string;
+          sources?: any[];
+          searchError?: string;
+        }>("/api/gemini/chat", {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`
+          },
+          signal: controller.signal,
+          timeoutMs: timeoutLimit,
+          retries: 2,
+          body: JSON.stringify({
+            message: finalPrompt,
+            history: recentHistory,
+            image: userMessage.image || undefined,
+            provider: localStorage.getItem("studymate_ai_provider") || "auto",
+            timeoutMs: timeoutLimit
+          })
+        });
+      } catch (err: any) {
+        if (err?.message?.includes("401") || err?.message?.toLowerCase().includes("unauthorized")) {
+          try {
+            const reauthRes = await fetch("/api/auth/guest-token", {
               method: "POST",
-              headers: { 
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${token}`
-              },
+              headers: { "Content-Type": "application/json" },
               signal: controller.signal,
-              body: JSON.stringify({
-                message: finalPrompt,
-                history: recentHistory,
-                image: userMessage.image || undefined,
-                provider: localStorage.getItem("studymate_ai_provider") || "auto",
-                timeoutMs: timeoutLimit
-              })
+              body: JSON.stringify({ email })
             });
+            if (reauthRes.ok) {
+              const reauthData = await reauthRes.json();
+              token = reauthData.token;
+              window.localStorage.setItem("studymate_token", token);
+              window.localStorage.setItem("studymate_logged_in_email", reauthData.email);
+              data = await fetchWithRetry<{
+                error?: string;
+                reply?: string;
+                imageUrl?: string;
+                searched?: boolean;
+                searchQuery?: string;
+                sources?: any[];
+                searchError?: string;
+              }>("/api/gemini/chat", {
+                method: "POST",
+                headers: { 
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${token}`
+                },
+                signal: controller.signal,
+                timeoutMs: timeoutLimit,
+                retries: 2,
+                body: JSON.stringify({
+                  message: finalPrompt,
+                  history: recentHistory,
+                  image: userMessage.image || undefined,
+                  provider: localStorage.getItem("studymate_ai_provider") || "auto",
+                  timeoutMs: timeoutLimit
+                })
+              });
+            } else {
+              throw err;
+            }
+          } catch (e) {
+            throw err;
           }
-        } catch (e) {}
+        } else {
+          throw err;
+        }
       }
 
       clearTimeout(timeoutId);
 
-      if (response.status === 504) throw new Error("The AI partner timed out. Please try again.");
-      if (response.status === 499) throw new Error("Request cancelled.");
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(
-          err.message ||
-          err.error ||
-          `Server returned status ${response.status}`
-        );
-      }
-
-      const data = await response.json();
       if (data.error) throw new Error(data.error);
 
       // If backend redirected to image generation

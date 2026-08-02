@@ -6,6 +6,9 @@ import {
 import ReactMarkdown from "react-markdown";
 import { ChatMessage, VideoSettings } from "./types";
 import { VideoSettingsPicker } from "./VideoSettingsPicker";
+import { parseInteractivePayload } from "./utils/parseInteractivePayload";
+import { InteractiveQuizDeckManager } from "./widgets/InteractiveQuizDeckManager";
+import { FlashcardDeck } from "./widgets/FlashcardDeck";
 
 interface ChatMessageBubbleProps {
   msg: ChatMessage;
@@ -17,6 +20,8 @@ interface ChatMessageBubbleProps {
   onSubmitVideoSettings?: (forMessageId: string, settings: VideoSettings) => void;
   onCancelVideoLecture?: (jobId: string, messageId: string) => void;
   onQuickAction?: (actionPrompt: string) => void;
+  onSaveQuizToWorkspace?: (quiz: any) => void;
+  onSaveFlashcardsToWorkspace?: (deck: any) => void;
 }
 
 export const MessageBubble = React.memo(function MessageBubble({ 
@@ -28,10 +33,18 @@ export const MessageBubble = React.memo(function MessageBubble({
   onRequestVideoLesson,
   onSubmitVideoSettings,
   onCancelVideoLecture,
-  onQuickAction
+  onQuickAction,
+  onSaveQuizToWorkspace,
+  onSaveFlashcardsToWorkspace
 }: ChatMessageBubbleProps) {
   const isUser = msg?.role === "user";
   const [copied, setCopied] = useState(false);
+
+  // Parse interactive payload if available
+  const parsedInteractive = !isUser && msg?.text ? parseInteractivePayload(msg.text) : {};
+  const activeQuiz = msg?.quizData || parsedInteractive.quizData;
+  const activeFlashcards = msg?.flashcardsData || parsedInteractive.flashcardsData;
+  const displayMarkdownText = parsedInteractive.cleanText !== undefined ? parsedInteractive.cleanText : msg?.text;
 
   const handleCopy = () => {
     if (msg?.text) {
@@ -176,13 +189,34 @@ export const MessageBubble = React.memo(function MessageBubble({
         )}
 
         {/* Formatted Markdown Content */}
-        {msg.text && msg.text.trim().length > 0 && (
+        {displayMarkdownText && displayMarkdownText.trim().length > 0 && (
           <div className={`prose dark:prose-invert max-w-none text-xs md:text-sm leading-relaxed ${
             isUser 
               ? "text-white prose-headings:text-white prose-p:text-indigo-50/95 prose-strong:text-white prose-a:text-white hover:prose-a:opacity-80" 
               : "text-slate-800 dark:text-slate-200 prose-headings:text-slate-900 dark:prose-headings:text-white prose-p:leading-relaxed prose-strong:text-indigo-600 dark:prose-strong:text-indigo-400 prose-a:text-indigo-500 hover:prose-a:underline"
           }`}>
-            <ReactMarkdown>{msg.text}</ReactMarkdown>
+            <ReactMarkdown>{displayMarkdownText}</ReactMarkdown>
+          </div>
+        )}
+
+        {/* Interactive Quiz Widget */}
+        {!isUser && activeQuiz && (
+          <div className="mt-3">
+            <InteractiveQuizDeckManager
+              quizData={activeQuiz}
+              onSaveToWorkspace={onSaveQuizToWorkspace ? () => onSaveQuizToWorkspace(activeQuiz) : undefined}
+              onRegenerateQuiz={onQuickAction ? () => onQuickAction(`Generate Quiz on ${activeQuiz.subject || "this topic"}`) : undefined}
+            />
+          </div>
+        )}
+
+        {/* Interactive Flashcards Widget */}
+        {!isUser && activeFlashcards && (
+          <div className="mt-3">
+            <FlashcardDeck
+              deckData={activeFlashcards}
+              onSaveToWorkspace={onSaveFlashcardsToWorkspace ? () => onSaveFlashcardsToWorkspace(activeFlashcards) : undefined}
+            />
           </div>
         )}
 

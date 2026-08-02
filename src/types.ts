@@ -1,4 +1,6 @@
 export interface UserProfile {
+  id?: string;
+  uid?: string;
   fullName: string;
   nickname?: string;
   profilePhoto?: string; // Base64 data or default emoji
@@ -135,3 +137,104 @@ export const getStudentRank = (xp: number) => {
   if (xp < 3000) return { name: "Diamond Mastermind", symbol: "💎", color: "text-sky-600 bg-sky-50 dark:bg-sky-950/20 border-sky-200 dark:border-sky-900/30" };
   return { name: "Elite Board Topper", symbol: "👑", color: "text-rose-600 bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-900/30" };
 };
+
+// Activity Intelligence Engine Schemas
+export type ActivityType =
+  | "ai_chat"
+  | "pdf_analysis"
+  | "pdf_reading"
+  | "notes"
+  | "quiz"
+  | "flashcards"
+  | "focus_session"
+  | "scanner"
+  | "homework"
+  | "timetable"
+  | "calendar"
+  | "game"
+  | "workspace";
+
+export interface ActivityEvent {
+  eventId: string;
+  userId: string;
+  activityType: ActivityType;
+  workspaceId: string;
+  title: string;
+  description: string;
+  timestamp: number;
+  duration: number; // in seconds
+  completionPercent: number; // 0 to 100
+  priority: number; // 1 (highest) to 8 (lowest)
+  metadata: {
+    chatHistory?: any[];
+    uploadedFiles?: string[];
+    selectedAIModel?: string;
+    scrollPosition?: number;
+    progressState?: any;
+    quizAccuracy?: number;
+    subjectTag?: string;
+    topicTag?: string;
+    targetRoute?: string;
+    [key: string]: any;
+  };
+}
+
+export interface WorkspaceMemory {
+  workspaceId: string;
+  workspaceName: string;
+  createdAt: number;
+  updatedAt: number;
+  extractedConcepts: string[];
+  weakTopics: string[];
+  summaryContext: string;
+  attachedFileCount: number;
+  chatTurnCount: number;
+  pinnedNotes: string[];
+  metadata: Record<string, any>;
+}
+
+export interface HeroActivity {
+  event: ActivityEvent;
+  priorityCategory:
+    | "active_workspace"
+    | "unfinished_quiz"
+    | "unfinished_pdf"
+    | "unfinished_flashcards"
+    | "active_focus"
+    | "recent_chat"
+    | "recent_game"
+    | "study_plan";
+  reasonText: string;
+  actionLabel: string;
+}
+
+export interface AIRecommendationItem {
+  id: string;
+  title: string;
+  description: string;
+  type: "consistency" | "weak_topic" | "quiz_accuracy" | "revision" | "inactivity" | "exam_prep";
+  actionRoute: string;
+  actionText: string;
+  urgency: "high" | "medium" | "low";
+}
+
+export interface EngineDashboardData {
+  todayStudyHours: number;
+  currentStreak: number;
+  levelProgress: {
+    currentLevel: number;
+    currentXP: number;
+    nextLevelXP: number;
+    percentToNextLevel: number;
+  };
+  weeklyProgress: {
+    day: string;
+    hours: number;
+    completedTasks: number;
+  }[];
+  recentActivities: ActivityEvent[];
+  heroActivity: HeroActivity | null;
+  aiInsights: string[];
+  recommendations: AIRecommendationItem[];
+}
+

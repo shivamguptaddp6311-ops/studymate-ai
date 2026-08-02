@@ -25,6 +25,8 @@ interface MessageListProps {
   onSubmitVideoSettings?: (forMessageId: string, settings: VideoSettings) => void;
   onCancelVideoLecture?: (jobId: string, messageId: string) => void;
   onQuickAction?: (actionPrompt: string) => void;
+  onSaveQuizToWorkspace?: (quiz: any) => void;
+  onSaveFlashcardsToWorkspace?: (deck: any) => void;
 }
 
 export function MessageList({
@@ -46,7 +48,9 @@ export function MessageList({
   onRequestVideoLesson,
   onSubmitVideoSettings,
   onCancelVideoLecture,
-  onQuickAction
+  onQuickAction,
+  onSaveQuizToWorkspace,
+  onSaveFlashcardsToWorkspace
 }: MessageListProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const isAtBottomRef = useRef(true);
@@ -99,6 +103,8 @@ export function MessageList({
           onSubmitVideoSettings={onSubmitVideoSettings}
           onCancelVideoLecture={onCancelVideoLecture}
           onQuickAction={onQuickAction}
+          onSaveQuizToWorkspace={onSaveQuizToWorkspace}
+          onSaveFlashcardsToWorkspace={onSaveFlashcardsToWorkspace}
         />
       ))}
 

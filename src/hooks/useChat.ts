@@ -67,12 +67,21 @@ function createDefaultSession(profile?: UserProfile, customTitle?: string): Chat
 }
 
 export function useChat(profile?: UserProfile) {
+  // Stable unique user identifier instead of display name
+  const userId = profile?.id || profile?.uid || profile?.emailAddress || "default_user";
+  const userKey = userId.replace(/[^a-zA-Z0-9_-]/g, "_");
+  const sessionStorageKey = `studymate_ai_sessions_${userKey}`;
+  const activeKey = `studymate_ai_active_session_${userKey}`;
+
+  // Fallback keys based on old profile display name for migration
   const profileName = profile?.fullName || "default";
-  const sessionStorageKey = `studymate_ai_sessions_${profileName}`;
-  const legacyStorageKey = `studymate_ai_chat_history_${profileName}`;
+  const legacySessionStorageKey = `studymate_ai_sessions_${profileName}`;
+  const legacySingleChatKey = `studymate_ai_chat_history_${profileName}`;
+  const legacyActiveKey = `studymate_ai_active_session_${profileName}`;
 
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
+      // 1. Check current stable identifier key
       const savedSessions = localStorage.getItem(sessionStorageKey);
       if (savedSessions) {
         const parsed = JSON.parse(savedSessions);
@@ -83,12 +92,27 @@ export function useChat(profile?: UserProfile) {
             createdAt: ensureValidDate(s.createdAt),
             updatedAt: ensureValidDate(s.updatedAt),
             messages: Array.isArray(s.messages) ? s.messages.map(sanitizeMessage) : []
-          })).filter(s => s.messages.length > 0 || s.id);
+          })).filter(s => s.messages.length > 0);
         }
       }
 
-      // Check legacy single-chat history for migration
-      const savedLegacy = localStorage.getItem(legacyStorageKey);
+      // 2. Migration fallback: Check old name-based session storage key
+      const legacySavedSessions = localStorage.getItem(legacySessionStorageKey);
+      if (legacySavedSessions) {
+        const parsedLegacySessions = JSON.parse(legacySavedSessions);
+        if (Array.isArray(parsedLegacySessions) && parsedLegacySessions.length > 0) {
+          return parsedLegacySessions.map((s: any) => ({
+            id: String(s.id || `session-${Date.now()}`),
+            title: String(s.title || "Study Session"),
+            createdAt: ensureValidDate(s.createdAt),
+            updatedAt: ensureValidDate(s.updatedAt),
+            messages: Array.isArray(s.messages) ? s.messages.map(sanitizeMessage) : []
+          })).filter(s => s.messages.length > 0);
+        }
+      }
+
+      // 3. Migration fallback: Check legacy single-chat history
+      const savedLegacy = localStorage.getItem(legacySingleChatKey);
       if (savedLegacy) {
         const parsedLegacy = JSON.parse(savedLegacy);
         if (Array.isArray(parsedLegacy) && parsedLegacy.length > 0) {
@@ -111,10 +135,17 @@ export function useChat(profile?: UserProfile) {
   });
 
   const [activeSessionId, setActiveSessionId] = useState<string>(() => {
-    const activeKey = `studymate_ai_active_session_${profileName}`;
-    const savedActive = localStorage.getItem(activeKey);
-    if (savedActive && sessions.some(s => s.id === savedActive)) {
-      return savedActive;
+    try {
+      const savedActive = localStorage.getItem(activeKey);
+      if (savedActive && sessions.some(s => s.id === savedActive)) {
+        return savedActive;
+      }
+      const savedLegacyActive = localStorage.getItem(legacyActiveKey);
+      if (savedLegacyActive && sessions.some(s => s.id === savedLegacyActive)) {
+        return savedLegacyActive;
+      }
+    } catch (e) {
+      console.warn("Failed to load active session ID from localStorage:", e);
     }
     return sessions[0]?.id || `session-${Date.now()}`;
   });
@@ -123,14 +154,13 @@ export function useChat(profile?: UserProfile) {
 
   // Persist sessions and active session ID to localStorage
   useEffect(() => {
-    if (!profileName || profileName === "default") return;
     try {
       localStorage.setItem(sessionStorageKey, JSON.stringify(sessions));
-      localStorage.setItem(`studymate_ai_active_session_${profileName}`, activeSessionId);
+      localStorage.setItem(activeKey, activeSessionId);
     } catch (e) {
       console.warn("Error persisting chat sessions:", e);
     }
-  }, [sessions, activeSessionId, profileName, sessionStorageKey]);
+  }, [sessions, activeSessionId, sessionStorageKey, activeKey]);
 
   // Always resolve valid active session safely
   const activeSession = sessions.find(s => s.id === activeSessionId) || sessions[0] || createDefaultSession(profile);
@@ -221,11 +251,11 @@ export function useChat(profile?: UserProfile) {
         return {
           ...sess,
           updatedAt: new Date(),
-          messages: [createWelcomeMessage(profile.fullName, profile.classGrade)]
+          messages: [createWelcomeMessage(profile?.fullName || "", profile?.classGrade || "10")]
         };
       });
     });
-  }, [activeSessionId, profile.fullName, profile.classGrade]);
+  }, [activeSessionId, profile?.fullName, profile?.classGrade]);
 
   const switchSession = useCallback((sessionId: string) => {
     if (sessions.some(s => s.id === sessionId)) {
@@ -244,7 +274,7 @@ export function useChat(profile?: UserProfile) {
     if (safeMsgs.length <= 1) {
       return [
         { label: "💡 Active Recall Hacks", text: "What are the most scientifically proven active recall techniques for exam prep?" },
-        { label: "📐 Math Homework Help", text: "Help me solve a challenging math problem step-by-step suited for Class " + (profile.classGrade || "10") },
+        { label: "📐 Math Homework Help", text: "Help me solve a challenging math problem step-by-step suited for Class " + (profile?.classGrade || "10") },
         { label: "🧪 Mind-Blowing Science", text: "Explain a mind-blowing physics or chemistry concept simply." },
         { label: "📝 Summarize Notes", text: "How can I summarize a heavy textbook chapter efficiently into a high-yield cheat sheet?" }
       ];
@@ -282,7 +312,7 @@ export function useChat(profile?: UserProfile) {
       { label: "❓ Test My Knowledge", text: "Ask me a follow-up question to test if I understood this correctly!" },
       { label: "⚡ High-Yield Notes", text: "Summarize this into 3 concise bullet points for my study notebook." }
     ];
-  }, [messages, profile.classGrade]);
+  }, [messages, profile?.classGrade]);
 
   return {
     sessions,

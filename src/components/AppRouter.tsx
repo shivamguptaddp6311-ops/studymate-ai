@@ -130,6 +130,7 @@ export const AppRouter: React.FC = () => {
 
   const {
     profile,
+    isNewAccount, // FIX: distinguish new-user vs fetch-failure
     tasks,
     alarms,
     timetable,
@@ -289,9 +290,17 @@ export const AppRouter: React.FC = () => {
     return <GoogleLogin onLoginSuccess={handleLoginSuccess} />;
   }
 
-  // 3. Onboarding screen
+  // 3. Onboarding screen vs Reconnecting state
   if (!profile) {
-    return <Onboarding onComplete={handleOnboardingComplete} />;
+    if (isNewAccount) { // FIX: distinguish new-user vs fetch-failure
+      return <Onboarding onComplete={handleOnboardingComplete} />;
+    }
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center space-y-4">
+        <RefreshCw className="w-8 h-8 text-indigo-600 animate-spin" />
+        <p className="text-xs font-bold text-slate-500">Reconnecting to StudyMate Cloud...</p>
+      </div>
+    );
   }
 
   // 4. Welcome Walkthrough
