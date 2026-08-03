@@ -12,7 +12,7 @@ import { createServer as createViteServer } from "vite";
 import { Type } from "@google/genai";
 import { executeAIRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, executeVideoGenRequest, getVideoStatus, cancelVideoGen, getUserVideoHistory, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter, getAICacheMetrics, clearAICaches } from "./server/aiService";
 import { shouldSearchWeb, executeWebSearch, compressContext, generateCitationsContext, groundResponseCitations } from "./server/webSearch";
-import { firebaseDB, runAutomatedMigration, ChatUser, ChatMessage, ChatReport, AdminLog, SyncData, UserMemory } from "./server/firebase";
+import { firebaseDB, runAutomatedMigration, getDbStatus, ChatUser, ChatMessage, ChatReport, AdminLog, SyncData, UserMemory } from "./server/firebase"; // FIX: Firestore connection reliability + visibility
 import { getQuestions } from "./server/questionService";
 import {
   getRuntimeInfo,
@@ -517,6 +517,11 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
 // ----------------------------------------------------
 // API ROUTES FIRST
 // ----------------------------------------------------
+
+// FIX: Firestore connection reliability + visibility
+app.get("/api/debug/db-status", (req, res) => {
+  res.json(getDbStatus());
+});
 
 // Get configured/available AI providers
 app.get("/api/ai/providers", requireAuth, (req, res) => {

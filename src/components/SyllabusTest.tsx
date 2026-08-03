@@ -1274,8 +1274,8 @@ export default function SyllabusTest({
                     onChange={(e) => setSelectedSubject(e.target.value)}
                     className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold p-2.5 rounded-xl text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                   >
-                    {getSubjectsForClass(selectedClass).map(sub => (
-                      <option key={sub} value={sub}>{sub}</option>
+                    {getSubjectsForClass(selectedClass).map((sub, sidx) => (
+                      <option key={`${sub}-${sidx}`} value={sub}>{sub}</option>
                     ))}
                   </select>
                 </div>
@@ -1288,8 +1288,8 @@ export default function SyllabusTest({
                     onChange={(e) => setSelectedChapter(e.target.value)}
                     className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold p-2.5 rounded-xl text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
                   >
-                    {getChaptersForSubject(selectedClass, selectedSubject).map(ch => (
-                      <option key={ch} value={ch}>{ch}</option>
+                    {getChaptersForSubject(selectedClass, selectedSubject).map((ch, cidx) => (
+                      <option key={`${ch}-${cidx}`} value={ch}>{ch}</option>
                     ))}
                   </select>
                 </div>

@@ -94,6 +94,49 @@ export interface AIRequestLog {
 
 let db: Firestore | undefined;
 let useLocalFallback = false;
+let lastFirestoreError: string | null = null; // FIX: Firestore connection reliability + visibility
+
+// FIX: Firestore connection reliability + visibility
+export function getDbStatus(): { usingFirestore: boolean; firestoreError: string | null; fallbackUserCount: number } {
+  return {
+    usingFirestore: !useLocalFallback && !!db,
+    firestoreError: lastFirestoreError,
+    fallbackUserCount: Object.keys(fallbackCache?.users || {}).length
+  };
+}
+
+// FIX: Firestore connection reliability + visibility
+export async function checkFirestoreConnection(): Promise<boolean> {
+  if (!db) {
+    lastFirestoreError = "Firestore client was not initialized due to missing configuration.";
+    return false;
+  }
+  try {
+    await db.collection("users").limit(1).get();
+    useLocalFallback = false;
+    lastFirestoreError = null;
+    return true;
+  } catch (err: any) {
+    lastFirestoreError = err?.message || String(err);
+    return false;
+  }
+}
+
+// FIX: Firestore connection reliability + visibility
+export async function tryFirestoreRecovery(): Promise<boolean> {
+  if (!useLocalFallback) return true;
+  const recovered = await checkFirestoreConnection();
+  if (recovered) {
+    console.log(
+      "\n==========================================================" +
+      "\n[Firebase DB Recovery] // FIX: Firestore connection reliability + visibility" +
+      "\n[Firebase DB Recovery] SUCCESS: Firestore connection recovered!" +
+      "\n[Firebase DB Recovery] Switched back from local fallback to Cloud Firestore." +
+      "\n==========================================================\n"
+    );
+  }
+  return recovered;
+}
 
 // Gracefully read configuration and initialize Firebase Admin SDK
 try {
@@ -114,6 +157,7 @@ try {
   db = getFirestore(config.firestoreDatabaseId || undefined);
   console.log(`[Firebase] Initialized Firestore client for project "${config.projectId}" and DB "${config.firestoreDatabaseId || 'default'}"`);
 } catch (error: any) {
+  lastFirestoreError = error?.message || String(error); // FIX: Firestore connection reliability + visibility
   console.warn("[Firebase] Initialization error (falling back to local storage database):", error.message || error);
   useLocalFallback = true;
 }
@@ -294,18 +338,39 @@ function getLocalMessages(before?: string, search?: string, limit = 50): ChatMes
 // Load local fallback cache on startup
 loadFallbackDB();
 
-// Verify Firestore connection on startup to avoid request delays and repeated retry error logs
+// FIX: Firestore connection reliability + visibility
 (async () => {
-  try {
-    if (!db) {
-      throw new Error("Firestore client was not initialized due to missing configuration.");
+  const maxAttempts = 3;
+  let connected = false;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    connected = await checkFirestoreConnection();
+    if (connected) {
+      console.log(
+        "\n==========================================================" +
+        "\n[Firebase DB] // FIX: Firestore connection reliability + visibility" +
+        "\n[Firebase DB] SUCCESS: Connected to Cloud Firestore." +
+        "\n[Firebase DB] Primary Database: ACTIVE (Cloud Firestore)" +
+        "\n==========================================================\n"
+      );
+      break;
     }
-    // Attempt a quick, non-destructive read query to check Firestore permission and availability
-    await db.collection("users").limit(1).get();
-    console.log("[Firebase] Firestore connection verified. Using Firestore as primary database.");
-  } catch (err: any) {
-    console.warn(`[Firebase] Firestore connection failed or restricted in this container sandbox. Enabling local fallback DB immediately to prevent API latencies. Error: ${err.message || err}`);
+    if (attempt < maxAttempts) {
+      console.warn(`[Firebase DB] Connection check attempt ${attempt}/${maxAttempts} failed: ${lastFirestoreError}. Retrying in ${attempt * 3000}ms...`);
+      await new Promise(resolve => setTimeout(resolve, attempt * 3000));
+    }
+  }
+
+  if (!connected) {
     useLocalFallback = true;
+    console.error(
+      "\n==========================================================" +
+      "\n[Firebase DB] // FIX: Firestore connection reliability + visibility" +
+      "\n[Firebase DB] WARNING: FIRESTORE CONNECTION FAILED AFTER RETRIES!" +
+      "\n[Firebase DB] Primary Database: INACTIVE (Running on Local Fallback DB)" +
+      `\n[Firebase DB] Error details: ${lastFirestoreError}` +
+      "\n==========================================================\n"
+    );
   }
 })();
 
@@ -383,6 +448,11 @@ export const firebaseDB = {
     } as ChatUser;
     saveFallbackDB();
 
+    // FIX: Firestore connection reliability + visibility
+    if (useLocalFallback) {
+      await tryFirestoreRecovery();
+    }
+
     if (useLocalFallback) return;
     try {
       await withRetry(async () => {
@@ -394,6 +464,7 @@ export const firebaseDB = {
     } catch (err: any) {
       console.warn(`[Firebase] saveUser failed, switching to local DB fallback. Error:`, err.message || err);
       useLocalFallback = true;
+      lastFirestoreError = err?.message || String(err); // FIX: Firestore connection reliability + visibility
     }
   },
 
@@ -594,6 +665,11 @@ export const firebaseDB = {
     fallbackCache.syncData[uidKey] = cleanData;
     saveFallbackDB();
 
+    // FIX: Firestore connection reliability + visibility
+    if (useLocalFallback) {
+      await tryFirestoreRecovery();
+    }
+
     if (useLocalFallback) return;
     try {
       await withRetry(async () => {
@@ -602,6 +678,7 @@ export const firebaseDB = {
     } catch (err: any) {
       console.warn(`[Firebase] saveSyncData failed, switching to local DB fallback. Error:`, err.message || err);
       useLocalFallback = true;
+      lastFirestoreError = err?.message || String(err); // FIX: Firestore connection reliability + visibility
     }
   },
 

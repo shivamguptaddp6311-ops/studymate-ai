@@ -573,8 +573,8 @@ export default function Tasks({
             onChange={(e) => setSubjectFilter(e.target.value)}
           >
             <option value="All">📓 All Subjects</option>
-            {profile.favoriteSubjects.map((sub) => (
-              <option key={sub} value={sub}>⚡ {sub}</option>
+            {profile.favoriteSubjects.map((sub, idx) => (
+              <option key={`sub-${sub}-${idx}`} value={sub}>⚡ {sub}</option>
             ))}
             <option value="General">⭐ General</option>
           </select>
@@ -1000,8 +1000,8 @@ export default function Tasks({
                       onChange={(e) => setSubject(e.target.value)}
                     >
                       <option value="">Select subject...</option>
-                      {profile.favoriteSubjects.map((sub) => (
-                        <option key={sub} value={sub}>{sub}</option>
+                      {profile.favoriteSubjects.map((sub, idx) => (
+                        <option key={`modal-sub-${sub}-${idx}`} value={sub}>{sub}</option>
                       ))}
                       <option value="General">General</option>
                     </select>

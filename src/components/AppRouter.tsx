@@ -179,7 +179,7 @@ export const AppRouter: React.FC = () => {
       handleAddNotification("Navigation Error", "Could not open requested view. Staying on current screen.", "alert");
     }
   }, [handleAddNotification]);
-  const [mobileRipples, setMobileRipples] = useState<{ id: number; x: number; y: number }[]>([]);
+  const [mobileRipples, setMobileRipples] = useState<{ id: number; linkId: string; x: number; y: number }[]>([]);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [notificationMenuOpen, setNotificationMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -293,7 +293,7 @@ export const AppRouter: React.FC = () => {
   // 3. Onboarding screen vs Reconnecting state
   if (!profile) {
     if (isNewAccount) { // FIX: distinguish new-user vs fetch-failure
-      return <Onboarding onComplete={handleOnboardingComplete} />;
+      return <Onboarding onComplete={handleOnboardingComplete} defaultEmail={loggedInEmail || ""} />;
     }
     return (
       <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center space-y-4">
@@ -843,7 +843,7 @@ export const AppRouter: React.FC = () => {
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
                 const rippleId = Date.now();
-                setMobileRipples((prev) => [...prev, { id: rippleId, x, y }]);
+                setMobileRipples((prev) => [...prev, { id: rippleId, linkId: link.id, x, y }]);
                 setTimeout(() => {
                   setMobileRipples((prev) => prev.filter((r) => r.id !== rippleId));
                 }, 600);
@@ -854,9 +854,9 @@ export const AppRouter: React.FC = () => {
               className="relative flex flex-col items-center justify-center min-w-[48px] min-h-[48px] cursor-pointer outline-none select-none px-2 py-1 z-10"
               style={{ touchAction: "manipulation" }}
             >
-              {mobileRipples.filter(r => r.x !== undefined).map((r) => (
+              {mobileRipples.filter(r => r.linkId === link.id).map((r) => (
                 <motion.span
-                  key={r.id}
+                  key={`${link.id}-${r.id}`}
                   className="absolute bg-slate-400/20 dark:bg-indigo-500/10 rounded-full pointer-events-none"
                   style={{
                     left: r.x,

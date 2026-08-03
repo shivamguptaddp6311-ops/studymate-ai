@@ -10,7 +10,7 @@ import {
 } from "../lib/firebase";
 
 interface GoogleLoginProps {
-  onLoginSuccess: (email: string, token: string, refreshToken?: string, rememberMe?: boolean) => void;
+  onLoginSuccess: (email: string, token: string, refreshToken?: string, rememberMe?: boolean, isSignUp?: boolean) => void;
 }
 
 export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
@@ -50,7 +50,7 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
     }
     const data = await res.json();
     playSound(880, "sine");
-    onLoginSuccess(data.email, data.token, data.refreshToken, rememberMe);
+    onLoginSuccess(data.email, data.token, data.refreshToken, rememberMe, isSignUp);
   };
 
   const handleGoogleSignIn = async () => {
@@ -78,7 +78,7 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
       }
 
       playSound(880, "sine");
-      onLoginSuccess(data.email, data.token, data.refreshToken, rememberMe);
+      onLoginSuccess(data.email, data.token, data.refreshToken, rememberMe, isSignUp);
     } catch (err: any) {
       console.warn("Google Popup Sign-In warning/error:", err);
       // Fallback if popup fails or is blocked
@@ -210,7 +210,7 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
         }
 
         playSound(880, "sine");
-        onLoginSuccess(data.email, data.token, data.refreshToken, rememberMe);
+        onLoginSuccess(data.email, data.token, data.refreshToken, rememberMe, isSignUp);
       } else {
         await fallbackBackendLogin(cleanEmail);
       }

@@ -1001,11 +1001,11 @@ async function callGemini(
       errMsg.includes("404") ||
       errMsg.includes("not found")
     ) {
-      console.info(`[AIService] gemini-2.5-flash failed with: ${errMsg}. Instantly falling back to gemini-1.5-flash...`);
+      console.info(`[AIService] gemini-2.5-flash failed with: ${errMsg}. Instantly falling back to gemini-2.5-lite...`);
       try {
-        return await executeCall("gemini-1.5-flash");
+        return await executeCall("gemini-2.5-lite");
       } catch (fallbackErr) {
-        console.error("[AIService] gemini-1.5-flash fallback failed, trying gemini-2.5-pro:", fallbackErr);
+        console.error("[AIService] gemini-2.5-lite fallback failed, trying gemini-2.5-pro:", fallbackErr);
         try {
           return await executeCall("gemini-2.5-pro");
         } catch (proErr) {

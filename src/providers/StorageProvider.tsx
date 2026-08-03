@@ -334,6 +334,7 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
       }
 
       const dbPrefix = loggedInEmail.replace(/[^a-zA-Z0-9]/g, "_");
+      const isSignupFlag = localStorage.getItem(`studymate_is_signup_${dbPrefix}`);
       const localProfileStr = localStorage.getItem(`studymate_profile_${dbPrefix}`);
       const localProfile = localProfileStr ? JSON.parse(localProfileStr) : null;
 
@@ -342,15 +343,21 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
         finalProfile = serverData.profile;
         localStorage.setItem(`studymate_profile_${dbPrefix}`, JSON.stringify(finalProfile));
         setIsNewAccount(false); // FIX: distinguish new-user vs fetch-failure
-      } else if (localProfile) {
+        setShowNewSignupWelcome(false);
+      } else if (localProfile && isSignupFlag !== "true") {
         finalProfile = localProfile;
         setIsNewAccount(false); // FIX: distinguish new-user vs fetch-failure
-      } else if (isConfirmedNewAccount && !hasNetworkError) {
+        setShowNewSignupWelcome(false);
+      } else if (isSignupFlag === "true" || (isConfirmedNewAccount && !hasNetworkError)) {
         finalProfile = null;
         setIsNewAccount(true); // FIX: distinguish new-user vs fetch-failure
       } else {
         finalProfile = null;
         setIsNewAccount(false); // FIX: distinguish new-user vs fetch-failure
+      }
+
+      if (isSignupFlag) {
+        localStorage.removeItem(`studymate_is_signup_${dbPrefix}`);
       }
 
       if (finalProfile) {

@@ -98,12 +98,12 @@ export function KnowledgeGraphModal({
             <div className="relative flex-1 bg-slate-950 rounded-2xl border border-slate-800 p-4 min-h-[300px] flex items-center justify-center overflow-hidden">
               <svg className="absolute inset-0 w-full h-full pointer-events-none">
                 {nodes.map((node) =>
-                  node.connectedTo.map((targetId) => {
+                  node.connectedTo.map((targetId, idx) => {
                     const target = nodes.find((n) => n.id === targetId);
                     if (!target) return null;
                     return (
                       <line
-                        key={`${node.id}-${target.id}`}
+                        key={`${node.id}-to-${target.id}-${idx}`}
                         x1={node.x}
                         y1={node.y}
                         x2={target.x}

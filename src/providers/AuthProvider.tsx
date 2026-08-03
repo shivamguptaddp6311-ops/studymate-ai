@@ -10,7 +10,7 @@ interface AuthContextType {
   sessionRefreshToken: string | null;
   booted: boolean;
   setBooted: React.Dispatch<React.SetStateAction<boolean>>;
-  handleLoginSuccess: (email: string, token: string, refreshToken?: string, rememberMe?: boolean) => void;
+  handleLoginSuccess: (email: string, token: string, refreshToken?: string, rememberMe?: boolean, isSignUp?: boolean) => void;
   handleLogout: () => void;
   refreshClientToken: () => Promise<string | null>;
   isRememberMe: () => boolean;
@@ -45,7 +45,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return `${key}_${dbPrefix}`;
   };
 
-  const handleLoginSuccess = (email: string, token: string, refreshToken?: string, rememberMe?: boolean) => {
+  const handleLoginSuccess = (
+    email: string, 
+    token: string, 
+    refreshToken?: string, 
+    rememberMe?: boolean,
+    isSignUp?: boolean
+  ) => {
+    const dbPrefix = email.replace(/[^a-zA-Z0-9]/g, "_");
+    if (isSignUp !== undefined) {
+      window.localStorage.setItem(`studymate_is_signup_${dbPrefix}`, isSignUp ? "true" : "false");
+    }
+
     if (rememberMe) {
       window.localStorage.setItem("studymate_remember_me", "true");
       window.localStorage.setItem("studymate_logged_in_email", email);
@@ -137,10 +148,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let isMounted = true;
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       try {
+        const isRemembered = window.localStorage.getItem("studymate_remember_me") === "true";
         const cachedToken = window.localStorage.getItem("studymate_token");
         const cachedEmail = window.localStorage.getItem("studymate_logged_in_email");
 
-        if (cachedToken && cachedEmail) {
+        if (isRemembered && cachedToken && cachedEmail) {
           let tokenToUse: string | null = null;
           if (await isTokenValid(cachedToken)) {
             tokenToUse = cachedToken;
@@ -161,7 +173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        if (firebaseUser && firebaseUser.email) {
+        if (isRemembered && firebaseUser && firebaseUser.email) {
           const email = firebaseUser.email;
           let idToken = "";
           try {
@@ -206,31 +218,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
 
-        try {
-          const emailToUse = getOrCreateGuestEmail();
-          const res = await fetch("/api/auth/guest-token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: emailToUse })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            if (isMounted) {
-              setLoggedInEmail(data.email);
-              setSessionToken(data.token);
-              if (data.refreshToken) {
-                setSessionRefreshToken(data.refreshToken);
-              }
-            }
-            window.localStorage.setItem("studymate_logged_in_email", data.email);
-            window.localStorage.setItem("studymate_token", data.token);
-            if (data.refreshToken && Capacitor.isNativePlatform()) {
-              window.localStorage.setItem("studymate_refresh_token", data.refreshToken);
-            }
-            return;
-          }
-        } catch (e) {
-          console.warn("Auto guest session token provision failed:", e);
+        // If not logged in with cached session or Firebase, keep loggedInEmail null so login screen is shown
+        if (isMounted) {
+          setLoggedInEmail(null);
+          setSessionToken(null);
+          setSessionRefreshToken(null);
         }
       } finally {
         if (isMounted) {

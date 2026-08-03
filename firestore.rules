@@ -85,8 +85,7 @@ service cloud.firestore {
 
     // 2. Users Collection
     match /users/{email} {
-      allow get: if isSignedIn();
-      allow list: if isSignedIn() && resource.data.email.lower() == request.auth.token.email.lower();
+      allow read: if true;
       allow create: if isSignedIn() && isOwnerEmail(email) && isValidUser(incoming());
       allow update: if isSignedIn() && isOwnerEmail(email) && isValidUser(incoming()) &&
                     incoming().email == existing().email &&
