@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { UserProfile } from "../types";
 import { StudyMateAIProps, ChatMessage, StudyWorkspace } from "./studymate-ai/types";
 import { Sparkles, X, BookOpen, Brain, Layers, RotateCcw } from "lucide-react";
@@ -363,17 +363,17 @@ export function StudyMateAI({
     }
   };
 
-  const handleSend = (e?: React.FormEvent) => {
+  const handleSend = useCallback((textToSendOverride?: string, e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if ((!inputText.trim() && !selectedImage && !attachedPdf) || isLoading) return;
+    const textToSend = (typeof textToSendOverride === "string" ? textToSendOverride : inputText).trim();
+    if ((!textToSend && !selectedImage && !attachedPdf) || isLoading) return;
 
-    const userMsgText = inputText.trim();
     setInputText("");
 
     const userMessage: ChatMessage = {
       id: `msg-user-${Date.now()}`,
       role: "user",
-      text: userMsgText,
+      text: textToSend,
       image: selectedImage || undefined,
       pdf: attachedPdf || undefined,
       timestamp: new Date()
@@ -381,7 +381,6 @@ export function StudyMateAI({
 
     addMessage(userMessage);
 
-    const textToSend = userMsgText;
     setSelectedImage(null);
     setAttachedPdf(null);
 
@@ -395,9 +394,93 @@ export function StudyMateAI({
       usePersonalization,
       documentContextPrompt: docContext || undefined,
       onAddMessage: addMessage,
+      onUpdateMessage: updateMessage,
       onAwardXP
     });
-  };
+  }, [inputText, selectedImage, attachedPdf, isLoading, addMessage, notebookLM.documents, notebookLM.activeDocIds, handleSendAI, messages, profile, usePersonalization, updateMessage, onAwardXP, setInputText, setSelectedImage, setAttachedPdf]);
+
+  const handleClearError = useCallback(() => {
+    setErrorMessage(null);
+  }, [setErrorMessage]);
+
+  const handleCopyText = useCallback((text: string) => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+    if (onAddNotification) {
+      onAddNotification("Copied", "Text copied to clipboard.", "info");
+    }
+  }, [onAddNotification]);
+
+  const handleSelectSuggestion = useCallback((text: string) => {
+    setInputText(text);
+  }, [setInputText]);
+
+  const handleQuickAction = useCallback((actionPrompt: string) => {
+    setInputText(actionPrompt);
+  }, [setInputText]);
+
+  const handleJumpToCitation = useCallback((docName: string, pageNumber: number, snippet?: string) => {
+    notebookLM.jumpToCitation(docName, pageNumber, snippet);
+    setShowNotebookLMStudio(true);
+    setNotebookViewMode("viewer");
+  }, [notebookLM]);
+
+  const handleRequestVideoLessonCallback = useCallback((msgId: string, topicText: string) => {
+    onRequestVideoLesson(msgId, topicText, addMessage);
+  }, [onRequestVideoLesson, addMessage]);
+
+  const handleSubmitVideoSettingsCallback = useCallback((forMsgId: string, settings: any) => {
+    onSubmitVideoSettings(forMsgId, settings, messages, updateMessage, addMessage);
+  }, [onSubmitVideoSettings, messages, updateMessage, addMessage]);
+
+  const handleCancelVideoLectureCallback = useCallback((jobId: string, msgId: string) => {
+    onCancelVideoLecture(jobId, msgId, updateMessage);
+  }, [onCancelVideoLecture, updateMessage]);
+
+  const handleSaveQuizToWorkspace = useCallback((quiz: any) => {
+    if (!activeWorkspace) return;
+    const updated = workspaces.map((w) => {
+      if (w.id === activeWorkspace.id) {
+        return {
+          ...w,
+          quizzes: [
+            { id: quiz.id || `quiz-${Date.now()}`, title: quiz.title || "Interactive Quiz", questionCount: quiz.questions?.length || 0 },
+            ...(w.quizzes || [])
+          ]
+        };
+      }
+      return w;
+    });
+    setWorkspaces(updated);
+    localStorage.setItem("studymate_workspaces_data", JSON.stringify(updated));
+    if (onAddNotification) {
+      onAddNotification("Quiz Saved", `Saved "${quiz.title}" to ${activeWorkspace.name}`, "success");
+    }
+  }, [activeWorkspace, workspaces, onAddNotification]);
+
+  const handleSaveFlashcardsToWorkspace = useCallback((deck: any) => {
+    if (!activeWorkspace) return;
+    const updated = workspaces.map((w) => {
+      if (w.id === activeWorkspace.id) {
+        return {
+          ...w,
+          flashcards: [
+            { id: deck.id || `deck-${Date.now()}`, title: deck.title || "Flashcards Deck", cardCount: deck.cards?.length || 0 },
+            ...(w.flashcards || [])
+          ]
+        };
+      }
+      return w;
+    });
+    setWorkspaces(updated);
+    localStorage.setItem("studymate_workspaces_data", JSON.stringify(updated));
+    if (onAddNotification) {
+      onAddNotification("Deck Saved", `Saved "${deck.title}" to ${activeWorkspace.name}`, "success");
+    }
+  }, [activeWorkspace, workspaces, onAddNotification]);
+
+  const dynamicSuggestions = useMemo(() => getDynamicSuggestions(), [getDynamicSuggestions]);
 
   const handleCropDone = (croppedDataUrl: string) => {
     solveScannedQuestion(croppedDataUrl, profile, onAwardXP, addMessage);
@@ -473,76 +556,21 @@ export function StudyMateAI({
           isWebSearching={isWebSearching}
           isGeneratingImage={isGeneratingImage}
           errorMessage={errorMessage}
-          onClearError={() => setErrorMessage(null)}
+          onClearError={handleClearError}
           onRetryRequest={handleRetry}
           onCancelRequest={handleCancelRequest}
-          onCopyText={(text) => {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-              navigator.clipboard.writeText(text).catch(() => {});
-            }
-            if (onAddNotification) {
-              onAddNotification("Copied", "Text copied to clipboard.", "info");
-            }
-          }}
+          onCopyText={handleCopyText}
           onSpeakText={speakText}
           speakingMsgId={speakingMsgId}
-          suggestions={getDynamicSuggestions()}
-          onSelectSuggestion={(text) => setInputText(text)}
-          onQuickAction={(actionPrompt) => setInputText(actionPrompt)}
-          onJumpToCitation={(docName, pageNumber, snippet) => {
-            notebookLM.jumpToCitation(docName, pageNumber, snippet);
-            setShowNotebookLMStudio(true);
-            setNotebookViewMode("viewer");
-          }}
-          onRequestVideoLesson={(msgId, topicText) => {
-            onRequestVideoLesson(msgId, topicText, addMessage);
-          }}
-          onSubmitVideoSettings={(forMsgId, settings) => {
-            onSubmitVideoSettings(forMsgId, settings, messages, updateMessage, addMessage);
-          }}
-          onCancelVideoLecture={(jobId, msgId) => {
-            onCancelVideoLecture(jobId, msgId, updateMessage);
-          }}
-          onSaveQuizToWorkspace={(quiz) => {
-            if (!activeWorkspace) return;
-            const updated = workspaces.map((w) => {
-              if (w.id === activeWorkspace.id) {
-                return {
-                  ...w,
-                  quizzes: [
-                    { id: quiz.id || `quiz-${Date.now()}`, title: quiz.title || "Interactive Quiz", questionCount: quiz.questions?.length || 0 },
-                    ...(w.quizzes || [])
-                  ]
-                };
-              }
-              return w;
-            });
-            setWorkspaces(updated);
-            localStorage.setItem("studymate_workspaces_data", JSON.stringify(updated));
-            if (onAddNotification) {
-              onAddNotification("Quiz Saved", `Saved "${quiz.title}" to ${activeWorkspace.name}`, "success");
-            }
-          }}
-          onSaveFlashcardsToWorkspace={(deck) => {
-            if (!activeWorkspace) return;
-            const updated = workspaces.map((w) => {
-              if (w.id === activeWorkspace.id) {
-                return {
-                  ...w,
-                  flashcards: [
-                    { id: deck.id || `deck-${Date.now()}`, title: deck.title || "Flashcards Deck", cardCount: deck.cards?.length || 0 },
-                    ...(w.flashcards || [])
-                  ]
-                };
-              }
-              return w;
-            });
-            setWorkspaces(updated);
-            localStorage.setItem("studymate_workspaces_data", JSON.stringify(updated));
-            if (onAddNotification) {
-              onAddNotification("Deck Saved", `Saved "${deck.title}" to ${activeWorkspace.name}`, "success");
-            }
-          }}
+          suggestions={dynamicSuggestions}
+          onSelectSuggestion={handleSelectSuggestion}
+          onQuickAction={handleQuickAction}
+          onJumpToCitation={handleJumpToCitation}
+          onRequestVideoLesson={handleRequestVideoLessonCallback}
+          onSubmitVideoSettings={handleSubmitVideoSettingsCallback}
+          onCancelVideoLecture={handleCancelVideoLectureCallback}
+          onSaveQuizToWorkspace={handleSaveQuizToWorkspace}
+          onSaveFlashcardsToWorkspace={handleSaveFlashcardsToWorkspace}
         />
 
         {/* Attachment Banners */}

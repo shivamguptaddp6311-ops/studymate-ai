@@ -5,6 +5,7 @@ import { isImageGenerationRequest } from "../utils/imageIntent";
 import { isVideoGenerationRequest } from "../utils/videoIntent";
 import { preprocessImageForOCRAndVision } from "../utils/imageOptimizer";
 import { fetchWithRetry } from "../utils/apiClient";
+import { VisualContentRouter } from "../services/visual/VisualContentRouter";
 
 export function useAI() {
   const [isLoading, setIsLoading] = useState(false);
@@ -21,6 +22,7 @@ export function useAI() {
     usePersonalization: boolean;
     documentContextPrompt?: string;
     onAddMessage: (msg: ChatMessage) => void;
+    onUpdateMessage?: (id: string, updater: (prev: ChatMessage) => ChatMessage) => void;
     onAwardXP?: (amount: number, reason: string) => void;
   } | null>(null);
 
@@ -209,6 +211,7 @@ ${data.conceptualExplanation || ""}`;
     usePersonalization,
     documentContextPrompt,
     onAddMessage,
+    onUpdateMessage,
     onAwardXP
   }: {
     textToSend: string;
@@ -218,8 +221,18 @@ ${data.conceptualExplanation || ""}`;
     usePersonalization: boolean;
     documentContextPrompt?: string;
     onAddMessage: (msg: ChatMessage) => void;
+    onUpdateMessage?: (id: string, updater: (prev: ChatMessage) => ChatMessage) => void;
     onAwardXP?: (amount: number, reason: string) => void;
   }) => {
+    const reqId = `req-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    if (isLoading) {
+      console.warn(`[useAI] handleSendAI BLOCKED concurrent call (reqId: ${reqId}, previous request still in flight)`);
+      return;
+    }
+
+    console.info(`[useAI] START handleSendAI (reqId: ${reqId})`);
+
     // Save last request for retry capability
     lastRequestRef.current = {
       textToSend,
@@ -229,6 +242,7 @@ ${data.conceptualExplanation || ""}`;
       usePersonalization,
       documentContextPrompt,
       onAddMessage,
+      onUpdateMessage,
       onAwardXP
     };
 
@@ -473,8 +487,8 @@ ${data.conceptualExplanation || ""}`;
 
       // --- ROUTING BRANCH 2: NORMAL TEXT / CHAT REQUEST ---
       const recentHistory = messages
-        .filter(m => m.id !== "welcome" && m.id !== "welcome-reset")
-        .slice(-15)
+        .filter(m => m.id !== "welcome" && m.id !== "welcome-reset" && m.text && m.text.trim().length > 0)
+        .slice(-20)
         .map(m => ({
           role: m.role,
           content: m.text
@@ -490,7 +504,117 @@ ${data.conceptualExplanation || ""}`;
         finalPrompt += `\n\n[Personalization Context: Student Grade level is "${profile.classGrade}", targeting exam "${profile.targetExam}". Favorite subjects are: ${profile.favoriteSubjects.join(", ") || "None"}. Weak subjects needing extra patient guidance are: ${profile.weakSubjects.join(", ") || "None"}.]`;
       }
 
-      let data: any;
+      const assistantMsgId = `msg-model-${Date.now()}`;
+      let data: any = null;
+
+      // Attempt SSE Streaming Call
+      try {
+        const streamRes = await fetch("/api/gemini/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+            "Authorization": `Bearer ${token}`
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            message: finalPrompt,
+            history: recentHistory,
+            image: userMessage.image || undefined,
+            provider: localStorage.getItem("studymate_ai_provider") || "auto",
+            stream: true,
+            timeoutMs: timeoutLimit
+          })
+        });
+
+        if (streamRes.ok && streamRes.headers.get("content-type")?.includes("text/event-stream") && streamRes.body) {
+          const reader = streamRes.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buffer = "";
+          let accumulatedReply = "";
+          let streamDoneData: any = {};
+
+          onAddMessage({
+            id: assistantMsgId,
+            role: "model",
+            text: "",
+            image: userMessage.image || undefined,
+            timestamp: new Date()
+          });
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed.startsWith("data:")) continue;
+              const jsonStr = trimmed.replace(/^data:\s*/, "");
+              try {
+                const parsed = JSON.parse(jsonStr);
+                if (parsed.chunk) {
+                  accumulatedReply += parsed.chunk;
+                  if (onUpdateMessage) {
+                    onUpdateMessage(assistantMsgId, prev => ({ ...prev, text: accumulatedReply }));
+                  }
+                }
+                if (parsed.done) {
+                  streamDoneData = parsed;
+                }
+              } catch (e) {
+                // Ignore chunk parse errors
+              }
+            }
+          }
+
+          clearTimeout(timeoutId);
+
+          // Immediately update message content from SSE stream
+          if (onUpdateMessage) {
+            onUpdateMessage(assistantMsgId, prev => ({
+              ...prev,
+              text: accumulatedReply || streamDoneData.reply || prev.text,
+              searched: streamDoneData.searched,
+              searchQuery: streamDoneData.searchQuery,
+              sources: streamDoneData.sources,
+              searchError: streamDoneData.searchError
+            }));
+          }
+
+          if (onAwardXP && textToSend.length > 5) {
+            onAwardXP(3, "Studied with StudyMate AI");
+          }
+
+          // Crucial: Clear loading flags immediately so UI loading indicator vanishes
+          setIsLoading(false);
+          setIsGeneratingImage(false);
+          setIsWebSearching(false);
+
+          // Run VisualContentRouter asynchronously in background without blocking loading indicator
+          VisualContentRouter.route(textToSend)
+            .then((visualResult) => {
+              if (visualResult && onUpdateMessage) {
+                onUpdateMessage(assistantMsgId, prev => ({
+                  ...prev,
+                  visualResult
+                }));
+              }
+            })
+            .catch((vErr) => {
+              console.warn("[useAI] VisualContentRouter failed quietly:", vErr);
+            });
+
+          return;
+        }
+      } catch (streamErr: any) {
+        console.warn("[useAI] SSE streaming attempt encountered issue, trying standard fetch:", streamErr?.message || streamErr);
+      }
+
+      // Fallback Non-Streaming JSON Call
       try {
         data = await fetchWithRetry<{
           error?: string;
@@ -574,7 +698,7 @@ ${data.conceptualExplanation || ""}`;
       // If backend redirected to image generation
       if (data.imageUrl && !data.reply) {
         onAddMessage({
-          id: `msg-model-${Date.now()}`,
+          id: assistantMsgId,
           role: "model",
           text: "",
           image: data.imageUrl,
@@ -588,11 +712,21 @@ ${data.conceptualExplanation || ""}`;
 
       const replyText = data.reply || "I apologize, but I was unable to generate a response. Please try again.";
 
+      let visualResult = data.visualResult || null;
+      if (!visualResult) {
+        try {
+          visualResult = await VisualContentRouter.route(textToSend);
+        } catch (vErr) {
+          console.warn("[useAI] VisualContentRouter failed quietly:", vErr);
+        }
+      }
+
       onAddMessage({
-        id: `msg-model-${Date.now()}`,
+        id: assistantMsgId,
         role: "model",
         text: replyText,
         image: data.imageUrl || undefined,
+        visualResult: visualResult || undefined,
         timestamp: new Date(),
         searched: data.searched,
         searchQuery: data.searchQuery,
@@ -612,6 +746,7 @@ ${data.conceptualExplanation || ""}`;
         setErrorMessage(err.message || "Failed to communicate with StudyMate AI.");
       }
     } finally {
+      console.info(`[useAI] END handleSendAI finally (reqId: ${reqId})`);
       setIsLoading(false);
       setIsGeneratingImage(false);
       setIsWebSearching(false);

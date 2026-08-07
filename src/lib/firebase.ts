@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import { initializeApp, getApps, getApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
 import { 
   getAuth, 
   GoogleAuthProvider, 
@@ -25,6 +26,7 @@ const firebaseConfig = {
 // Singleton initialization pattern
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 export const auth = getAuth(app);
+export const db = getFirestore(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Enforce Google Account Picker to open on every sign-in attempt

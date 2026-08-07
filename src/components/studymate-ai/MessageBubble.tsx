@@ -9,6 +9,7 @@ import { VideoSettingsPicker } from "./VideoSettingsPicker";
 import { parseInteractivePayload } from "./utils/parseInteractivePayload";
 import { InteractiveQuizDeckManager } from "./widgets/InteractiveQuizDeckManager";
 import { FlashcardDeck } from "./widgets/FlashcardDeck";
+import { VisualContentCard } from "../media/VisualContentCard";
 
 interface ChatMessageBubbleProps {
   msg: ChatMessage;
@@ -121,7 +122,11 @@ export const MessageBubble = React.memo(function MessageBubble({
         )}
 
         {/* Attached or Generated image preview */}
-        {msg.image && (
+        {msg.visualResult ? (
+          <div className="mb-3.5 w-full">
+            <VisualContentCard result={msg.visualResult} />
+          </div>
+        ) : msg.image ? (
           <div className="mb-3.5 max-w-md rounded-2xl overflow-hidden border border-black/10 dark:border-white/10 shadow-lg relative group bg-slate-900/10 dark:bg-slate-950/40">
             <img 
               src={msg.image} 
@@ -134,7 +139,7 @@ export const MessageBubble = React.memo(function MessageBubble({
               <span>{isUser ? "Attached Image" : "AI Generated Image"}</span>
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* Generated Video Player */}
         {msg.videoUrl && (
@@ -345,130 +350,139 @@ export const MessageBubble = React.memo(function MessageBubble({
           </div>
         )}
 
-        {/* Quick AI Actions for AI responses */}
-        {!isUser && msg.text && msg.text.trim().length > 30 && (
-          <div className="mt-3 pt-2 border-t border-slate-200/30 dark:border-slate-800/40 flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-            <button
-              type="button"
-              onClick={() => onQuickAction?.(`Summarize the following response into key bullet points:\n\n${msg.text}`)}
-              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
-            >
-              📝 Summarize
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onQuickAction?.(`Explain the following response in much simpler terms with a real-world analogy:\n\n${msg.text}`)}
-              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
-            >
-              💡 Explain Simpler
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onQuickAction?.(`Generate a 5-question practice quiz based on this content:\n\n${msg.text}`)}
-              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
-            >
-              🎯 Make Quiz
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onQuickAction?.(`Create 5 high-yield revision flashcards for this topic:\n\n${msg.text}`)}
-              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
-            >
-              🃏 Flashcards
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onQuickAction?.(`Translate the following explanation into simple Hindi and English bilingual format:\n\n${msg.text}`)}
-              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
-            >
-              🌐 Translate
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                try {
-                  const saved = JSON.parse(localStorage.getItem("studymate_saved_notes") || "[]");
-                  const newNotes = [msg.text.slice(0, 150) + "...", ...saved];
-                  localStorage.setItem("studymate_saved_notes", JSON.stringify(newNotes));
-                  alert("Saved to Study Notes!");
-                } catch {
-                  // ignore
-                }
-              }}
-              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
-            >
-              📌 Save to Notes
-            </button>
-
-            <button
-              type="button"
-              onClick={() => onQuickAction?.(`Continue expanding in deeper academic detail on this response:\n\n${msg.text}`)}
-              className="px-2 py-0.5 bg-slate-100 hover:bg-purple-50 dark:bg-slate-800 dark:hover:bg-purple-950/40 text-slate-600 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/60 rounded-lg text-[10px] font-bold transition shrink-0 cursor-pointer"
-            >
-              ➡️ Continue
-            </button>
-          </div>
-        )}
-
-        {/* Action Toolbar for AI responses */}
+        {/* Merged Compact Action Footer for AI responses */}
         {!isUser && (
-          <div className="mt-3 pt-2.5 border-t border-slate-200/40 dark:border-slate-800/40 flex items-center justify-between opacity-80 group-hover:opacity-100 transition-opacity">
-            <div className="flex items-center space-x-2">
-              <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-indigo-500" /> Adaptive Academic Model
-              </span>
+          <div className="mt-2 pt-1.5 border-t border-slate-200/40 dark:border-slate-800/40 space-y-1.5">
+            {/* Top Bar: Model badge, Video Lesson trigger, Speak & Copy icons */}
+            <div className="flex items-center justify-between gap-1 text-slate-500 dark:text-slate-400 text-[10px]">
+              <div className="flex items-center space-x-1.5 min-w-0">
+                <span className="text-[9px] font-extrabold text-slate-400 dark:text-slate-500 flex items-center gap-1 shrink-0">
+                  <Sparkles className="w-2.5 h-2.5 text-indigo-500" /> Adaptive Model
+                </span>
 
-              {/* "🎬 Learn through video" Button */}
-              {onRequestVideoLesson && msg.text && msg.text.trim().length > 80 && !msg.videoUrl && !msg.videoSegments && !msg.videoSettingsPicker && (
+                {/* "🎬 Video Lesson" Button */}
+                {onRequestVideoLesson && msg.text && msg.text.trim().length > 80 && !msg.videoUrl && !msg.videoSegments && !msg.videoSettingsPicker && (
+                  <button
+                    type="button"
+                    onClick={() => onRequestVideoLesson(msg.id, msg.text)}
+                    className="px-2 py-0.5 bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-indigo-500/20 border border-indigo-500/30 text-indigo-600 dark:text-indigo-300 hover:text-indigo-700 dark:hover:text-white rounded-lg text-[10px] font-extrabold transition flex items-center space-x-1 shrink-0 cursor-pointer"
+                    title="Learn this topic through an interactive video lesson"
+                  >
+                    <Video className="w-3 h-3 text-purple-500" />
+                    <span>🎬 Video Lesson</span>
+                  </button>
+                )}
+              </div>
+
+              <div className="flex items-center space-x-1 shrink-0">
+                {/* Voice Read Aloud */}
                 <button
                   type="button"
-                  onClick={() => onRequestVideoLesson(msg.id, msg.text)}
-                  className="px-2.5 py-1 bg-gradient-to-r from-purple-500/10 via-indigo-500/10 to-pink-500/10 hover:from-purple-500/20 hover:to-indigo-500/20 border border-indigo-500/30 text-indigo-600 dark:text-indigo-300 hover:text-indigo-700 dark:hover:text-white rounded-xl text-xs font-extrabold transition flex items-center space-x-1.5 shadow-2xs group cursor-pointer"
-                  title="Learn this topic through an interactive video lesson"
+                  onClick={() => onSpeakText(msg.text, msg.id)}
+                  className={`p-1 rounded-md text-xs transition cursor-pointer flex items-center ${
+                    isSpeaking 
+                      ? "bg-indigo-500 text-white animate-pulse" 
+                      : "bg-slate-100/80 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
+                  }`}
+                  title="Listen to Explanation"
                 >
-                  <Video className="w-3.5 h-3.5 text-purple-500 group-hover:scale-110 transition-transform" />
-                  <span>🎬 Learn through video</span>
+                  {isSpeaking ? <VolumeX className="w-3 h-3" /> : <Volume2 className="w-3 h-3" />}
                 </button>
-              )}
+
+                {/* Copy Response */}
+                <button
+                  type="button"
+                  onClick={handleCopy}
+                  className="p-1 bg-slate-100/80 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-md text-xs transition cursor-pointer flex items-center gap-0.5"
+                  title="Copy text"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-500" />
+                      <span className="text-[9px] font-bold text-emerald-500">Copied</span>
+                    </>
+                  ) : (
+                    <Copy className="w-3 h-3" />
+                  )}
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center space-x-1.5">
-              {/* Voice Read Aloud */}
-              <button
-                type="button"
-                onClick={() => onSpeakText(msg.text, msg.id)}
-                className={`p-1.5 rounded-lg text-xs transition cursor-pointer flex items-center space-x-1 ${
-                  isSpeaking 
-                    ? "bg-indigo-500 text-white animate-pulse" 
-                    : "bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300"
-                }`}
-                title="Listen to Explanation"
-              >
-                {isSpeaking ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-              </button>
+            {/* Quick AI Actions horizontal strip */}
+            {msg.text && msg.text.trim().length > 30 && (
+              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 w-full">
+                <button
+                  type="button"
+                  onClick={() => onQuickAction?.(`Summarize the following response into key bullet points:\n\n${msg.text}`)}
+                  className="px-2 py-0.5 bg-slate-100/80 hover:bg-purple-50 dark:bg-slate-800/70 dark:hover:bg-purple-950/40 text-slate-700 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/50 rounded-md text-[10px] font-bold transition shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+                >
+                  <span>📝</span>
+                  <span>Summarize</span>
+                </button>
 
-              {/* Copy Response */}
-              <button
-                type="button"
-                onClick={handleCopy}
-                className="p-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-lg text-xs transition cursor-pointer flex items-center space-x-1"
-                title="Copy text"
-              >
-                {copied ? (
-                  <>
-                    <Check className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-[9px] font-bold text-emerald-500">Copied</span>
-                  </>
-                ) : (
-                  <Copy className="w-3.5 h-3.5" />
-                )}
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={() => onQuickAction?.(`Explain the following response in much simpler terms with a real-world analogy:\n\n${msg.text}`)}
+                  className="px-2 py-0.5 bg-slate-100/80 hover:bg-purple-50 dark:bg-slate-800/70 dark:hover:bg-purple-950/40 text-slate-700 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/50 rounded-md text-[10px] font-bold transition shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+                >
+                  <span>💡</span>
+                  <span>Simpler</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onQuickAction?.(`Generate a 5-question practice quiz based on this content:\n\n${msg.text}`)}
+                  className="px-2 py-0.5 bg-slate-100/80 hover:bg-purple-50 dark:bg-slate-800/70 dark:hover:bg-purple-950/40 text-slate-700 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/50 rounded-md text-[10px] font-bold transition shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+                >
+                  <span>🎯</span>
+                  <span>Quiz</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onQuickAction?.(`Create 5 high-yield revision flashcards for this topic:\n\n${msg.text}`)}
+                  className="px-2 py-0.5 bg-slate-100/80 hover:bg-purple-50 dark:bg-slate-800/70 dark:hover:bg-purple-950/40 text-slate-700 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/50 rounded-md text-[10px] font-bold transition shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+                >
+                  <span>🃏</span>
+                  <span>Cards</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onQuickAction?.(`Translate the following explanation into simple Hindi and English bilingual format:\n\n${msg.text}`)}
+                  className="px-2 py-0.5 bg-slate-100/80 hover:bg-purple-50 dark:bg-slate-800/70 dark:hover:bg-purple-950/40 text-slate-700 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/50 rounded-md text-[10px] font-bold transition shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+                >
+                  <span>🌐</span>
+                  <span>Translate</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      const saved = JSON.parse(localStorage.getItem("studymate_saved_notes") || "[]");
+                      const newNotes = [msg.text.slice(0, 150) + "...", ...saved];
+                      localStorage.setItem("studymate_saved_notes", JSON.stringify(newNotes));
+                    } catch {
+                      // ignore
+                    }
+                  }}
+                  className="px-2 py-0.5 bg-slate-100/80 hover:bg-purple-50 dark:bg-slate-800/70 dark:hover:bg-purple-950/40 text-slate-700 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/50 rounded-md text-[10px] font-bold transition shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+                >
+                  <span>📌</span>
+                  <span>Notes</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onQuickAction?.(`Continue expanding in deeper academic detail on this response:\n\n${msg.text}`)}
+                  className="px-2 py-0.5 bg-slate-100/80 hover:bg-purple-50 dark:bg-slate-800/70 dark:hover:bg-purple-950/40 text-slate-700 dark:text-slate-300 hover:text-purple-600 dark:hover:text-purple-300 border border-slate-200/60 dark:border-slate-700/50 rounded-md text-[10px] font-bold transition shrink-0 cursor-pointer flex items-center gap-1 whitespace-nowrap"
+                >
+                  <span>➡️</span>
+                  <span>More</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

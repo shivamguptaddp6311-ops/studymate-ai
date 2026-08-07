@@ -9,8 +9,8 @@ import cors from "cors";
 import compression from "compression";
 import { rateLimit } from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
-import { Type } from "@google/genai";
-import { executeAIRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, executeVideoGenRequest, getVideoStatus, cancelVideoGen, getUserVideoHistory, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter, getAICacheMetrics, clearAICaches } from "./server/aiService";
+import { GoogleGenAI, Type } from "@google/genai";
+import { executeAIRequest, executeAIStreamRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, executeVideoGenRequest, getVideoStatus, cancelVideoGen, getUserVideoHistory, getConfiguredVideoProviders, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter, getAICacheMetrics, clearAICaches } from "./server/aiService";
 import { shouldSearchWeb, executeWebSearch, compressContext, generateCitationsContext, groundResponseCitations } from "./server/webSearch";
 import { firebaseDB, runAutomatedMigration, getDbStatus, ChatUser, ChatMessage, ChatReport, AdminLog, SyncData, UserMemory } from "./server/firebase"; // FIX: Firestore connection reliability + visibility
 import { getQuestions } from "./server/questionService";
@@ -60,6 +60,9 @@ import {
   circuitBreakerResetSchema
 } from "./server/schemas/apiSchemas";
 import { validateVideoProviderKeys } from "./server/utils/validateEnv";
+import { findMatchingTemplate } from "./server/infographicTemplates";
+import { renderInfographic } from "./server/infographicRenderer";
+import { processSmartImageRouting, detectLabelIntent } from "./server/smartImageRouter";
 
 dotenv.config();
 
@@ -1058,12 +1061,12 @@ function validateAndSanitizeChapterMaterialsResponse(data: any): any {
 const activeRequests = new Map<string, Promise<any>>();
 
 /**
- * Enforces serial processing of heavy AI requests per user per feature.
+ * Enforces serial processing and request coalescing of heavy AI requests per user per feature.
  */
 async function withDuplicatePrevention<T>(key: string, promiseFactory: () => Promise<T>): Promise<T> {
   if (activeRequests.has(key)) {
-    console.warn(`[Deduplication] Blocked duplicate request on key: ${key}`);
-    throw new Error("A request for this action is currently in progress. Please wait.");
+    console.warn(`[Deduplication] Coalescing duplicate in-flight request for key: ${key}`);
+    return await activeRequests.get(key);
   }
   
   const promise = promiseFactory();
@@ -1304,6 +1307,61 @@ CRITICAL OCR INSTRUCTIONS:
   }
 });
 
+// Intent Classifier Endpoint for Smart Intent Router
+app.post("/api/ai/classify-intent", async (req, res) => {
+  try {
+    const { query } = req.body;
+    if (!query || typeof query !== "string") {
+      return res.status(400).json({ error: "Query parameter is required" });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is missing" });
+    }
+
+    const ai = new GoogleGenAI({ apiKey });
+    const prompt = `Classify this user request into one of these exact intent categories:
+- "diagram" (for labelled diagrams, anatomy, plant structures, cross sections)
+- "photo" (for real photographs, actual images)
+- "video" (for video lectures, animations, tutorials)
+- "flowchart" (for flowcharts, processes, algorithms, mindmaps, decision trees)
+- "chemistry" (for chemical structures, molecules, formulas, compounds)
+- "space" (for planets, galaxies, NASA astronomy images)
+- "creative" (for artistic drawings, creative art)
+- "summary" (for general educational topics, explanations)
+
+Also extract a clean, concise English search topic query (strip Hinglish words like "ka", "banao", "dikhao", "chahiye").
+
+User Query: "${query}"
+
+Return JSON matching this format strictly:
+{
+  "intent": "diagram" | "photo" | "video" | "flowchart" | "chemistry" | "space" | "creative" | "summary",
+  "normalizedQuery": "clean English search topic query"
+}`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.6-flash",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json"
+      }
+    });
+
+    const text = response.text || "{}";
+    const parsed = JSON.parse(text);
+
+    return res.json({
+      intent: parsed.intent || "summary",
+      normalizedQuery: parsed.normalizedQuery || query
+    });
+  } catch (err: any) {
+    console.warn("[classify-intent] Gemini intent classification error:", err.message);
+    return res.status(500).json({ error: err.message || "Failed to classify intent" });
+  }
+});
+
 // Centralized AI Router Endpoint
 app.post("/api/ai/route", requireAuth, validateRequest(aiRouteSchema), async (req, res) => {
   const controller = new AbortController();
@@ -1359,6 +1417,44 @@ app.post("/api/ai/route", requireAuth, validateRequest(aiRouteSchema), async (re
   }
 });
 
+// FIX: normalize non-English prompts before image generation
+async function normalizeImagePrompt(rawPrompt: string): Promise<string> {
+  const trimmed = rawPrompt.trim();
+  if (!trimmed) return rawPrompt;
+
+  // Simple heuristic: presence of non-Latin characters or common Hinglish words
+  const isNonLatin = /[^\u0000-\u007F]/.test(trimmed);
+  const isHinglish = /\b(ka|ki|ke|hai|h|hain|banao|bana|chahiye|dikhao|karo|do|mujhko|mujhe|ek|baare|me|par|se|ne|ko|wala|wali|wale)\b/i.test(trimmed);
+
+  if (!isNonLatin && !isHinglish) {
+    return rawPrompt;
+  }
+
+  try {
+    const normResult = await Promise.race([
+      executeAIRequest({
+        systemInstruction: "You are a precise translator and prompt normalizer for image generation engines. Translate and rewrite the user's request into clear, simple, grammatically correct English, preserving every requested subject, object, and instruction exactly. Do not add, remove, or reinterpret any content. Output ONLY the rewritten English sentence with no preamble, quotes, or markdown formatting.",
+        messages: [{ role: "user", content: trimmed }],
+        timeoutMs: 5000,
+        temperature: 0.1,
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Normalization timeout")), 5000))
+    ]);
+
+    if (normResult && normResult.text && normResult.text.trim()) {
+      const normalizedText = normResult.text.trim().replace(/^["']|["']$/g, "");
+      if (normalizedText.length > 0) {
+        console.log(`[ImageGen] Normalized non-English/Hinglish prompt: "${trimmed}" -> "${normalizedText}"`);
+        return normalizedText;
+      }
+    }
+  } catch (err: any) {
+    console.warn(`[ImageGen] Prompt normalization skipped/failed, falling back to raw prompt:`, err?.message || err);
+  }
+
+  return rawPrompt;
+}
+
 // AI Image & Diagram Generation Route (Multi-Provider Fallback: Gemini -> OpenAI -> Fal.ai)
 app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, validateRequest(generateImageSchema), async (req, res) => {
   const controller = new AbortController();
@@ -1367,7 +1463,27 @@ app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, validateReq
   });
 
   try {
-    const { prompt, category, aspectRatio = "1:1", quality = "standard", provider, preferredProvider, timeoutMs } = req.body;
+    const {
+      prompt,
+      category,
+      aspectRatio = "1:1",
+      quality = "standard",
+      provider,
+      preferredProvider,
+      negativePrompt,
+      negative_prompt,
+      model,
+      width,
+      height,
+      steps,
+      guidanceScale,
+      guidance_scale,
+      guidance,
+      seed,
+      numImages,
+      n,
+      timeoutMs
+    } = req.body;
 
     if (!prompt || typeof prompt !== "string" || !prompt.trim()) {
       return res.status(400).json({ error: "A valid non-empty prompt string is required." });
@@ -1381,19 +1497,62 @@ app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, validateReq
       return res.status(400).json({ error: "Potential prompt injection attempt detected. Please refine your image prompt." });
     }
 
+    // FIX: normalize non-English prompts before image generation
+    const rawPrompt = prompt.trim();
+    const normalizedPrompt = await normalizeImagePrompt(rawPrompt);
+
+    // FIX: infographic diagram engine
+    // Check if prompt triggers scientific mode / labelled diagram ask before AI diffusion image generation
+    try {
+      const smartResult = processSmartImageRouting(normalizedPrompt, category);
+      if (smartResult.scientificMode || detectLabelIntent(normalizedPrompt) === "required") {
+        const tmpl = findMatchingTemplate(normalizedPrompt);
+        if (tmpl) {
+          try {
+            const pngBuf = await renderInfographic(tmpl);
+            if (pngBuf && pngBuf.length > 0) {
+              return res.json({
+                imageUrl: `data:image/png;base64,${pngBuf.toString("base64")}`,
+                providerUsed: "infographic-engine",
+                revisedPrompt: `Infographic Diagram: ${tmpl.title}`,
+                templateId: tmpl.id,
+                matched: true
+              });
+            }
+          } catch (renderErr: any) {
+            console.warn("[InfographicEngine] Render fallback triggered due to error:", renderErr?.message || renderErr);
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn("[InfographicEngine] Template match check failed, proceeding to standard image gen:", e?.message);
+    }
+
     const emailNorm = (req as any).user.email?.toLowerCase().trim() || "anonymous";
     const effectiveProvider = preferredProvider || provider || "auto";
-    const lockKey = `${emailNorm}:${req.path}:${prompt.trim()}:${aspectRatio}:${quality}:${effectiveProvider}`;
+    const effectiveNegativePrompt = negativePrompt || negative_prompt;
+    const effectiveGuidance = guidanceScale ?? guidance_scale ?? guidance;
+    const effectiveNumImages = numImages ?? n;
+
+    const lockKey = `${emailNorm}:${req.path}:${normalizedPrompt}:${aspectRatio}:${quality}:${effectiveProvider}:${model || ""}:${seed || ""}`;
 
     const imageResult = await withDuplicatePrevention(lockKey, async () => {
       return await executeImageGenRequest({
-        prompt: prompt.trim(),
+        prompt: normalizedPrompt,
         category,
         aspectRatio,
         quality,
         preferredProvider: effectiveProvider as any,
         timeoutMs,
-        signal: controller.signal
+        signal: controller.signal,
+        negativePrompt: effectiveNegativePrompt,
+        model,
+        width,
+        height,
+        steps,
+        guidanceScale: effectiveGuidance,
+        seed,
+        numImages: effectiveNumImages
       });
     });
 
@@ -1412,6 +1571,35 @@ app.post("/api/ai/generate-image", requireAuth, imageGenRateLimiter, validateReq
     }
     console.error("AI Image Generation error:", error);
     res.status(500).json({ error: error.message || "Failed to generate AI image." });
+  }
+});
+
+// FIX: infographic diagram engine
+// Dedicated Infographic Diagram Endpoint
+app.post("/api/ai/generate-infographic", requireAuth, imageGenRateLimiter, async (req, res) => {
+  try {
+    const topic = req.body.topic || req.body.prompt;
+    if (!topic || typeof topic !== "string" || !topic.trim()) {
+      return res.status(400).json({ error: "A valid non-empty topic or prompt string is required." });
+    }
+
+    const tmpl = findMatchingTemplate(topic);
+    if (!tmpl) {
+      return res.json({ matched: false });
+    }
+
+    const pngBuf = await renderInfographic(tmpl);
+    return res.json({
+      matched: true,
+      imageUrl: `data:image/png;base64,${pngBuf.toString("base64")}`,
+      providerUsed: "infographic-engine",
+      templateId: tmpl.id,
+      title: tmpl.title,
+      revisedPrompt: `Infographic Diagram: ${tmpl.title}`
+    });
+  } catch (error: any) {
+    console.error("[InfographicEngine] Endpoint error:", error?.message || error);
+    return res.json({ matched: false, error: error?.message || "Infographic rendering failed." });
   }
 });
 
@@ -1538,6 +1726,27 @@ app.get("/api/video/history", requireAuth, async (req, res) => {
   } catch (error: any) {
     console.error("AI Video History fetch error:", error);
     res.status(500).json({ error: error.message || "Failed to fetch video history" });
+  }
+});
+
+// FIX: AI provider diagnostics
+app.get("/api/debug/ai-provider-status", (req, res) => {
+  try {
+    const imageConfig = getConfiguredImageProviders(true);
+    const imageHealth = checkImageProviderHealth();
+    const videoConfig = getConfiguredVideoProviders();
+
+    res.json({
+      imageProviders: {
+        ...imageConfig,
+        pollinations: "always available, no key required"
+      },
+      videoProviders: videoConfig,
+      imageProviderHealth: imageHealth
+    });
+  } catch (error: any) {
+    console.error("AI Provider status debug endpoint error:", error);
+    res.status(500).json({ error: error.message || "Failed to fetch AI provider status" });
   }
 });
 
@@ -1957,6 +2166,42 @@ JSON Schema for Flashcards:
 }
 \`\`\``;
 
+      const isStream = Boolean(req.body.stream || req.headers.accept?.includes("text/event-stream"));
+
+      if (isStream) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache");
+        res.setHeader("Connection", "keep-alive");
+
+        const response = await executeAIStreamRequest({
+          messages,
+          onChunk: (chunk) => {
+            res.write(`data: ${JSON.stringify({ chunk })}\n\n`);
+          },
+          systemInstruction,
+          image,
+          preferredProvider: preferredProvider as AIProvider,
+          timeoutMs: timeoutMs ? Number(timeoutMs) : undefined,
+          signal: controller.signal
+        });
+
+        let replyText = sanitizeAIOutputText(response.text);
+
+        if (searched && searchSources.length > 0) {
+          const grounded = groundResponseCitations(replyText, searchSources);
+          replyText = sanitizeAIOutputText(grounded.text);
+          searchSources = grounded.validatedSources;
+        }
+
+        extractAndSaveMemoriesInBackground(uid, emailNorm, finalUserMessage, replyText).catch(err => {
+          console.warn("[MemoryService] Background memory extraction error:", err);
+        });
+
+        res.write(`data: ${JSON.stringify({ done: true, reply: replyText, searched, searchQuery, sources: searchSources, searchError, providerUsed: response.providerUsed })}\n\n`);
+        res.end();
+        return null;
+      }
+
       const response = await executeAIRequest({
         messages,
         systemInstruction,
@@ -1989,7 +2234,9 @@ JSON Schema for Flashcards:
       };
     });
 
-    res.json(chatReply);
+    if (chatReply) {
+      res.json(chatReply);
+    }
   } catch (error: any) {
     if (error.message?.includes("timed out")) {
       console.warn("AI chat timeout:", error.message);

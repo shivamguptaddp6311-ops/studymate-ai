@@ -56,6 +56,14 @@ export function isImageGenerationRequest(text: string): boolean {
   }
 
   // Flexible regex patterns matching verbs + image-related nouns
+  // FIX: Hinglish/casual intent detection
+  const hinglishImageNouns = /\b(image|photo|picture|diagram|poster|wallpaper|logo|sketch|drawing|illustration|chart|banner|avatar|pic|pics)\b/i;
+  const hinglishVerbs = /\b(bana\s*do|banade|banao|bnado|bnao|bana\s*sakte|bana\s*sakta|chahiye|dikhao|dikha\s*do)\b/i;
+
+  if (hinglishImageNouns.test(lower) && hinglishVerbs.test(lower)) {
+    return true;
+  }
+
   const intentPatterns = [
     /\b(generate|create|draw|make|design|render|paint|produce)\b.*\b(image|picture|photo|illustration|graphic|logo|wallpaper|poster|diagram|sketch|art|artwork|avatar|banner)\b/i,
     /\b(photo|picture|image|illustration|drawing|sketch|painting|logo|poster|wallpaper|3d render)\b\s+of\b/i

@@ -51,6 +51,15 @@ const PROVIDER_SEQUENCE: Array<{
   }
 ];
 
+export function getConfiguredVideoProviders() {
+  return {
+    veo: Boolean(process.env.GEMINI_API_KEY?.trim()),
+    kling: Boolean((process.env.FAL_KEY || process.env.FAL_API_KEY || process.env.KLING_API_KEY)?.trim()),
+    pixverse: Boolean(process.env.PIXVERSE_API_KEY?.trim()),
+    luma: Boolean(process.env.LUMA_API_KEY?.trim())
+  };
+}
+
 export function getGenerationStatus(jobId: string): NormalizedVideoResult | undefined {
   const active = activeVideoJobs.get(jobId);
   if (active) {
@@ -222,9 +231,11 @@ export async function generateVideo(input: VideoGenerationInput): Promise<Normal
     }
 
     // If loop finishes without returning, all providers failed
-    const aggregatedReason = failureLogs
-      .map((f) => `[${f.provider}]: ${f.reason}`)
-      .join(" | ");
+    // FIX: AI provider diagnostics
+    const allUnconfigured = failureLogs.length > 0 && failureLogs.every((f) => f.reason === "API key not configured");
+    const aggregatedReason = allUnconfigured
+      ? "No video generation provider is configured — add at least one of GEMINI_API_KEY, FAL_KEY, PIXVERSE_API_KEY, or LUMA_API_KEY"
+      : `All video generation providers failed: ${failureLogs.map((f) => `[${f.provider}]: ${f.reason}`).join(" | ")}`;
 
     const finalFailedJob: NormalizedVideoResult = {
       success: false,
@@ -234,13 +245,13 @@ export async function generateVideo(input: VideoGenerationInput): Promise<Normal
       prompt: input.prompt,
       createdAt: new Date().toISOString(),
       userEmail: input.userEmail,
-      error: `All video generation providers failed: ${aggregatedReason}`
+      error: aggregatedReason
     };
 
     videoJobHistory.set(jobId, finalFailedJob);
     activeVideoJobs.delete(jobId);
 
-    throw new Error(`Video generation failed across all available providers: ${aggregatedReason}`);
+    throw new Error(aggregatedReason);
   } catch (fatalErr: any) {
     const errorMsg = fatalErr?.message || String(fatalErr);
     const finalFailedJob: NormalizedVideoResult = {

@@ -1,4 +1,4 @@
-import React, { RefObject, useState } from "react";
+import React, { RefObject, useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Plus, Send, Camera, Image as ImageIcon, CloudUpload, FileText, Mic, ChevronDown, Check } from "lucide-react";
 import { AttachedPdf } from "./PDFUploader";
@@ -24,14 +24,14 @@ interface PromptInputProps {
   pdfFileInputRef: RefObject<HTMLInputElement | null>;
   onStartCamera: () => void;
   onOpenDriveModal: () => void;
-  onSend: (e?: React.FormEvent) => void;
+  onSend: (textToSend?: string, e?: React.FormEvent) => void;
   isListening?: boolean;
   onToggleVoice?: () => void;
   selectedModel?: string;
   setSelectedModel?: (val: string) => void;
 }
 
-export function PromptInput({
+export const PromptInput = React.memo(function PromptInput({
   inputText,
   setInputText,
   isLoading,
@@ -49,10 +49,25 @@ export function PromptInput({
   selectedModel = "auto",
   setSelectedModel
 }: PromptInputProps) {
+  const [localInputText, setLocalInputText] = useState(inputText);
+
+  // Sync local input state when parent updates inputText externally (e.g. prefill, suggestions, voice)
+  useEffect(() => {
+    setLocalInputText(inputText);
+  }, [inputText]);
+
+  const handleSubmit = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if ((!localInputText.trim() && !selectedImage && !attachedPdf) || isLoading) return;
+    const textToSend = localInputText;
+    setLocalInputText("");
+    onSend(textToSend, e);
+  };
+
   return (
-    <div className="p-2 sm:p-3 bg-white/70 dark:bg-slate-950/70 backdrop-blur-xl border-t border-slate-200/70 dark:border-slate-800/80 shrink-0 z-20 w-full">
+    <div className="footer-safe p-2 sm:p-3 bg-white/70 dark:bg-slate-950/70 backdrop-blur-xl border-t border-slate-200/70 dark:border-slate-800/80 shrink-0 z-20 w-full">
       <form 
-        onSubmit={onSend}
+        onSubmit={handleSubmit}
         className="bg-white/95 dark:bg-[#0c1326]/95 backdrop-blur-2xl border border-slate-200/80 dark:border-slate-800/80 shadow-lg rounded-2xl p-1.5 md:p-2 mx-auto w-full max-w-4xl flex items-center space-x-2 relative"
       >
         {/* ATTACHMENT BUTTON WITH POPUP MENU */}
@@ -163,8 +178,8 @@ export function PromptInput({
         <div className="relative flex-1 flex items-center min-w-0">
           <input
             type="text"
-            value={inputText}
-            onChange={(e) => setInputText(e.target.value)}
+            value={localInputText}
+            onChange={(e) => setLocalInputText(e.target.value)}
             placeholder={
               selectedImage 
                 ? "Describe what to solve in the image..." 
@@ -260,9 +275,9 @@ export function PromptInput({
         {/* PURPLE SEND BUTTON */}
         <button
           type="submit"
-          disabled={isLoading || (!inputText.trim() && !selectedImage && !attachedPdf)}
+          disabled={isLoading || (!localInputText.trim() && !selectedImage && !attachedPdf)}
           className={`p-2.5 md:p-3 rounded-xl text-white font-bold flex items-center justify-center transition-all duration-200 shrink-0 shadow-md ${
-            (inputText.trim() || selectedImage || attachedPdf) && !isLoading
+            (localInputText.trim() || selectedImage || attachedPdf) && !isLoading
               ? "bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 cursor-pointer shadow-purple-500/20 active:scale-95"
               : "bg-slate-200 dark:bg-slate-800 text-slate-400 dark:text-slate-600 cursor-not-allowed"
           }`}
@@ -273,6 +288,6 @@ export function PromptInput({
       </form>
     </div>
   );
-}
+});
 
 export default PromptInput;

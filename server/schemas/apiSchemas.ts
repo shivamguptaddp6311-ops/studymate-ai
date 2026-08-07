@@ -203,6 +203,18 @@ export const generateImageSchema = {
     quality: z.string().max(20).optional().default("standard"),
     provider: z.string().max(50).optional(),
     preferredProvider: z.string().max(50).optional(),
+    negativePrompt: z.string().max(2000).optional(),
+    negative_prompt: z.string().max(2000).optional(),
+    model: z.string().max(200).optional(),
+    width: z.number().positive().optional(),
+    height: z.number().positive().optional(),
+    steps: z.number().positive().optional(),
+    guidanceScale: z.number().optional(),
+    guidance_scale: z.number().optional(),
+    guidance: z.number().optional(),
+    seed: z.number().optional(),
+    numImages: z.number().min(1).max(4).optional(),
+    n: z.number().min(1).max(4).optional(),
     timeoutMs: z.union([z.number(), z.string().regex(/^\d+$/)])
       .transform(val => Number(val))
       .pipe(z.number().positive())
@@ -221,6 +233,8 @@ export const geminiChatSchema = {
     ).optional(),
     image: base64ImageAttachmentSchema,
     provider: z.string().max(50).optional(),
+    preferredProvider: z.string().max(50).optional(),
+    model: z.string().max(100).optional(),
     timeoutMs: z.union([z.number(), z.string().regex(/^\d+$/)])
       .transform(val => Number(val))
       .pipe(z.number().positive())

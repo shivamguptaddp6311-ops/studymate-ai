@@ -23,6 +23,14 @@ export function isVideoGenerationRequest(text: string): boolean {
   }
 
   // Flexible regex patterns matching verbs + video-related nouns
+  // FIX: Hinglish/casual intent detection
+  const hinglishVideoNouns = /\b(video|clip|animation|movie|footage)\b/i;
+  const hinglishVerbs = /\b(bana\s*do|banade|banao|bnado|bnao|bana\s*sakte|bana\s*sakta|chahiye|dikhao|dikha\s*do)\b/i;
+
+  if (hinglishVideoNouns.test(lower) && hinglishVerbs.test(lower)) {
+    return true;
+  }
+
   const intentPatterns = [
     /\b(generate|create|make|render|produce|animate|build)\b.*\b(video|clip|animation|mp4|movie|footage)\b/i,
     /\b(video|clip|animation)\b\s+of\b/i

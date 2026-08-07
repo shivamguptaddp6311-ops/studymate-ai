@@ -17,6 +17,21 @@ export async function generatePixVerse(input: VideoGenerationInput): Promise<Nor
       "Ai-trace-id": traceId
     };
 
+    const model = "v5.5";
+    const audioSupportedModels = ["v5.5", "v5.6", "v6", "c1"];
+
+    const requestPayload: Record<string, any> = {
+      prompt: input.prompt,
+      model,
+      duration: 5,
+      quality: input.resolution || "540p",
+      aspect_ratio: input.aspectRatio || "16:9"
+    };
+
+    if (audioSupportedModels.includes(model)) {
+      requestPayload.generate_audio_switch = input.generateAudio ?? true;
+    }
+
     const submitRes = await fetchJson<{
       ErrCode: number;
       ErrMsg: string;
@@ -24,14 +39,7 @@ export async function generatePixVerse(input: VideoGenerationInput): Promise<Nor
     }>(`${BASE_URL}/video/text/generate`, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        prompt: input.prompt,
-        model: "v5",
-        duration: 5,
-        quality: input.resolution || "540p",
-        aspect_ratio: input.aspectRatio || "16:9",
-        generate_audio_switch: input.generateAudio ?? true
-      }),
+      body: JSON.stringify(requestPayload),
       signal: input.signal,
       timeoutMs: 30000
     });

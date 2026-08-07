@@ -29,7 +29,7 @@ interface MessageListProps {
   onSaveFlashcardsToWorkspace?: (deck: any) => void;
 }
 
-export function MessageList({
+export const MessageList = React.memo(function MessageList({
   scrollRef,
   messages,
   isLoading,
@@ -111,46 +111,41 @@ export function MessageList({
       {/* AI Thinking/Processing Stream Indicator */}
       {isLoading && (
         <motion.div 
-          initial={{ opacity: 0, y: 10 }}
+          initial={{ opacity: 0, y: 4 }}
           animate={{ opacity: 1, y: 0 }}
-          className="flex items-start space-x-3 my-2"
+          className="flex items-center space-x-1.5 my-1 pl-1"
         >
-          <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-0.5 animate-spin shrink-0">
-            <div className="w-full h-full bg-white dark:bg-slate-900 rounded-full flex items-center justify-center">
-              <Sparkles className="w-4 h-4 text-indigo-500" />
-            </div>
-          </div>
-          
-          <div className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-white/20 dark:border-slate-800 rounded-2xl rounded-tl-sm p-4 shadow-lg flex items-center space-x-3">
-            <div className="flex space-x-1.5">
-              <div className="w-2 h-2 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
-              <div className="w-2 h-2 bg-purple-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
-              <div className="w-2 h-2 bg-pink-500 rounded-full animate-bounce" />
+          <div className="inline-flex items-center space-x-1.5 bg-slate-100/90 dark:bg-slate-800/90 border border-slate-200/80 dark:border-slate-700/60 rounded-full px-2.5 py-0.5 shadow-2xs text-[10px] font-semibold text-slate-700 dark:text-slate-300 max-w-full">
+            <div className="flex space-x-0.5 shrink-0">
+              <div className="w-1 h-1 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]" />
+              <div className="w-1 h-1 bg-purple-500 rounded-full animate-bounce [animation-delay:-0.15s]" />
+              <div className="w-1 h-1 bg-pink-500 rounded-full animate-bounce" />
             </div>
 
-            <span className="text-xs font-extrabold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+            <span className="truncate max-w-[130px] sm:max-w-[240px] text-[10px] font-semibold">
               {isGeneratingImage ? (
-                <>
-                  <ImageIcon className="w-3.5 h-3.5 text-amber-500 animate-pulse" />
-                  Generating AI visual asset with multi-provider engine...
-                </>
+                <span className="inline-flex items-center gap-1">
+                  <ImageIcon className="w-2.5 h-2.5 text-amber-500 animate-pulse shrink-0" />
+                  Generating visual...
+                </span>
               ) : isWebSearching ? (
-                <>
-                  <Globe className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
-                  Searching real-time web sources...
-                </>
+                <span className="inline-flex items-center gap-1">
+                  <Globe className="w-2.5 h-2.5 text-indigo-500 animate-pulse shrink-0" />
+                  Searching web...
+                </span>
               ) : (
-                <>
-                  <Sparkles className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
-                  Formulating step-by-step academic explanation...
-                </>
+                <span className="inline-flex items-center gap-1">
+                  <Sparkles className="w-2.5 h-2.5 text-indigo-500 animate-pulse shrink-0" />
+                  Thinking...
+                </span>
               )}
             </span>
 
             <button
               type="button"
               onClick={onCancelRequest}
-              className="ml-2 text-[10px] font-black text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-2 py-1 rounded-lg border border-rose-200 dark:border-rose-900/40 transition cursor-pointer"
+              className="text-[9px] font-extrabold text-rose-500 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 px-1 py-0.2 rounded transition cursor-pointer shrink-0"
+              title="Cancel Generation"
             >
               Cancel
             </button>
@@ -203,25 +198,26 @@ export function MessageList({
       {/* Jump to bottom Floating Button */}
       <AnimatePresence>
         {showScrollToBottom && (
-          <motion.div
-            initial={{ opacity: 0, y: 10, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 10, scale: 0.9 }}
-            className="sticky bottom-2 left-1/2 -translate-x-1/2 z-30 flex justify-center pointer-events-none"
-          >
-            <button
-              type="button"
-              onClick={scrollToBottom}
-              className="pointer-events-auto bg-slate-900/90 dark:bg-slate-100/90 text-white dark:text-slate-900 px-3.5 py-1.5 rounded-full shadow-2xl text-xs font-black flex items-center gap-1.5 hover:scale-105 active:scale-95 transition cursor-pointer backdrop-blur-md border border-white/20 dark:border-slate-800"
+          <div className="sticky bottom-2 left-0 right-0 w-full z-30 flex justify-center pointer-events-none">
+            <motion.div
+              initial={{ opacity: 0, y: 10, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.9 }}
             >
-              <ArrowDown className="w-3.5 h-3.5" />
-              <span>Latest Messages</span>
-            </button>
-          </motion.div>
+              <button
+                type="button"
+                onClick={scrollToBottom}
+                className="pointer-events-auto bg-slate-900/90 dark:bg-slate-100/90 text-white dark:text-slate-900 px-3.5 py-1.5 rounded-full shadow-2xl text-xs font-black flex items-center gap-1.5 hover:scale-105 active:scale-95 transition cursor-pointer backdrop-blur-md border border-white/20 dark:border-slate-800"
+              >
+                <ArrowDown className="w-3.5 h-3.5" />
+                <span>Latest Messages</span>
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>
   );
-}
+});
 
 export default MessageList;

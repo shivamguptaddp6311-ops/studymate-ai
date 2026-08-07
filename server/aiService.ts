@@ -12,6 +12,7 @@ import {
   getRequiredCapabilitiesForTask,
   filterCapableProviders
 } from "./providerCapabilities";
+import { generateImageTogether, isTogetherKeyConfigured } from "./togetherImageProvider";
 
 dotenv.config();
 
@@ -29,7 +30,7 @@ export interface FailureCacheEntry {
 
 // Verified Successful Response Caches
 const responseCache = new Map<string, { text: string; providerUsed: AIProvider; timestamp: number }>();
-const imageCache = new Map<string, { imageUrl: string; providerUsed: "gemini" | "openai" | "fal"; timestamp: number }>();
+const imageCache = new Map<string, { imageUrl: string; providerUsed: AIImageProvider; timestamp: number }>();
 
 // Separate Failure Cache for Provider Failures
 const failureCache = new Map<string, FailureCacheEntry>();
@@ -179,8 +180,8 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiInstance;
 }
 
-export type AIProvider = "auto" | "gemini" | "openai" | "groq" | "openrouter" | "anthropic" | "fal";
-export type AIImageProvider = "auto" | "gemini" | "openai" | "fal";
+export type AIProvider = "auto" | "gemini" | "openai" | "groq" | "openrouter" | "anthropic" | "fal" | "together";
+export type AIImageProvider = "auto" | "gemini" | "openai" | "fal" | "together" | "pollinations" | "infographic-engine";
 
 export function normalizeProvider(provider?: string): AIProvider {
   if (!provider || provider === "auto") return "auto";
@@ -190,6 +191,7 @@ export function normalizeProvider(provider?: string): AIProvider {
   if (p.includes("gemini")) return "gemini";
   if (p.includes("gpt") || p.includes("openai")) return "openai";
   if (p.includes("openrouter")) return "openrouter";
+  if (p.includes("together")) return "together";
   if (p.includes("fal")) return "fal";
   return "auto";
 }
@@ -202,6 +204,7 @@ export function getProviderDisplayName(provider?: string): string {
   if (p === "openai") return "OpenAI";
   if (p === "openrouter") return "OpenRouter";
   if (p === "gemini") return "Gemini";
+  if (p === "together") return "Together AI";
   if (p === "fal") return "Fal";
   return "Gemini";
 }
@@ -210,15 +213,25 @@ export interface ImageGenOptions {
   prompt: string;
   category?: string;
   aspectRatio?: "1:1" | "3:4" | "16:9" | "9:16" | "4:3";
-  quality?: "standard" | "hd";
+  quality?: "standard" | "hd" | "medium" | "4k";
   preferredProvider?: AIImageProvider;
   timeoutMs?: number;
   signal?: AbortSignal;
+  negativePrompt?: string;
+  model?: string;
+  width?: number;
+  height?: number;
+  steps?: number;
+  guidanceScale?: number;
+  seed?: number;
+  numImages?: number;
 }
 
 export interface ImageGenResponse {
   imageUrl: string;
   providerUsed: AIImageProvider;
+  fallbackUsed?: boolean;
+  degraded?: boolean;
   revisedPrompt: string;
   cached?: boolean;
 }
@@ -248,31 +261,37 @@ function isValidKey(key: string | undefined): boolean {
   );
 }
 
-// Dynamic tracker to disable Anthropic if we encounter a billing/credit exhaustion error
+// Dynamic trackers to disable providers if we encounter authentication, billing or quota exhaustion errors
 let isAnthropicDisabled = false;
+let isOpenAIDisabled = false;
+let isFalDisabled = false;
+let isGroqDisabled = false;
+let isOpenRouterDisabled = false;
 
 // Check configured keys with Circuit Breaker status check
 export function getConfiguredProviders(ignoreCircuit = false) {
   return {
     gemini: isValidKey(process.env.GEMINI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("gemini")),
-    openai: isValidKey(process.env.OPENAI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("openai")),
-    groq: isValidKey(process.env.GROQ_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("groq")),
-    openrouter: isValidKey(process.env.OPENROUTER_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("openrouter")),
+    openai: isValidKey(process.env.OPENAI_API_KEY) && !isOpenAIDisabled && (ignoreCircuit || circuitBreaker.canExecute("openai")),
+    groq: isValidKey(process.env.GROQ_API_KEY) && !isGroqDisabled && (ignoreCircuit || circuitBreaker.canExecute("groq")),
+    openrouter: isValidKey(process.env.OPENROUTER_API_KEY) && !isOpenRouterDisabled && (ignoreCircuit || circuitBreaker.canExecute("openrouter")),
     anthropic: isValidKey(process.env.ANTHROPIC_API_KEY) && !isAnthropicDisabled && (ignoreCircuit || circuitBreaker.canExecute("anthropic")),
-    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && (ignoreCircuit || circuitBreaker.canExecute("fal"))
+    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && !isFalDisabled && (ignoreCircuit || circuitBreaker.canExecute("fal")),
+    together: isTogetherKeyConfigured() && (ignoreCircuit || circuitBreaker.canExecute("together"))
   };
 }
 
 export function getConfiguredImageProviders(ignoreCircuit = false) {
   return {
     gemini: isValidKey(process.env.GEMINI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("gemini")),
-    openai: isValidKey(process.env.OPENAI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("openai")),
-    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && (ignoreCircuit || circuitBreaker.canExecute("fal"))
+    openai: isValidKey(process.env.OPENAI_API_KEY) && !isOpenAIDisabled && (ignoreCircuit || circuitBreaker.canExecute("openai")),
+    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && !isFalDisabled && (ignoreCircuit || circuitBreaker.canExecute("fal")),
+    together: isTogetherKeyConfigured() && (ignoreCircuit || circuitBreaker.canExecute("together"))
   };
 }
 
 export interface ImageProviderHealth {
-  provider: "fal" | "gemini" | "openai" | "pollinations";
+  provider: "fal" | "together" | "gemini" | "openai" | "pollinations";
   configured: boolean;
   status: "healthy" | "degraded" | "unhealthy";
   consecutiveFailures: number;
@@ -281,8 +300,9 @@ export interface ImageProviderHealth {
   cooldownUntil?: number;
 }
 
-const imageProviderHealthState: Record<"fal" | "gemini" | "openai" | "pollinations", ImageProviderHealth> = {
+const imageProviderHealthState: Record<"fal" | "together" | "gemini" | "openai" | "pollinations", ImageProviderHealth> = {
   fal: { provider: "fal", configured: false, status: "healthy", consecutiveFailures: 0 },
+  together: { provider: "together", configured: false, status: "healthy", consecutiveFailures: 0 },
   gemini: { provider: "gemini", configured: false, status: "healthy", consecutiveFailures: 0 },
   openai: { provider: "openai", configured: false, status: "healthy", consecutiveFailures: 0 },
   pollinations: { provider: "pollinations", configured: true, status: "healthy", consecutiveFailures: 0 }
@@ -292,7 +312,7 @@ export function checkImageProviderHealth(): Record<string, ImageProviderHealth> 
   const config = getConfiguredImageProviders(true);
   const now = Date.now();
 
-  const update = (p: "fal" | "gemini" | "openai" | "pollinations", isConfigured: boolean) => {
+  const update = (p: "fal" | "together" | "gemini" | "openai" | "pollinations", isConfigured: boolean) => {
     const record = imageProviderHealthState[p];
     record.configured = isConfigured;
 
@@ -311,6 +331,7 @@ export function checkImageProviderHealth(): Record<string, ImageProviderHealth> 
   };
 
   update("fal", config.fal);
+  update("together", config.together);
   update("gemini", config.gemini);
   update("openai", config.openai);
   update("pollinations", true);
@@ -318,7 +339,7 @@ export function checkImageProviderHealth(): Record<string, ImageProviderHealth> 
   return { ...imageProviderHealthState };
 }
 
-export function recordImageProviderHealthSuccess(p: "fal" | "gemini" | "openai" | "pollinations") {
+export function recordImageProviderHealthSuccess(p: "fal" | "together" | "gemini" | "openai" | "pollinations") {
   const record = imageProviderHealthState[p];
   if (record) {
     record.consecutiveFailures = 0;
@@ -329,7 +350,7 @@ export function recordImageProviderHealthSuccess(p: "fal" | "gemini" | "openai" 
   }
 }
 
-export function recordImageProviderHealthFailure(p: "fal" | "gemini" | "openai" | "pollinations", reason: string, isPermanent = false) {
+export function recordImageProviderHealthFailure(p: "fal" | "together" | "gemini" | "openai" | "pollinations", reason: string, isPermanent = false) {
   const record = imageProviderHealthState[p];
   if (record) {
     record.consecutiveFailures += 1;
@@ -647,6 +668,50 @@ export function parseJsonResponse(text: string): any {
   throw new Error("Failed to parse JSON response from AI provider.");
 }
 
+// Streaming execution function with real-time SSE chunking and automatic non-streaming fallback
+export async function executeAIStreamRequest(options: {
+  messages: AIMessage[];
+  onChunk: (chunk: string) => void;
+  systemInstruction?: string;
+  image?: string;
+  preferredProvider?: AIProvider;
+  responseSchema?: any;
+  temperature?: number;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}): Promise<AIResponse> {
+  const { messages, onChunk, systemInstruction, image, preferredProvider = "auto", responseSchema, temperature, timeoutMs, signal } = options;
+
+  const gemini = getGeminiClient();
+  if (gemini) {
+    try {
+      const fullText = await callGeminiStream(messages, onChunk, systemInstruction, image, responseSchema, timeoutMs, signal);
+      return {
+        text: fullText,
+        providerUsed: "gemini"
+      };
+    } catch (streamErr: any) {
+      console.warn("[AIService] Stream call failed, falling back to standard executeAIRequest:", streamErr?.message || streamErr);
+    }
+  }
+
+  // Fallback to non-streaming execution if streaming fails or Gemini is unavailable
+  const res = await executeAIRequest({
+    messages,
+    systemInstruction,
+    image,
+    preferredProvider,
+    responseSchema,
+    temperature,
+    timeoutMs,
+    signal
+  });
+  if (res.text) {
+    onChunk(res.text);
+  }
+  return res;
+}
+
 // Main execution function with retries and automatic fallback
 export async function executeAIRequest(options: {
   messages: AIMessage[];
@@ -903,6 +968,89 @@ export async function executeAIRequest(options: {
 // PROVIDER IMPLEMENTATIONS
 // ----------------------------------------------------
 
+export async function callGeminiStream(
+  messages: AIMessage[],
+  onChunk: (chunk: string) => void,
+  systemInstruction?: string,
+  image?: string,
+  responseSchema?: any,
+  timeoutMs?: number,
+  signal?: AbortSignal
+): Promise<string> {
+  const gemini = getGeminiClient();
+  if (!gemini) throw new Error("Gemini API key is not configured");
+
+  const contents: any[] = [];
+  
+  messages.forEach((m, idx) => {
+    const isLast = idx === messages.length - 1;
+    const parts: any[] = [{ text: m.content }];
+
+    if (isLast && image) {
+      let mimeType = "image/png";
+      let base64Data = image.trim();
+
+      if (base64Data.startsWith("data:")) {
+        const urlParts = base64Data.split(";base64,");
+        if (urlParts.length === 2) {
+          mimeType = urlParts[0].replace("data:", "").trim();
+          base64Data = urlParts[1].trim();
+        }
+      }
+
+      parts.push({
+        inlineData: {
+          mimeType,
+          data: base64Data
+        }
+      });
+    }
+
+    contents.push({
+      role: m.role === "model" || m.role === "assistant" ? "model" : "user",
+      parts
+    });
+  });
+
+  const config: any = {};
+  if (systemInstruction) {
+    config.systemInstruction = systemInstruction;
+  }
+  if (responseSchema) {
+    config.responseMimeType = "application/json";
+    config.responseSchema = responseSchema;
+  }
+
+  const responseStream = await gemini.models.generateContentStream({
+    model: "gemini-3.6-flash",
+    contents,
+    config: {
+      ...config,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+        signal
+      }
+    }
+  });
+
+  let fullText = "";
+  for await (const chunk of responseStream) {
+    if (chunk.text) {
+      fullText += chunk.text;
+      onChunk(chunk.text);
+    }
+  }
+
+  if (!fullText) {
+    fullText = await callGemini(messages, systemInstruction, image, responseSchema, timeoutMs, signal);
+    onChunk(fullText);
+  }
+
+  return fullText;
+}
+
 async function callGemini(
   messages: AIMessage[],
   systemInstruction?: string,
@@ -984,8 +1132,13 @@ async function callGemini(
     }, signal);
   };
 
+  const fallbackModels = [
+    "gemini-3.1-pro-preview",
+    "gemini-flash-latest"
+  ];
+
   try {
-    return await executeCall("gemini-2.5-flash");
+    return await executeCall("gemini-3.6-flash");
   } catch (err: any) {
     const errMsg = err?.message || String(err);
     if (
@@ -1001,15 +1154,13 @@ async function callGemini(
       errMsg.includes("404") ||
       errMsg.includes("not found")
     ) {
-      console.info(`[AIService] gemini-2.5-flash failed with: ${errMsg}. Instantly falling back to gemini-2.5-lite...`);
-      try {
-        return await executeCall("gemini-2.5-lite");
-      } catch (fallbackErr) {
-        console.error("[AIService] gemini-2.5-lite fallback failed, trying gemini-2.5-pro:", fallbackErr);
+      console.info(`[AIService] gemini-3.6-flash failed with: ${errMsg}. Attempting fallback models...`);
+      for (const fallbackModel of fallbackModels) {
         try {
-          return await executeCall("gemini-2.5-pro");
-        } catch (proErr) {
-          console.error("[AIService] gemini-2.5-pro fallback failed:", proErr);
+          console.info(`[AIService] Trying fallback model: ${fallbackModel}...`);
+          return await executeCall(fallbackModel);
+        } catch (fallbackErr: any) {
+          console.warn(`[AIService] Fallback model ${fallbackModel} failed:`, fallbackErr?.message || fallbackErr);
         }
       }
     }
@@ -1178,7 +1329,7 @@ async function callOpenRouter(
   if (!apiKey) throw new Error("OpenRouter API key is not configured");
 
   const formattedMessages = convertMessagesToOpenAIFormat(messages, systemInstruction);
-  const model = "google/gemini-2.5-flash";
+  const model = "google/gemini-3.6-flash";
 
   if (image && formattedMessages.length > 0) {
     const lastMsg = formattedMessages[formattedMessages.length - 1];
@@ -1352,64 +1503,31 @@ export interface GenerateImageOptions {
 
 export interface GenerateImageResult {
   imageUrl: string;
-  providerUsed: "gemini" | "openai" | "fal";
+  providerUsed: "gemini" | "openai" | "fal" | "together" | "pollinations" | "infographic-engine";
+  fallbackUsed?: boolean;
+  degraded?: boolean;
   revisedPrompt?: string;
   cached?: boolean;
 }
 
+import { routeSmartImage, classifyImagePrompt, ImageCategory, SmartImageRoutingResult } from "./smartImageRouter";
+
 export function enhancePromptForCategory(prompt: string, category?: string, quality?: string): string {
   if (!prompt || typeof prompt !== "string") return "";
-  const base = prompt.trim();
-  const qualitySuffix = quality === "hd" ? ", ultra high definition, 8k resolution, crisp vector rendering, highly detailed" : "";
-
-  switch (category?.toLowerCase().replace(/\s+/g, "-")) {
-    case "educational-diagrams":
-    case "educational-diagram":
-      return `Clear academic textbook diagram, labeled educational illustration, clean white background, vector graphic style, accurate and professional: ${base}${qualitySuffix}`;
-    case "biology-diagrams":
-    case "biology":
-      return `Accurate scientific biology diagram, anatomy and organ systems, clearly labeled parts, high contrast educational illustration: ${base}${qualitySuffix}`;
-    case "chemistry-illustrations":
-    case "chemistry":
-      return `Detailed chemistry molecular structure, chemical reaction mechanism diagram, laboratory glassware, clean scientific illustration: ${base}${qualitySuffix}`;
-    case "physics-diagrams":
-    case "physics":
-      return `Physics optics, mechanics, or circuit vector diagram, clear force vectors and labeled parameters, educational textbook style: ${base}${qualitySuffix}`;
-    case "geography-maps":
-    case "geography":
-      return `Detailed geographical map illustration, topography, rivers, boundaries, cartographic labels, clean layout: ${base}${qualitySuffix}`;
-    case "mind-maps":
-    case "mindmap":
-      return `Visually structured mind map, central concept with branching topic nodes, clean typography, color-coded branches, high legibility: ${base}${qualitySuffix}`;
-    case "flowcharts":
-    case "flowchart":
-      return `Clean algorithmic flowchart, process diagram with decision nodes, arrows, structured workflow layout, high contrast: ${base}${qualitySuffix}`;
-    case "charts":
-    case "chart":
-      return `Clean infographics data chart, bar chart or pie graph, clear labels and legend, modern presentation design: ${base}${qualitySuffix}`;
-    case "ai-art":
-      return `Stunning artistic masterpiece, expressive lighting, rich colors, intricate details, artistic concept: ${base}${qualitySuffix}`;
-    case "logos":
-    case "logo":
-      return `Minimalist modern logo design, clean vector graphic, solid flat colors, isolated on white background, iconic emblem: ${base}${qualitySuffix}`;
-    case "icons":
-    case "icon":
-      return `App icon design, modern clean UI icon, flat design, smooth gradient, sharp outline, isolated on neutral background: ${base}${qualitySuffix}`;
-    case "posters":
-    case "poster":
-      return `Eye-catching promotional poster design, strong typography, dramatic layout, vibrant color palette, high impact: ${base}${qualitySuffix}`;
-    default:
-      return `${base}${qualitySuffix}`;
-  }
+  const smart = routeSmartImage(prompt, category, quality);
+  return smart.enhancedPrompt;
 }
 
 export const enhancePromptByCategory = enhancePromptForCategory;
+export { routeSmartImage, classifyImagePrompt };
+export type { ImageCategory, SmartImageRoutingResult };
 
 export async function generateImagePollinations(
   prompt: string,
   aspectRatio = "1:1",
   signal?: AbortSignal,
-  timeoutMs = 25000
+  timeoutMs = 25000,
+  negativePrompt?: string
 ): Promise<{ imageUrl: string; revisedPrompt?: string }> {
   let width = 1024;
   let height = 1024;
@@ -1420,7 +1538,10 @@ export async function generateImagePollinations(
 
   return await retryWithBackoff(async () => {
     const seed = Math.floor(Math.random() * 1000000);
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}`;
+    let pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}`;
+    if (negativePrompt && negativePrompt.trim()) {
+      pollinationsUrl += `&negative=${encodeURIComponent(negativePrompt.trim())}`;
+    }
 
     try {
       const res = await fetchWithTimeout(pollinationsUrl, { signal }, timeoutMs);
@@ -1442,7 +1563,7 @@ export async function generateImagePollinations(
     }
 
     recordImageProviderHealthSuccess("pollinations");
-    return { imageUrl: `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true&seed=${Math.floor(Math.random() * 1000000)}`, revisedPrompt: prompt };
+    return { imageUrl: pollinationsUrl, revisedPrompt: prompt };
   }, 2, 800, undefined, signal);
 }
 
@@ -1459,10 +1580,9 @@ export async function generateImageGemini(
     throw new Error("GEMINI_API_KEY is not configured or is invalid");
   }
 
-  // Fast-path check: if marked unhealthy (e.g. 404 unsupported on key), fallback immediately
+  // Fast-path check: if marked unhealthy (e.g. 404 unsupported on key), fail fast
   if (imageProviderHealthState.gemini.status === "unhealthy") {
-    serverLogger.info("AIServiceImage", "Gemini Imagen marked unhealthy; routing directly to Pollinations AI fallback.");
-    return await generateImagePollinations(prompt, aspectRatio, signal, timeoutMs);
+    throw new Error("Gemini Imagen marked unhealthy; skipping Gemini.");
   }
 
   let geminiRatio = "1:1";
@@ -1578,11 +1698,10 @@ export async function generateImageGemini(
 
     if (is404Error) {
       recordImageProviderHealthFailure("gemini", "Gemini Imagen models unavailable on this API key", true);
+      throw new Error("Gemini Imagen models unavailable on this API key");
     }
 
-    // Fallback to Pollinations AI if Gemini Imagen endpoints fail or return 404
-    serverLogger.info("AIServiceImage", "Gemini Imagen endpoints unavailable on current key; using Pollinations AI fallback.");
-    return await generateImagePollinations(prompt, aspectRatio, signal, timeoutMs);
+    throw new Error("Gemini Imagen endpoints failed to generate image.");
   }, 1, 500, undefined, signal);
 }
 
@@ -1606,35 +1725,59 @@ export async function generateImageOpenAI(
   return await retryWithBackoff(async () => {
     return await withTimeoutAndSignal(
       async (mergedSignal) => {
-        const response = await fetch("https://api.openai.com/v1/images/generations", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey.trim()}`
-          },
-          body: JSON.stringify({
-            model: "dall-e-3",
+        const candidateModels = ["gpt-image-1", "gpt-image-1-mini", "chatgpt-image-latest", "dall-e-3"];
+        let lastErrorMsg = "";
+        let responseData: any = null;
+
+        for (const modelCandidate of candidateModels) {
+          const bodyPayload: Record<string, any> = {
+            model: modelCandidate,
             prompt,
             n: 1,
             size,
-            quality: quality === "hd" ? "hd" : "standard",
-            response_format: "b64_json"
-          }),
-          signal: mergedSignal
-        });
+            quality: quality === "hd" ? "hd" : "standard"
+          };
 
-        if (!response.ok) {
+          const response = await fetch("https://api.openai.com/v1/images/generations", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${apiKey.trim()}`
+            },
+            body: JSON.stringify(bodyPayload),
+            signal: mergedSignal
+          });
+
+          if (response.ok) {
+            responseData = await response.json();
+            break;
+          }
+
           const errData = await response.json().catch(() => ({}));
           const errMsg = errData.error?.message || response.statusText;
+          lastErrorMsg = errMsg;
+
           const isHardAuth = response.status === 401 || response.status === 403;
           if (isHardAuth) {
+            isOpenAIDisabled = true;
             recordImageProviderHealthFailure("openai", `OpenAI HTTP ${response.status}: ${errMsg}`, true);
+            throw new Error(`OpenAI HTTP ${response.status}: ${errMsg}`);
           }
-          throw new Error(`OpenAI DALL-E 3 HTTP ${response.status}: ${errMsg}`);
+
+          // If the model doesn't exist or parameter error, try next candidate model
+          if (errMsg.includes("does not exist") || errMsg.includes("Unknown parameter")) {
+            continue;
+          }
+
+          // Any other error (e.g. 429 quota/billing), break and throw
+          throw new Error(`OpenAI Image HTTP ${response.status}: ${errMsg}`);
         }
 
-        const data = await response.json();
-        const item = data.data?.[0];
+        if (!responseData) {
+          throw new Error(`OpenAI Image failed: ${lastErrorMsg || "No supported model responded"}`);
+        }
+
+        const item = responseData.data?.[0];
         if (!item) {
           throw new Error("OpenAI DALL-E 3 returned empty data array.");
         }
@@ -1709,6 +1852,7 @@ export async function generateImageFal(
           const errMsg = errData.detail || errData.error || response.statusText;
           const isHardAuth = response.status === 401 || response.status === 403;
           if (isHardAuth) {
+            isFalDisabled = true;
             recordImageProviderHealthFailure("fal", `Fal.ai HTTP ${response.status}: ${errMsg}`, true);
           }
           throw new Error(`Fal.ai FLUX HTTP ${response.status}: ${errMsg}`);
@@ -1760,7 +1904,8 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
     throw new Error("A valid non-empty prompt string is required for image generation.");
   }
 
-  const revisedPrompt = enhancePromptForCategory(prompt, category, quality);
+  const smartRoute = routeSmartImage(prompt, category, quality);
+  const revisedPrompt = smartRoute.enhancedPrompt;
   const cacheKey = `${revisedPrompt}_${aspectRatio}_${quality}`;
 
   const cached = imageCache.get(cacheKey);
@@ -1791,13 +1936,13 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
       const healthMap = checkImageProviderHealth();
       const normalizedImageProvider = normalizeProvider(preferredProvider);
 
-      let providersToTry: ("fal" | "gemini" | "openai")[] = [];
+      let providersToTry: ("fal" | "together" | "gemini" | "openai")[] = [];
 
       if (normalizedImageProvider !== "auto") {
-        providersToTry = [normalizedImageProvider as ("fal" | "gemini" | "openai")];
+        providersToTry = [normalizedImageProvider as ("fal" | "together" | "gemini" | "openai")];
       } else {
-        // Primary fallback sequence for image generation: Fal -> Gemini -> OpenAI
-        const defaultSequence: ("fal" | "gemini" | "openai")[] = ["fal", "gemini", "openai"];
+        // Primary fallback sequence for image generation: Fal -> Together -> Gemini -> OpenAI
+        const defaultSequence: ("fal" | "together" | "gemini" | "openai")[] = ["fal", "together", "gemini", "openai"];
         providersToTry = defaultSequence.filter(p => config[p]);
 
         // Prioritize healthy/degraded providers over known unhealthy ones in auto mode
@@ -1844,6 +1989,21 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
 
           if (provider === "fal") {
             genResult = await generateImageFal(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
+          } else if (provider === "together") {
+            genResult = await generateImageTogether({
+              prompt: revisedPrompt,
+              negative_prompt: options.negativePrompt,
+              model: options.model,
+              aspectRatio,
+              width: options.width,
+              height: options.height,
+              steps: options.steps,
+              guidance: options.guidanceScale,
+              seed: options.seed,
+              n: options.numImages,
+              signal,
+              timeoutMs
+            });
           } else if (provider === "gemini") {
             genResult = await generateImageGemini(revisedPrompt, aspectRatio, quality, signal, timeoutMs);
           } else if (provider === "openai") {
@@ -1911,11 +2071,13 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
 
       serverLogger.warn("AIServiceImage", `All configured image providers failed or none available (${errors.join("; ") || "No API keys"}). Falling back to Pollinations AI.`);
       try {
-        const polRes = await generateImagePollinations(revisedPrompt, aspectRatio, signal, timeoutMs);
+        const polRes = await generateImagePollinations(revisedPrompt, aspectRatio, signal, timeoutMs, smartRoute.negativeConstraintsText);
         return {
           imageUrl: polRes.imageUrl,
-          providerUsed: "fal", // Preserve frontend compatibility badge
-          revisedPrompt
+          providerUsed: "pollinations",
+          fallbackUsed: true,
+          degraded: true,
+          revisedPrompt: polRes.revisedPrompt || revisedPrompt
         };
       } catch (finalErr: any) {
         throw new Error(`All image generation attempts failed including fallback:\n${errors.join("\n")}`);
@@ -1926,7 +2088,7 @@ export async function executeImageGenRequest(options: ImageGenOptions): Promise<
 
 export const generateImageWithFallback = executeImageGenRequest;
 
-import { generateVideo, getGenerationStatus as getVideoStatus, cancelGeneration as cancelVideoGen, getUserVideoHistory } from "./videoProviders/orchestrator";
+import { generateVideo, getGenerationStatus as getVideoStatus, cancelGeneration as cancelVideoGen, getUserVideoHistory, getConfiguredVideoProviders } from "./videoProviders/orchestrator";
 import { VideoGenerationInput, NormalizedVideoResult } from "./videoProviders/types";
 
 export async function executeVideoGenRequest(
@@ -1957,7 +2119,7 @@ export async function executeVideoGenRequest(
   );
 }
 
-export { getVideoStatus, cancelVideoGen, getUserVideoHistory };
+export { getVideoStatus, cancelVideoGen, getUserVideoHistory, getConfiguredVideoProviders };
 
 export { AIRouter } from "./aiRouter";
 export type { AITaskType, AIRouterOptions, AIRouterResult } from "./aiRouter";

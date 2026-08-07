@@ -240,8 +240,8 @@ export function getDefaultModelForProvider(provider: string, taskType: AITaskTyp
   switch (provider) {
     case "gemini":
       if (taskType === "image_generation" || taskType === "image_editing") return "imagen-3.0-generate-002";
-      if (taskType === "deep_reasoning" || taskType === "math_solving") return "gemini-2.5-pro";
-      return "gemini-2.5-flash";
+      if (taskType === "deep_reasoning" || taskType === "math_solving") return "gemini-3.1-pro-preview";
+      return "gemini-3.6-flash";
     case "openai":
       if (taskType === "image_generation" || taskType === "image_editing") return "dall-e-3";
       if (taskType === "deep_reasoning" || taskType === "math_solving" || taskType === "code_generation") return "gpt-4o";

@@ -21,7 +21,43 @@ export async function generateVeo(input: VideoGenerationInput): Promise<Normaliz
       }
     });
 
-    const modelCandidates = ["veo-3.1-lite-generate-preview", "veo-3.0-fast-generate-001", "veo-2.0-generate-001"];
+    // Discover available models via SDK model listing
+    let availableModels: string[] = [];
+    try {
+      const listRes = await ai.models.list();
+      if (Symbol.asyncIterator in Object(listRes)) {
+        for await (const m of (listRes as any)) {
+          const mName = m.name || m.model || "";
+          if (mName) availableModels.push(mName);
+        }
+      } else if (Array.isArray((listRes as any)?.models)) {
+        for (const m of (listRes as any).models) {
+          const mName = m.name || m.model || "";
+          if (mName) availableModels.push(mName);
+        }
+      } else if (Array.isArray(listRes)) {
+        for (const m of listRes as any[]) {
+          const mName = m.name || m.model || "";
+          if (mName) availableModels.push(mName);
+        }
+      }
+    } catch (listErr: any) {
+      console.warn(`[Veo] Model list fetch failed: ${listErr?.message || listErr}`);
+    }
+
+    const veoModels = availableModels.filter(m => m.toLowerCase().includes("veo"));
+    console.info(`[Veo] Discovered ${availableModels.length} models via SDK. Veo candidates: [${veoModels.join(", ")}]`);
+
+    if (veoModels.length === 0 && availableModels.length > 0) {
+      throw new VideoProviderError(
+        "veo",
+        `No Veo video generation models found for this API key/project (available models: ${availableModels.slice(0, 10).join(", ")}...). This is an access/billing/whitelist limitation on the Google Cloud project.`,
+        "not_configured",
+        false
+      );
+    }
+
+    const modelCandidates = veoModels.length > 0 ? veoModels : ["models/veo-3.1-generate-preview", "models/veo-3.1-fast-generate-preview", "models/veo-3.1-lite-generate-preview"];
     let operation: any = null;
     let lastError: any = null;
 
@@ -52,6 +88,7 @@ export async function generateVeo(input: VideoGenerationInput): Promise<Normaliz
 
         operation = await ai.models.generateVideos(genOptions);
         if (operation && operation.name) {
+          console.info(`[Veo] Successfully initiated video generation operation with model: [${modelName}]`);
           break;
         }
       } catch (err: any) {

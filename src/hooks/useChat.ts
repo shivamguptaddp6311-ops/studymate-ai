@@ -31,7 +31,8 @@ function sanitizeMessage(m: any): ChatMessage {
     searchError: Boolean(m?.searchError),
     videoSettingsPicker: m?.videoSettingsPicker && typeof m.videoSettingsPicker === "object" ? m.videoSettingsPicker : undefined,
     videoSegments: Array.isArray(m?.videoSegments) ? m.videoSegments : undefined,
-    lectureJobId: typeof m?.lectureJobId === "string" ? m.lectureJobId : undefined
+    lectureJobId: typeof m?.lectureJobId === "string" ? m.lectureJobId : undefined,
+    visualResult: m?.visualResult && typeof m.visualResult === "object" ? m.visualResult : undefined
   };
 }
 

@@ -300,10 +300,12 @@ export function prepareConversationHistory(rawHistory: any[]): {
   // Filter valid entries
   const validTurns: AIMessage[] = [];
   rawHistory.forEach(h => {
-    if (h && typeof h === "object" && h.message && typeof h.message === "string" && h.message.trim().length > 0) {
-      const role: "user" | "model" = h.role === "user" ? "user" : "model";
-      const content = h.message.trim();
-      validTurns.push({ role, content });
+    if (h && typeof h === "object") {
+      const content = String(h.content || h.message || h.text || "").trim();
+      if (content.length > 0) {
+        const role: "user" | "model" = (h.role === "user" || h.role === "human") ? "user" : "model";
+        validTurns.push({ role, content });
+      }
     }
   });
 
@@ -444,7 +446,7 @@ User Message: "${userMessage}"`;
 
           const res = await Promise.race([
             ai.models.generateContent({
-              model: "gemini-2.5-flash",
+              model: "gemini-3.6-flash",
               contents: [{ role: "user", parts: [{ text: prompt }] }],
               config: { temperature: 0.1, maxOutputTokens: 100 }
             }),

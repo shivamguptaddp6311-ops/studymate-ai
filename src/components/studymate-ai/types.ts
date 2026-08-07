@@ -1,4 +1,5 @@
 import { UserProfile } from "../../types";
+import { VisualResult } from "../../types/visual";
 
 export interface VideoSegment {
   order: number;
@@ -85,6 +86,9 @@ export interface ChatMessage {
   // Structured Quiz & Flashcards Data
   quizData?: QuizData;
   flashcardsData?: FlashcardDeckData;
+
+  // Educational Visual Engine Result
+  visualResult?: VisualResult;
 
   // Inline video lecture features
   videoSettingsPicker?: VideoSettingsPickerData;

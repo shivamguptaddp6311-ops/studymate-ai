@@ -33,7 +33,7 @@ export interface GeneratedImageRecord {
   category?: string;
   aspectRatio: "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
   quality: "standard" | "medium" | "hd" | "4k";
-  providerUsed: "gemini" | "openai" | "fal";
+  providerUsed: "gemini" | "openai" | "fal" | "together" | "pollinations" | "infographic-engine";
   createdAt: string;
   isFavorite?: boolean;
 }
@@ -98,7 +98,11 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
   const [aspectRatio, setAspectRatio] = useState<"1:1" | "16:9" | "9:16" | "4:3" | "3:4">("1:1");
   const [quality, setQuality] = useState<"standard" | "medium" | "hd" | "4k">("hd");
   const [numImages, setNumImages] = useState(1);
-  const [preferredProvider, setPreferredProvider] = useState<"auto" | "gemini" | "openai" | "fal">("auto");
+  const [preferredProvider, setPreferredProvider] = useState<"auto" | "gemini" | "openai" | "fal" | "together">("auto");
+  const [togetherModel, setTogetherModel] = useState("black-forest-labs/FLUX.1-schnell");
+  const [steps, setSteps] = useState<number | undefined>(undefined);
+  const [guidanceScale, setGuidanceScale] = useState<number | undefined>(undefined);
+  const [seed, setSeed] = useState<string>("");
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [loading, setLoading] = useState(false);
@@ -171,15 +175,7 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
     ];
 
     try {
-      // Build styled prompt with prefix and negative prompt directives
-      const selectedStyleObj = STYLES.find((s) => s.id === style);
-      let finalPrompt = textToUse.trim();
-      if (selectedStyleObj && selectedStyleObj.prefix && !finalPrompt.toLowerCase().includes(selectedStyleObj.id)) {
-        finalPrompt = `${selectedStyleObj.prefix}${finalPrompt}`;
-      }
-      if (negativePrompt.trim()) {
-        finalPrompt += ` [Avoid: ${negativePrompt.trim()}]`;
-      }
+      const finalPrompt = textToUse.trim();
 
       // Generate batch of requests (1 to 4 images)
       const token = localStorage.getItem("studymate_token") || localStorage.getItem("studymate_auth_token_v1") || "";
@@ -199,7 +195,12 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
             category: style,
             aspectRatio,
             quality: quality === "4k" ? "hd" : quality,
-            preferredProvider
+            preferredProvider,
+            negativePrompt: negativePrompt.trim() || undefined,
+            model: togetherModel,
+            steps: steps ? Number(steps) : undefined,
+            guidanceScale: guidanceScale ? Number(guidanceScale) : undefined,
+            seed: seed && !isNaN(Number(seed)) ? Number(seed) : undefined
           }),
           signal: controller.signal
         }).then(async (res) => {
@@ -375,12 +376,18 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
 
   const getProviderBadge = (provider?: string) => {
     switch (provider) {
+      case "together":
+        return { label: "Together AI FLUX", bg: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" };
       case "gemini":
         return { label: "Google Gemini Imagen", bg: "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20" };
       case "openai":
         return { label: "OpenAI DALL-E 3", bg: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" };
       case "fal":
         return { label: "Fal.ai Flux", bg: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20" };
+      case "pollinations":
+        return { label: "Pollinations AI", bg: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20" };
+      case "infographic-engine":
+        return { label: "Infographic Engine", bg: "bg-teal-500/10 text-teal-600 dark:text-teal-400 border-teal-500/20" };
       default:
         return { label: "Multi-Provider AI", bg: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20" };
     }
@@ -619,28 +626,110 @@ export const ImageGenerator: React.FC<ImageGeneratorProps> = ({
               </button>
 
               {showAdvanced && (
-                <div className="p-3.5 bg-white dark:bg-slate-900 space-y-2 border-t border-slate-200 dark:border-slate-800">
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-xs">
-                    {[
-                      { id: "auto", name: "Auto (Gemini → OpenAI → Fal)" },
-                      { id: "gemini", name: "Google Gemini Imagen" },
-                      { id: "openai", name: "OpenAI DALL-E 3" },
-                      { id: "fal", name: "Fal.ai Flux" }
-                    ].map((prov) => (
-                      <button
-                        key={prov.id}
-                        type="button"
-                        onClick={() => setPreferredProvider(prov.id as any)}
-                        className={`p-2 rounded-lg border text-center transition cursor-pointer ${
-                          preferredProvider === prov.id
-                            ? "bg-purple-100 dark:bg-purple-950/60 border-purple-500 text-purple-700 dark:text-purple-300 font-bold"
-                            : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400"
-                        }`}
-                      >
-                        {prov.name}
-                      </button>
-                    ))}
+                <div className="p-3.5 bg-white dark:bg-slate-900 space-y-3.5 border-t border-slate-200 dark:border-slate-800">
+                  <div>
+                    <span className="block text-[11px] font-bold text-slate-500 mb-1.5">Select Preferred Provider</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5 text-xs">
+                      {[
+                        { id: "auto", name: "Auto Router" },
+                        { id: "together", name: "Together AI (FLUX)" },
+                        { id: "gemini", name: "Google Gemini" },
+                        { id: "openai", name: "OpenAI DALL-E" },
+                        { id: "fal", name: "Fal.ai Flux" }
+                      ].map((prov) => (
+                        <button
+                          key={prov.id}
+                          type="button"
+                          onClick={() => setPreferredProvider(prov.id as any)}
+                          className={`p-2 rounded-lg border text-center transition cursor-pointer text-xs ${
+                            preferredProvider === prov.id
+                              ? "bg-purple-100 dark:bg-purple-950/60 border-purple-500 text-purple-700 dark:text-purple-300 font-bold shadow-sm"
+                              : "bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:border-slate-300 dark:hover:border-slate-600"
+                          }`}
+                        >
+                          {prov.name}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+
+                  {/* Together AI Model Selection & Hyperparameters */}
+                  {(preferredProvider === "together" || preferredProvider === "auto") && (
+                    <div className="p-3 rounded-xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-900/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                          Together AI Settings
+                        </span>
+                        <span className="text-[10px] text-amber-600 dark:text-amber-400 font-mono">
+                          API Key Configured
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                            Model Architecture
+                          </label>
+                          <select
+                            value={togetherModel}
+                            onChange={(e) => setTogetherModel(e.target.value)}
+                            className="w-full p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          >
+                            <option value="black-forest-labs/FLUX.1-schnell">FLUX.1 Schnell (Fast, 4 steps)</option>
+                            <option value="black-forest-labs/FLUX.1-dev">FLUX.1 Dev (Pro Quality, 28 steps)</option>
+                            <option value="black-forest-labs/FLUX.1-schnell-Free">FLUX.1 Schnell Free</option>
+                            <option value="stabilityai/stable-diffusion-xl-base-1.0">Stable Diffusion XL 1.0</option>
+                            <option value="stabilityai/stable-diffusion-2-1">Stable Diffusion 2.1</option>
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                            Inference Steps ({steps ?? (togetherModel.includes("schnell") ? 4 : 28)})
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={50}
+                            placeholder={togetherModel.includes("schnell") ? "4" : "28"}
+                            value={steps ?? ""}
+                            onChange={(e) => setSteps(e.target.value ? parseInt(e.target.value) : undefined)}
+                            className="w-full p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                            Guidance Scale ({guidanceScale ?? 3.5})
+                          </label>
+                          <input
+                            type="number"
+                            step={0.5}
+                            min={1}
+                            max={20}
+                            placeholder="3.5"
+                            value={guidanceScale ?? ""}
+                            onChange={(e) => setGuidanceScale(e.target.value ? parseFloat(e.target.value) : undefined)}
+                            className="w-full p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                            Random Seed (Optional)
+                          </label>
+                          <input
+                            type="number"
+                            placeholder="e.g. 42195"
+                            value={seed}
+                            onChange={(e) => setSeed(e.target.value)}
+                            className="w-full p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-xs font-medium focus:outline-none focus:ring-1 focus:ring-amber-500"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

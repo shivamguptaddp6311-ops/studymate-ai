@@ -87,8 +87,8 @@ export async function fetchWithRetry<T = any>(
 
         const errorMessage = errorData.error || errorData.message || `HTTP ${status} Error`;
 
-        // Check if retryable (5xx, 429 rate limit, network timeout)
-        const isRetryable = status === 429 || status >= 500;
+        // Check if retryable (5xx, 429 rate limit, 409 conflict, network timeout)
+        const isRetryable = status === 429 || status === 409 || status >= 500;
         if (!isRetryable || attempt === retries) {
           throw new Error(errorMessage);
         }

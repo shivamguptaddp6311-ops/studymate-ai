@@ -22,6 +22,15 @@ export interface FetchJsonOptions extends RequestInit {
   timeoutMs?: number;
 }
 
+function redactSecrets(text: string): string {
+  if (!text) return text;
+  return text
+    .replace(/(Bearer\s+)[A-Za-z0-9_\-\.\~]+/gi, "$1[REDACTED]")
+    .replace(/(Key\s+)[A-Za-z0-9_\-\.\~]+/gi, "$1[REDACTED]")
+    .replace(/(key=)[A-Za-z0-9_\-\.\~]+/gi, "$1[REDACTED]")
+    .replace(/(API-KEY[:=]\s*)[A-Za-z0-9_\-\.\~]+/gi, "$1[REDACTED]");
+}
+
 export async function fetchJson<T = any>(
   url: string,
   options: FetchJsonOptions = {}
@@ -66,18 +75,36 @@ export async function fetchJson<T = any>(
       jsonData = JSON.parse(textData);
     } catch {
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status} ${res.statusText}: ${textData.slice(0, 200)}`);
+        const redactedUrl = redactSecrets(url);
+        const snippet = redactSecrets(textData.slice(0, 500));
+        console.error(`[fetchJson] HTTP ${res.status} ${res.statusText} calling ${redactedUrl}. Body: ${snippet}`);
+        throw new Error(`HTTP ${res.status} ${res.statusText}: ${snippet}`);
       }
-      throw new Error(`Invalid JSON response received from ${url}`);
+      throw new Error(`Invalid JSON response received from ${redactSecrets(url)}`);
     }
 
     if (!res.ok) {
-      const errorMsg =
+      const redactedUrl = redactSecrets(url);
+      const redactedBody = redactSecrets(JSON.stringify(jsonData));
+      console.error(`[fetchJson] HTTP ${res.status} ${res.statusText} calling ${redactedUrl}. Response body:`, redactedBody);
+
+      let extractedMsg =
         jsonData?.message ||
         jsonData?.error?.message ||
+        (typeof jsonData?.detail === "string" ? jsonData.detail : null) ||
+        (Array.isArray(jsonData?.detail) ? jsonData.detail.map((d: any) => d.msg || JSON.stringify(d)).join("; ") : null) ||
         jsonData?.ErrMsg ||
-        jsonData?.error ||
-        `HTTP ${res.status} ${res.statusText}`;
+        (typeof jsonData?.error === "string" ? jsonData.error : null) ||
+        jsonData?.error_description ||
+        null;
+
+      if (!extractedMsg) {
+        extractedMsg = redactedBody.slice(0, 300);
+      } else if (typeof extractedMsg !== "string") {
+        extractedMsg = JSON.stringify(extractedMsg);
+      }
+
+      const errorMsg = `HTTP ${res.status} ${res.statusText} - ${extractedMsg}`;
       const err: any = new Error(errorMsg);
       err.status = res.status;
       err.responseBody = jsonData;
@@ -91,7 +118,7 @@ export async function fetchJson<T = any>(
       signal.removeEventListener("abort", onExternalAbort);
     }
     if (controller.signal.aborted && !signal?.aborted) {
-      throw new Error(`Request timeout of ${timeoutMs}ms exceeded while calling ${url}`);
+      throw new Error(`Request timeout of ${timeoutMs}ms exceeded while calling ${redactSecrets(url)}`);
     }
     throw err;
   }

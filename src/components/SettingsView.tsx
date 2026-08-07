@@ -89,7 +89,7 @@ export default function SettingsView({
   const [selectedProvider, setSelectedProvider] = useState<string>(() => {
     return localStorage.getItem("studymate_ai_provider") || "auto";
   });
-  const [providerStatuses, setProviderStatuses] = useState<Record<string, boolean>>({});
+  const [providerStatuses, setProviderStatuses] = useState<Record<string, any>>({});
 
   const [timeoutLimit, setTimeoutLimit] = useState<number>(() => {
     return Number(localStorage.getItem("studymate_ai_timeout")) || 30000;
@@ -565,6 +565,21 @@ export default function SettingsView({
                           <div className={`w-2 h-2 rounded-full ${providerStatuses.openai ? "bg-emerald-500" : "bg-slate-400"}`} />
                           <span className={`text-[8px] font-extrabold uppercase ${providerStatuses.openai ? "text-emerald-600 dark:text-emerald-400" : "text-slate-400"}`}>
                             {providerStatuses.openai ? "Connected" : "Inactive"}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Together AI Status */}
+                      <div className={`p-3 border rounded-2xl flex flex-col justify-between space-y-2 ${
+                        (providerStatuses.together || providerStatuses.imageProviders?.together) 
+                          ? "bg-amber-50/50 dark:bg-amber-950/20 border-amber-200/60 dark:border-amber-900/40" 
+                          : "bg-slate-50/20 dark:bg-slate-850/10 border-dashed border-slate-100 dark:border-slate-800/80 opacity-60"
+                      }`}>
+                        <span className="text-[10px] font-bold text-slate-700 dark:text-slate-300">Together AI (FLUX)</span>
+                        <div className="flex items-center gap-1.5">
+                          <div className={`w-2 h-2 rounded-full ${(providerStatuses.together || providerStatuses.imageProviders?.together) ? "bg-amber-500" : "bg-slate-400"}`} />
+                          <span className={`text-[8px] font-extrabold uppercase ${(providerStatuses.together || providerStatuses.imageProviders?.together) ? "text-amber-600 dark:text-amber-400" : "text-slate-400"}`}>
+                            {(providerStatuses.together || providerStatuses.imageProviders?.together) ? "Connected" : "Inactive"}
                           </span>
                         </div>
                       </div>

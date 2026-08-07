@@ -233,6 +233,47 @@
         }
       },
       "required": ["id", "provider", "endpoint", "responseTimeMs", "success", "timestamp"]
+    },
+    "VisualCacheDoc": {
+      "title": "VisualCacheDoc",
+      "description": "Global cache for visual intent routing and media search results",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "queryHash": {
+          "type": "string"
+        },
+        "normalizedQuery": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "query": {
+          "type": "string"
+        },
+        "response": {
+          "type": "object"
+        },
+        "license": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "integer"
+        },
+        "expiresAt": {
+          "type": "integer"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": ["id", "queryHash", "normalizedQuery", "provider", "query", "createdAt", "expiresAt", "version"]
     }
   },
   "firestore": {
@@ -259,6 +300,10 @@
     "/aiRequestLogs/{logId}": {
       "schema": "AIRequestLog",
       "description": "AI request performance logs"
+    },
+    "/visual_cache/{cacheId}": {
+      "schema": "VisualCacheDoc",
+      "description": "Global visual content search cache"
     }
   }
 }

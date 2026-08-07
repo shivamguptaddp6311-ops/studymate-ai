@@ -46,42 +46,33 @@ export function ChatHeader({
 
   return (
     <>
-      <header className="h-[68px] min-h-[68px] px-3 md:px-5 border-b border-slate-200/70 dark:border-slate-800/80 bg-white/85 dark:bg-[#0c1326]/85 backdrop-blur-2xl flex items-center justify-between shrink-0 z-30 relative shadow-xs">
-        {/* Left Section: Title, Subtitle, and AI Workspace Dropdown */}
-        <div className="flex flex-col justify-center min-w-0 py-1">
-          <div className="flex items-center space-x-2">
-            <h1 className="font-extrabold text-base md:text-lg text-slate-900 dark:text-slate-100 tracking-tight leading-none">
-              StudyMate AI
-            </h1>
-            <button
-              type="button"
-              onClick={onOpenWorkspacePanel || onOpenSessionsMenu}
-              className="text-[10px] font-extrabold text-purple-600 dark:text-purple-300 bg-purple-50 dark:bg-purple-950/60 hover:bg-purple-100 dark:hover:bg-purple-900/60 px-2.5 py-0.5 rounded-full border border-purple-200/80 dark:border-purple-800/60 transition cursor-pointer flex items-center gap-1 shadow-2xs"
-            >
-              <Sparkles className="w-2.5 h-2.5 text-purple-500" />
-              <span>AI Workspace</span>
-            </button>
-          </div>
+      <header className="header-safe min-h-[56px] md:min-h-[60px] pb-2 px-3 md:px-5 border-b border-slate-200/70 dark:border-slate-800/80 bg-white/85 dark:bg-[#0c1326]/85 backdrop-blur-2xl flex items-center justify-between shrink-0 z-30 relative shadow-xs gap-2">
+        {/* Left Section: App Title & Integrated Active Chat Selector */}
+        <div className="flex items-center space-x-2 md:space-x-3 min-w-0 flex-1">
+          <h1 className="font-extrabold text-sm sm:text-base md:text-lg text-slate-900 dark:text-slate-100 tracking-tight leading-none shrink-0">
+            StudyMate AI
+          </h1>
 
-          {/* Single AI Workspace Button with Dropdown Indicator */}
-          <div className="mt-1">
-            <button
-              type="button"
-              onClick={onOpenWorkspacePanel || onOpenSessionsMenu}
-              className="inline-flex items-center space-x-1.5 text-xs font-semibold px-2.5 py-0.5 bg-slate-100/90 dark:bg-slate-800/70 hover:bg-slate-200/90 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 rounded-lg border border-slate-200/80 dark:border-slate-700/60 transition cursor-pointer max-w-[220px] sm:max-w-[320px] truncate"
-              title="Open AI Workspace panel"
-            >
-              <span className="truncate">{activeSession?.title || "AI Workspace"}</span>
-              <span className="text-[9px] font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 px-1.5 py-0.2 rounded shrink-0">
-                {totalSessionsCount || 1}
-              </span>
-              <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-            </button>
-          </div>
+          {/* Active Conversation / Chat Thread Selector Button */}
+          <button
+            type="button"
+            onClick={onOpenWorkspacePanel || onOpenSessionsMenu}
+            className="inline-flex items-center space-x-1.5 text-xs font-semibold px-2.5 py-1 bg-slate-100/90 dark:bg-slate-800/80 hover:bg-slate-200/90 dark:hover:bg-slate-700/80 text-slate-700 dark:text-slate-200 rounded-xl border border-slate-200/80 dark:border-slate-700/60 transition cursor-pointer max-w-[150px] sm:max-w-[260px] md:max-w-[340px] min-w-0 shadow-2xs group"
+            title="Switch or manage chat threads"
+          >
+            <Sparkles className="w-3 h-3 text-purple-500 shrink-0 group-hover:scale-110 transition-transform" />
+            <span className="truncate text-[11px] sm:text-xs font-bold text-slate-800 dark:text-slate-200">
+              {activeSession?.title || "New Study Chat"}
+            </span>
+            <span className="text-[9px] font-black bg-purple-100 dark:bg-purple-950/80 text-purple-700 dark:text-purple-300 px-1.5 py-0.2 rounded-md shrink-0 border border-purple-200/60 dark:border-purple-800/60">
+              {totalSessionsCount || 1}
+            </span>
+            <ChevronDown className="w-3 h-3 text-slate-400 shrink-0" />
+          </button>
         </div>
 
         {/* Right Section: AI Settings & Fullscreen */}
-        <div className="flex items-center space-x-2 shrink-0">
+        <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
           {/* AI Settings Button */}
           <button
             type="button"

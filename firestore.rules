@@ -83,6 +83,17 @@ service cloud.firestore {
              data.timestamp is string && data.timestamp.size() > 0;
     }
 
+    function isValidVisualCache(data) {
+      return data.id is string && data.id.size() > 0 && data.id.size() <= 128 &&
+             data.queryHash is string && data.queryHash.size() > 0 && data.queryHash.size() <= 128 &&
+             data.normalizedQuery is string && data.normalizedQuery.size() > 0 && data.normalizedQuery.size() <= 500 &&
+             data.provider is string && data.provider.size() > 0 && data.provider.size() <= 128 &&
+             data.query is string && data.query.size() > 0 && data.query.size() <= 1000 &&
+             data.createdAt is int && data.createdAt > 0 &&
+             data.expiresAt is int && data.expiresAt > 0 &&
+             data.version is string;
+    }
+
     // 2. Users Collection
     match /users/{email} {
       allow read: if true;
@@ -134,6 +145,13 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && isValidId(logId) && isValidAIRequestLog(incoming());
       allow update, delete: if false; // AI request telemetry is append-only write-once
+    }
+
+    // 8. Visual Cache Collection
+    match /visual_cache/{cacheId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() && isValidId(cacheId) && isValidVisualCache(incoming());
+      allow delete: if isSignedIn();
     }
   }
 }

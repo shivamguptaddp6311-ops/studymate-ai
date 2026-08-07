@@ -122,6 +122,17 @@ export async function checkFirestoreConnection(): Promise<boolean> {
   }
 }
 
+function isPermanentFirestoreAuthError(errMessage: string | null): boolean {
+  if (!errMessage) return false;
+  const msg = errMessage.toLowerCase();
+  return (
+    msg.includes("permission_denied") ||
+    msg.includes("missing or insufficient permissions") ||
+    msg.includes("unauthenticated") ||
+    msg.includes("could not load the default credentials")
+  );
+}
+
 // FIX: Firestore connection reliability + visibility
 export async function tryFirestoreRecovery(): Promise<boolean> {
   if (!useLocalFallback) return true;
@@ -338,6 +349,60 @@ function getLocalMessages(before?: string, search?: string, limit = 50): ChatMes
 // Load local fallback cache on startup
 loadFallbackDB();
 
+// FIX: recover fallback-only accounts into Firestore
+async function migrateFallbackCacheToFirestore(): Promise<void> {
+  let userMigrated = 0;
+  let userSkipped = 0;
+  let syncMigrated = 0;
+  let syncSkipped = 0;
+
+  try {
+    const userEntries = Object.entries(fallbackCache.users || {});
+    for (const [key, userData] of userEntries) {
+      if (!key || !userData) continue;
+      const normalizedKey = key.toLowerCase().trim();
+      try {
+        const docRef = db.collection("users").doc(normalizedKey);
+        const docSnap = await docRef.get();
+        if (!docSnap.exists) {
+          await docRef.set(userData);
+          userMigrated++;
+        } else {
+          userSkipped++;
+        }
+      } catch (err: any) {
+        console.error(`[Migration] Failed migrating user record for ${normalizedKey}:`, err?.message || err);
+      }
+    }
+
+    const syncEntries = Object.entries(fallbackCache.syncData || {});
+    for (const [key, syncData] of syncEntries) {
+      if (!key || !syncData) continue;
+      const keyTrimmed = key.trim();
+      try {
+        const docRef = db.collection("syncData").doc(keyTrimmed);
+        const docSnap = await docRef.get();
+        if (!docSnap.exists) {
+          await docRef.set(syncData);
+          syncMigrated++;
+        } else {
+          syncSkipped++;
+        }
+      } catch (err: any) {
+        console.error(`[Migration] Failed migrating syncData record for ${keyTrimmed}:`, err?.message || err);
+      }
+    }
+
+    console.log(
+      `[Migration] Fallback cache migration completed. ` +
+      `Users: ${userMigrated} migrated, ${userSkipped} skipped. ` +
+      `SyncData: ${syncMigrated} migrated, ${syncSkipped} skipped.`
+    );
+  } catch (err: any) {
+    console.error("[Migration] Error running fallback cache migration to Firestore:", err?.message || err);
+  }
+}
+
 // FIX: Firestore connection reliability + visibility
 (async () => {
   const maxAttempts = 3;
@@ -348,27 +413,32 @@ loadFallbackDB();
     if (connected) {
       console.log(
         "\n==========================================================" +
-        "\n[Firebase DB] // FIX: Firestore connection reliability + visibility" +
         "\n[Firebase DB] SUCCESS: Connected to Cloud Firestore." +
         "\n[Firebase DB] Primary Database: ACTIVE (Cloud Firestore)" +
         "\n==========================================================\n"
       );
+      // FIX: recover fallback-only accounts into Firestore
+      await migrateFallbackCacheToFirestore();
       break;
     }
+
+    if (isPermanentFirestoreAuthError(lastFirestoreError)) {
+      console.info(`[Firebase DB] Admin SDK credentials not configured for Cloud Firestore access (${lastFirestoreError}). Seamlessly active on local encrypted database fallback.`);
+      break;
+    }
+
     if (attempt < maxAttempts) {
-      console.warn(`[Firebase DB] Connection check attempt ${attempt}/${maxAttempts} failed: ${lastFirestoreError}. Retrying in ${attempt * 3000}ms...`);
-      await new Promise(resolve => setTimeout(resolve, attempt * 3000));
+      console.info(`[Firebase DB] Connection check attempt ${attempt}/${maxAttempts} notice: ${lastFirestoreError}. Retrying in ${attempt * 1000}ms...`);
+      await new Promise(resolve => setTimeout(resolve, attempt * 1000));
     }
   }
 
   if (!connected) {
     useLocalFallback = true;
-    console.error(
+    console.info(
       "\n==========================================================" +
-      "\n[Firebase DB] // FIX: Firestore connection reliability + visibility" +
-      "\n[Firebase DB] WARNING: FIRESTORE CONNECTION FAILED AFTER RETRIES!" +
-      "\n[Firebase DB] Primary Database: INACTIVE (Running on Local Fallback DB)" +
-      `\n[Firebase DB] Error details: ${lastFirestoreError}` +
+      "\n[Firebase DB] Notice: Operating on local encrypted database storage." +
+      `\n[Firebase DB] Details: ${lastFirestoreError || "Local fallback active"}` +
       "\n==========================================================\n"
     );
   }
