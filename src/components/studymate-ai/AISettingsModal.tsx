@@ -93,11 +93,13 @@ export function AISettingsModal({
               className="w-full p-2.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200/80 dark:border-slate-700/80 rounded-xl text-slate-800 dark:text-slate-200 font-bold focus:outline-none"
             >
               <option value="auto">⚡ Auto AI (Intelligent Selector)</option>
-              <option value="gpt-5">🧠 OpenAI GPT-5</option>
-              <option value="gemini">♊ Google Gemini 2.5</option>
-              <option value="claude">🦉 Anthropic Claude 3.5</option>
-              <option value="grok">⚡ xAI Grok 3</option>
-              <option value="deepseek">🐋 DeepSeek R1</option>
+              <option value="openai">🧠 OpenAI GPT-4o Mini</option>
+              <option value="gemini">♊ Google Gemini 2.5 Flash</option>
+              <option value="claude">🦉 Anthropic Claude 3.5 Sonnet</option>
+              <option value="groq">⚡ Groq (Llama 3.3 Fast)</option>
+              <option value="grok">🚀 xAI Grok 3</option>
+              <option value="deepseek">🐋 DeepSeek V3 / R1</option>
+              <option value="openrouter">🌐 OpenRouter Multi-Model</option>
             </select>
           </div>
 

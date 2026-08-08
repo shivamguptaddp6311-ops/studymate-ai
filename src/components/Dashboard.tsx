@@ -393,9 +393,9 @@ export default function Dashboard({
 
         {/* Search Filter Chips Below */}
         <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-          {SEARCH_CHIPS.map((chip) => (
+          {SEARCH_CHIPS.map((chip, idx) => (
             <button
-              key={chip}
+              key={`${chip}-${idx}`}
               onClick={() => {
                 setSearchFilter(chip);
                 onOpenSearch?.();
@@ -497,7 +497,7 @@ export default function Dashboard({
             const isToday = idx === 6;
 
             return (
-              <div key={dayData.day} className="flex flex-col items-center gap-1.5 h-full justify-end">
+              <div key={`${dayData.day}-${idx}`} className="flex flex-col items-center gap-1.5 h-full justify-end">
                 <span className="text-[9px] font-bold text-slate-400">{dayData.hours}h</span>
                 <div className="w-full bg-slate-100 dark:bg-slate-800 rounded-lg h-24 relative flex items-end overflow-hidden">
                   <motion.div
@@ -531,9 +531,9 @@ export default function Dashboard({
 
         <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
           {engineData.recentActivities.length > 0 ? (
-            engineData.recentActivities.map((act) => (
+            engineData.recentActivities.map((act, idx) => (
               <div
-                key={act.eventId}
+                key={`act-${act.eventId || 'act'}-${idx}`}
                 onClick={() => onNavigate(act.metadata?.targetRoute || "ai_chat")}
                 className="min-w-[200px] max-w-[240px] p-3.5 rounded-[20px] bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 shadow-xs hover:border-purple-300 dark:hover:border-purple-700 transition cursor-pointer flex flex-col justify-between space-y-2 shrink-0"
               >

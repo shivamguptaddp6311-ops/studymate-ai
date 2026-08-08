@@ -5,11 +5,13 @@ import { AttachedPdf } from "./PDFUploader";
 
 const MODEL_OPTIONS = [
   { id: "auto", label: "⚡ Auto", fullName: "Auto (Smart Selector)" },
-  { id: "gpt-5", label: "🧠 GPT-5", fullName: "OpenAI GPT-5" },
-  { id: "gemini", label: "♊ Gemini", fullName: "Google Gemini 2.5" },
-  { id: "claude", label: "🦉 Claude", fullName: "Anthropic Claude 3.5" },
-  { id: "grok", label: "⚡ Grok", fullName: "xAI Grok 3" },
-  { id: "deepseek", label: "🐋 DeepSeek", fullName: "DeepSeek R1" },
+  { id: "openai", label: "🧠 OpenAI", fullName: "OpenAI GPT-4o Mini" },
+  { id: "gemini", label: "♊ Gemini", fullName: "Google Gemini 2.5 Flash" },
+  { id: "claude", label: "🦉 Claude", fullName: "Anthropic Claude 3.5 Sonnet" },
+  { id: "groq", label: "⚡ Groq", fullName: "Groq (Llama 3.3 Fast)" },
+  { id: "grok", label: "🚀 Grok", fullName: "xAI Grok 3" },
+  { id: "deepseek", label: "🐋 DeepSeek", fullName: "DeepSeek V3 / R1" },
+  { id: "openrouter", label: "🌐 OpenRouter", fullName: "OpenRouter Multi-Model" },
 ];
 
 interface PromptInputProps {

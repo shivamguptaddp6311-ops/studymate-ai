@@ -10,7 +10,7 @@ import compression from "compression";
 import { rateLimit } from "express-rate-limit";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
-import { executeAIRequest, executeAIStreamRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, executeVideoGenRequest, getVideoStatus, cancelVideoGen, getUserVideoHistory, getConfiguredVideoProviders, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter, getAICacheMetrics, clearAICaches } from "./server/aiService";
+import { executeAIRequest, executeAIStreamRequest, getConfiguredProviders, getConfiguredImageProviders, checkImageProviderHealth, generateImageWithFallback, executeImageGenRequest, executeVideoGenRequest, getVideoStatus, cancelVideoGen, getUserVideoHistory, getConfiguredVideoProviders, AIProvider, AIImageProvider, AIMessage, parseJsonResponse, AIRouter, getAICacheMetrics, clearAICaches, AIProviderError, classifyProviderError } from "./server/aiService";
 import { shouldSearchWeb, executeWebSearch, compressContext, generateCitationsContext, groundResponseCitations } from "./server/webSearch";
 import { firebaseDB, runAutomatedMigration, getDbStatus, ChatUser, ChatMessage, ChatReport, AdminLog, SyncData, UserMemory } from "./server/firebase"; // FIX: Firestore connection reliability + visibility
 import { getQuestions } from "./server/questionService";
@@ -484,13 +484,13 @@ async function requireAuth(req: express.Request, res: express.Response, next: ex
   try {
     const authHeader = req.headers["authorization"];
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Missing or invalid authorization session token. Please log in." });
+      return res.status(401).json({ error: "Missing or invalid authorization session token. Please log in.", errorCode: "AUTH_SESSION_EXPIRED" });
     }
     
     const token = authHeader.split(" ")[1];
     const user = verifyToken(token);
     if (!user) {
-      return res.status(401).json({ error: "Session expired or invalid token. Please log in again." });
+      return res.status(401).json({ error: "Session expired or invalid token. Please log in again.", errorCode: "AUTH_SESSION_EXPIRED" });
     }
 
     // Fast check to ensure user has not been banned
@@ -1341,24 +1341,50 @@ Return JSON matching this format strictly:
   "normalizedQuery": "clean English search topic query"
 }`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json"
+    let response: any = null;
+    for (const mName of ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]) {
+      try {
+        response = await ai.models.generateContent({
+          model: mName,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json"
+          }
+        });
+        if (response && response.text) break;
+      } catch (e) {
+        // Continue to next model candidate
       }
-    });
+    }
 
-    const text = response.text || "{}";
-    const parsed = JSON.parse(text);
+    if (response && response.text) {
+      const parsed = JSON.parse(response.text);
+      return res.json({
+        intent: parsed.intent || "summary",
+        normalizedQuery: parsed.normalizedQuery || query
+      });
+    }
+
+    // Fallback heuristic if API fails or quota is exhausted
+    const lower = query.toLowerCase();
+    let intent = "summary";
+    if (lower.includes("diagram") || lower.includes("label") || lower.includes("anatomy") || lower.includes("structure")) intent = "diagram";
+    else if (lower.includes("photo") || lower.includes("image") || lower.includes("picture")) intent = "photo";
+    else if (lower.includes("video") || lower.includes("lecture") || lower.includes("animation")) intent = "video";
+    else if (lower.includes("flowchart") || lower.includes("process") || lower.includes("mindmap")) intent = "flowchart";
+    else if (lower.includes("chemistry") || lower.includes("molecule") || lower.includes("formula")) intent = "chemistry";
+    else if (lower.includes("space") || lower.includes("planet") || lower.includes("nasa")) intent = "space";
 
     return res.json({
-      intent: parsed.intent || "summary",
-      normalizedQuery: parsed.normalizedQuery || query
+      intent,
+      normalizedQuery: query
     });
   } catch (err: any) {
-    console.warn("[classify-intent] Gemini intent classification error:", err.message);
-    return res.status(500).json({ error: err.message || "Failed to classify intent" });
+    console.warn("[classify-intent] Intent classification fallback used due to:", err?.message || err);
+    return res.json({
+      intent: "summary",
+      normalizedQuery: req.body?.query || ""
+    });
   }
 });
 
@@ -2238,19 +2264,34 @@ JSON Schema for Flashcards:
       res.json(chatReply);
     }
   } catch (error: any) {
+    if (error instanceof AIProviderError || error?.errorCode) {
+      return res.status(400).json({
+        error: error.message,
+        errorCode: error.errorCode || "PROVIDER_AUTH_FAILED",
+        provider: error.provider || "ai"
+      });
+    }
+    const classified = classifyProviderError(error, "ai");
+    if (classified.errorCode === "PROVIDER_AUTH_FAILED" || classified.errorCode === "PROVIDER_BILLING_FAILED") {
+      return res.status(400).json({
+        error: classified.message,
+        errorCode: classified.errorCode,
+        provider: classified.provider
+      });
+    }
     if (error.message?.includes("timed out")) {
       console.warn("AI chat timeout:", error.message);
-      return res.status(504).json({ error: error.message });
+      return res.status(504).json({ error: error.message, errorCode: "TIMEOUT" });
     }
     if (error.message?.includes("cancelled") || controller.signal.aborted) {
       console.warn("AI chat request cancelled by user.");
-      return res.status(499).json({ error: "Request was cancelled." });
+      return res.status(499).json({ error: "Request was cancelled.", errorCode: "CANCELLED" });
     }
     if (error.message?.includes("in progress")) {
-      return res.status(409).json({ error: error.message });
+      return res.status(409).json({ error: error.message, errorCode: "IN_PROGRESS" });
     }
     console.error("AI chat error:", error);
-    res.status(500).json({ error: "Failed to chat with AI Assistant." });
+    res.status(500).json({ error: "Failed to chat with AI Assistant.", errorCode: "INTERNAL_ERROR" });
   }
 });
 

@@ -795,10 +795,10 @@ export default function ProfileView({
 
         {/* Badges Grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {filteredBadges.map((badge) => {
+          {filteredBadges.map((badge, bIdx) => {
             return (
               <motion.div
-                key={badge.id}
+                key={`badge-${badge.id || 'id'}-${bIdx}`}
                 whileHover={badge.unlocked ? { scale: 1.05, y: -4 } : { scale: 1.02 }}
                 whileTap={badge.unlocked ? { scale: 0.95 } : {}}
                 onClick={() => {
@@ -1025,11 +1025,11 @@ export default function ProfileView({
                     Strong Subjects
                   </label>
                   <div className="flex flex-wrap gap-1.5">
-                    {subjectPresets.map((sub) => {
+                    {subjectPresets.map((sub, sIdx) => {
                       const selected = selectedFavs.includes(sub);
                       return (
                         <button
-                          key={sub}
+                          key={`fav-${sub}-${sIdx}`}
                           type="button"
                           onClick={() => handleFavToggle(sub)}
                           className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition cursor-pointer ${
@@ -1050,11 +1050,11 @@ export default function ProfileView({
                     Weak Subjects (AI Focus)
                   </label>
                   <div className="flex flex-wrap gap-1.5">
-                    {subjectPresets.map((sub) => {
+                    {subjectPresets.map((sub, wIdx) => {
                       const selected = selectedWeaks.includes(sub);
                       return (
                         <button
-                          key={sub}
+                          key={`weak-${sub}-${wIdx}`}
                           type="button"
                           onClick={() => handleWeakToggle(sub)}
                           className={`px-2.5 py-1 text-[10px] font-bold rounded-lg border transition cursor-pointer ${

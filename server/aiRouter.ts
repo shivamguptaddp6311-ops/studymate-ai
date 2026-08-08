@@ -203,20 +203,20 @@ export function getProviderFallbackSequence(
   options?: { image?: string; isPdf?: boolean; isVoice?: boolean; forceWebSearch?: boolean }
 ): AIProvider[] {
   const defaultSequences: Record<AITaskType, AIProvider[]> = {
-    general_chat: ["gemini", "openai", "groq", "anthropic", "openrouter"],
-    homework_help: ["gemini", "openai", "groq", "anthropic", "openrouter"],
-    deep_reasoning: ["gemini", "openai", "anthropic", "groq", "openrouter"],
-    web_search: ["gemini", "openai", "openrouter", "groq"],
-    ocr: ["gemini", "openai", "openrouter"],
-    vision_analysis: ["gemini", "openai", "openrouter", "groq"],
+    general_chat: ["gemini", "openai", "groq", "grok", "anthropic", "deepseek", "openrouter"],
+    homework_help: ["gemini", "openai", "groq", "grok", "anthropic", "deepseek", "openrouter"],
+    deep_reasoning: ["gemini", "deepseek", "openai", "grok", "anthropic", "groq", "openrouter"],
+    web_search: ["gemini", "grok", "openai", "openrouter", "groq"],
+    ocr: ["gemini", "openai", "grok", "openrouter"],
+    vision_analysis: ["gemini", "openai", "grok", "openrouter", "groq"],
     image_generation: ["gemini", "openai", "fal"],
     image_editing: ["gemini", "openai", "fal"],
-    voice_conversation: ["gemini", "groq", "openai"],
+    voice_conversation: ["gemini", "groq", "grok", "openai"],
     pdf_chat: ["gemini", "openrouter", "openai"],
-    code_generation: ["gemini", "groq", "openai", "anthropic", "openrouter"],
-    math_solving: ["gemini", "openai", "anthropic", "groq", "openrouter"],
-    translation: ["gemini", "groq", "openai", "anthropic"],
-    summarization: ["gemini", "groq", "openai", "anthropic"]
+    code_generation: ["gemini", "deepseek", "groq", "grok", "openai", "anthropic", "openrouter"],
+    math_solving: ["gemini", "deepseek", "openai", "anthropic", "grok", "groq", "openrouter"],
+    translation: ["gemini", "groq", "grok", "openai", "anthropic"],
+    summarization: ["gemini", "groq", "grok", "openai", "anthropic"]
   };
 
   const rawSeq = defaultSequences[taskType] || defaultSequences.general_chat;
@@ -240,14 +240,18 @@ export function getDefaultModelForProvider(provider: string, taskType: AITaskTyp
   switch (provider) {
     case "gemini":
       if (taskType === "image_generation" || taskType === "image_editing") return "imagen-3.0-generate-002";
-      if (taskType === "deep_reasoning" || taskType === "math_solving") return "gemini-3.1-pro-preview";
-      return "gemini-3.6-flash";
+      if (taskType === "deep_reasoning" || taskType === "math_solving") return "gemini-2.5-pro";
+      return "gemini-2.5-flash";
     case "openai":
       if (taskType === "image_generation" || taskType === "image_editing") return "dall-e-3";
       if (taskType === "deep_reasoning" || taskType === "math_solving" || taskType === "code_generation") return "gpt-4o";
       return "gpt-4o-mini";
     case "groq":
       return "llama-3.3-70b-versatile";
+    case "grok":
+      return "grok-2-latest";
+    case "deepseek":
+      return "deepseek-chat";
     case "anthropic":
       return "claude-3-5-sonnet-20241022";
     case "openrouter":

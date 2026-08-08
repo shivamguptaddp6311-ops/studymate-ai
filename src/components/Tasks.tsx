@@ -671,11 +671,11 @@ export default function Tasks({
                         </p>
                       </div>
                     ) : (
-                      colTasks.map((task) => {
+                      colTasks.map((task, tIdx) => {
                         const taskSubjectColor = getSubjectColor(task.subjectTag);
                         return (
                           <div
-                            key={task.id}
+                            key={`col-task-${task.id || 'id'}-${tIdx}`}
                             draggable
                             onDragStart={(e) => handleDragStart(e, task.id)}
                             className={`group relative bg-white dark:bg-slate-900 border rounded-2xl p-4 shadow-sm hover:shadow-md transition-all duration-305 cursor-grab active:cursor-grabbing hover:-translate-y-0.5 flex flex-col justify-between ${
@@ -853,12 +853,12 @@ export default function Tasks({
               />
             ) : (
               <div className="divide-y divide-slate-100/50 dark:divide-slate-800/40">
-                {filteredTasks.map((task) => {
+                {filteredTasks.map((task, tIdx) => {
                   const taskSubjectColor = getSubjectColor(task.subjectTag);
                   const isOverdue = !task.completed && task.deadline < todayStr;
                   return (
                     <div 
-                      key={task.id} 
+                      key={`list-task-${task.id || 'id'}-${tIdx}`} 
                       className="py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 first:pt-0 last:pb-0 group"
                     >
                       <div className="flex items-start space-x-3 flex-1 min-w-0">

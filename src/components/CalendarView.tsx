@@ -536,12 +536,12 @@ export default function CalendarView({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3.5">
-            {upcomingTimelineEvents.map(({ dateStr, event }) => {
+            {upcomingTimelineEvents.map(({ dateStr, event }, idx) => {
               const dateObj = new Date(dateStr + "T00:00:00");
               const isToday = dateStr === todayStr;
               return (
                 <div
-                  key={`${event.id}-${dateStr}`}
+                  key={`tl-${event.id || 'ev'}-${dateStr}-${idx}`}
                   onClick={() => setSelectedDateStr(dateStr)}
                   className={`p-3.5 rounded-2xl border bg-white/60 dark:bg-slate-900/60 backdrop-blur-md cursor-pointer transition-all duration-200 hover:y-[-2px] hover:shadow-md flex flex-col justify-between space-y-2.5 text-left border-slate-150/60 dark:border-slate-800/80 ${
                     isToday ? "ring-2 ring-indigo-500 bg-indigo-50/20 dark:bg-indigo-950/25" : ""
@@ -931,9 +931,9 @@ export default function CalendarView({
               />
             ) : (
               <div className="space-y-3 max-h-[420px] overflow-y-auto pr-1">
-                {selectedEventsFiltered.map((ev) => (
+                {selectedEventsFiltered.map((ev, eIdx) => (
                   <div
-                    key={ev.id}
+                    key={`ev-${ev.id || 'id'}-${eIdx}`}
                     onClick={() => handleInteractWithEvent(ev)}
                     className={`p-4 rounded-2xl border transition-all duration-300 relative overflow-hidden group flex flex-col justify-between cursor-pointer ${
                       ev.completed

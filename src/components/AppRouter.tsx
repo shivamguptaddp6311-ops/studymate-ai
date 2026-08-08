@@ -578,9 +578,9 @@ export const AppRouter: React.FC = () => {
                           <p className="text-[10px] text-slate-400">Click trigger above to see motivational notifications!</p>
                         </div>
                       ) : (
-                        notifications.map((notice) => (
+                        notifications.map((notice, noticeIdx) => (
                           <div 
-                            key={notice.id}
+                            key={`notice-${notice.id || 'id'}-${noticeIdx}`}
                             onClick={() => handleMarkAsRead(notice.id)}
                             className={`p-3 rounded-2xl border transition cursor-pointer flex gap-2.5 text-left relative overflow-hidden group ${
                               notice.read 
@@ -854,9 +854,9 @@ export const AppRouter: React.FC = () => {
               className="relative flex flex-col items-center justify-center min-w-[48px] min-h-[48px] cursor-pointer outline-none select-none px-2 py-1 z-10"
               style={{ touchAction: "manipulation" }}
             >
-              {mobileRipples.filter(r => r.linkId === link.id).map((r) => (
+              {mobileRipples.filter(r => r.linkId === link.id).map((r, rIdx) => (
                 <motion.span
-                  key={`${link.id}-${r.id}`}
+                  key={`ripple-${link.id}-${r.id}-${rIdx}`}
                   className="absolute bg-slate-400/20 dark:bg-indigo-500/10 rounded-full pointer-events-none"
                   style={{
                     left: r.x,

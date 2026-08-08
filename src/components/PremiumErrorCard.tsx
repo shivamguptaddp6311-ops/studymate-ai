@@ -3,17 +3,21 @@ import { motion, AnimatePresence } from "motion/react";
 import { 
   AlertTriangle, RefreshCw, ArrowLeft, LifeBuoy, 
   ChevronDown, ChevronUp, Copy, Check, ShieldAlert,
-  WifiOff, Sparkles, ServerOff, Send, X, HelpCircle
+  WifiOff, Sparkles, ServerOff, Send, X, HelpCircle, Key, Settings, LogIn
 } from "lucide-react";
 
 export interface PremiumErrorCardProps {
   title?: string;
   description?: string;
   error?: Error | string | null;
+  errorCode?: string;
+  provider?: string;
   type?: "general" | "network" | "ai" | "game" | "data" | "auth";
   onRetry?: () => void;
   onGoBack?: () => void;
   onContactSupport?: () => void;
+  onOpenSettings?: () => void;
+  onSignIn?: () => void;
   compact?: boolean;
   className?: string;
 }
@@ -22,10 +26,14 @@ export const PremiumErrorCard: React.FC<PremiumErrorCardProps> = ({
   title,
   description,
   error,
+  errorCode,
+  provider,
   type = "general",
   onRetry,
   onGoBack,
   onContactSupport,
+  onOpenSettings,
+  onSignIn,
   compact = false,
   className = "",
 }) => {
@@ -36,9 +44,42 @@ export const PremiumErrorCard: React.FC<PremiumErrorCardProps> = ({
   const [supportSent, setSupportSent] = useState(false);
 
   const errorMessageString = typeof error === "string" ? error : error?.message || null;
+  const resolvedCode = errorCode || (error as any)?.errorCode || (error as any)?.data?.errorCode;
+  const resolvedProvider = provider || (error as any)?.provider || (error as any)?.data?.provider;
 
-  // Defaults based on type
+  // Defaults based on type and errorCode
   const getTypeMeta = () => {
+    if (resolvedCode === "AUTH_SESSION_EXPIRED" || type === "auth") {
+      return {
+        icon: <ShieldAlert className="w-8 h-8 text-rose-500" />,
+        glow: "from-rose-500/20 via-red-500/10 to-transparent",
+        badgeBg: "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20",
+        defaultTitle: "Study Session Expired",
+        defaultDesc: "Your study session expired. Please sign in again to continue.",
+      };
+    }
+
+    if (resolvedCode === "PROVIDER_AUTH_FAILED") {
+      const pName = resolvedProvider ? (resolvedProvider.charAt(0).toUpperCase() + resolvedProvider.slice(1)) : "AI";
+      return {
+        icon: <Key className="w-8 h-8 text-amber-500" />,
+        glow: "from-amber-500/20 via-orange-500/10 to-transparent",
+        badgeBg: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+        defaultTitle: "AI Provider Issue",
+        defaultDesc: `The ${pName} connection has an invalid API key. We're switching you to another provider — or check Settings > API Keys.`,
+      };
+    }
+
+    if (resolvedCode === "PROVIDER_BILLING_FAILED") {
+      return {
+        icon: <Sparkles className="w-8 h-8 text-purple-500" />,
+        glow: "from-purple-500/20 via-indigo-500/10 to-transparent",
+        badgeBg: "bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/20",
+        defaultTitle: "AI Provider Quota Reached",
+        defaultDesc: "AI Provider undergoing scheduled maintenance or quota limit. Automatically routing to backup AI engine...",
+      };
+    }
+
     switch (type) {
       case "network":
         return {
@@ -65,7 +106,6 @@ export const PremiumErrorCard: React.FC<PremiumErrorCardProps> = ({
           defaultDesc: "We hit an obstacle loading game assets or calculating adaptive scores.",
         };
       case "data":
-      case "auth":
         return {
           icon: <ServerOff className="w-8 h-8 text-rose-500" />,
           glow: "from-rose-500/20 via-red-500/10 to-transparent",
@@ -192,28 +232,67 @@ export const PremiumErrorCard: React.FC<PremiumErrorCardProps> = ({
 
         {/* Action Buttons: Retry, Go Back, Contact Support */}
         <div className="pt-2 w-full max-w-lg flex flex-col sm:flex-row items-center justify-center gap-3">
-          {onRetry && (
+          {resolvedCode === "PROVIDER_AUTH_FAILED" ? (
+            <>
+              {(onOpenSettings || onRetry) && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={onOpenSettings || onRetry}
+                  className="w-full sm:flex-1 py-3 px-5 bg-gradient-to-r from-amber-600 via-amber-500 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white font-extrabold text-xs sm:text-sm rounded-2xl shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 cursor-pointer transition"
+                >
+                  <Settings className="w-4 h-4" />
+                  <span>Check Settings &gt; API Keys</span>
+                </motion.button>
+              )}
+              {onRetry && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={onRetry}
+                  className="w-full sm:w-auto py-3 px-4 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-extrabold text-xs rounded-2xl border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-center gap-2 cursor-pointer transition"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  <span>Try Fallback AI</span>
+                </motion.button>
+              )}
+            </>
+          ) : resolvedCode === "AUTH_SESSION_EXPIRED" ? (
             <motion.button
               whileHover={{ scale: 1.02 }}
               whileTap={{ scale: 0.98 }}
-              onClick={onRetry}
-              className="w-full sm:flex-1 py-3 px-5 bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm rounded-2xl shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 cursor-pointer transition"
+              onClick={onSignIn || onGoBack || (() => window.location.reload())}
+              className="w-full sm:flex-1 py-3 px-5 bg-gradient-to-r from-rose-600 via-rose-500 to-red-600 hover:from-rose-500 hover:to-red-500 text-white font-extrabold text-xs sm:text-sm rounded-2xl shadow-lg shadow-rose-500/25 flex items-center justify-center gap-2 cursor-pointer transition"
             >
-              <RefreshCw className="w-4 h-4" />
-              <span>Retry Action</span>
+              <LogIn className="w-4 h-4" />
+              <span>Sign In Again</span>
             </motion.button>
-          )}
+          ) : (
+            <>
+              {onRetry && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={onRetry}
+                  className="w-full sm:flex-1 py-3 px-5 bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-extrabold text-xs sm:text-sm rounded-2xl shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 cursor-pointer transition"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Retry Action</span>
+                </motion.button>
+              )}
 
-          {onGoBack && (
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={onGoBack}
-              className="w-full sm:flex-1 py-3 px-5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-extrabold text-xs sm:text-sm rounded-2xl border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-center gap-2 cursor-pointer transition"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              <span>Go Back</span>
-            </motion.button>
+              {onGoBack && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={onGoBack}
+                  className="w-full sm:flex-1 py-3 px-5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-extrabold text-xs sm:text-sm rounded-2xl border border-slate-200/80 dark:border-slate-700/80 flex items-center justify-center gap-2 cursor-pointer transition"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Go Back</span>
+                </motion.button>
+              )}
+            </>
           )}
 
           <motion.button

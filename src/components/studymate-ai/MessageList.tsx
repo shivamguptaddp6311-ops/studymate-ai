@@ -12,6 +12,7 @@ interface MessageListProps {
   isWebSearching: boolean;
   isGeneratingImage?: boolean;
   errorMessage: string | null;
+  errorCode?: string | null;
   onClearError: () => void;
   onRetryRequest?: () => void;
   onCancelRequest: () => void;
@@ -27,6 +28,8 @@ interface MessageListProps {
   onQuickAction?: (actionPrompt: string) => void;
   onSaveQuizToWorkspace?: (quiz: any) => void;
   onSaveFlashcardsToWorkspace?: (deck: any) => void;
+  onOpenSettings?: () => void;
+  onSignIn?: () => void;
 }
 
 export const MessageList = React.memo(function MessageList({
@@ -36,6 +39,7 @@ export const MessageList = React.memo(function MessageList({
   isWebSearching,
   isGeneratingImage,
   errorMessage,
+  errorCode,
   onClearError,
   onRetryRequest,
   onCancelRequest,
@@ -50,19 +54,39 @@ export const MessageList = React.memo(function MessageList({
   onCancelVideoLecture,
   onQuickAction,
   onSaveQuizToWorkspace,
-  onSaveFlashcardsToWorkspace
+  onSaveFlashcardsToWorkspace,
+  onOpenSettings,
+  onSignIn
 }: MessageListProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
   const isAtBottomRef = useRef(true);
+  const prevMessagesLengthRef = useRef(messages.length);
 
   const handleScroll = useCallback(() => {
     if (!scrollRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = scrollRef.current;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    const isBottom = distanceFromBottom < 100;
-    isAtBottomRef.current = isBottom;
-    setShowScrollToBottom(!isBottom && messages.length > 2);
+    const isFarFromBottom = distanceFromBottom > 300;
+    
+    if (!isFarFromBottom) {
+      setUnreadCount(0);
+    }
+    
+    isAtBottomRef.current = distanceFromBottom < 100;
+    setShowScrollToBottom(isFarFromBottom && messages.length > 2);
   }, [messages.length, scrollRef]);
+
+  // Track unread messages arriving while scrolled up
+  useEffect(() => {
+    if (messages.length > prevMessagesLengthRef.current) {
+      const newCount = messages.length - prevMessagesLengthRef.current;
+      if (!isAtBottomRef.current) {
+        setUnreadCount((prev) => prev + newCount);
+      }
+    }
+    prevMessagesLengthRef.current = messages.length;
+  }, [messages.length]);
 
   const scrollToBottom = useCallback(() => {
     if (scrollRef.current) {
@@ -70,6 +94,8 @@ export const MessageList = React.memo(function MessageList({
         top: scrollRef.current.scrollHeight,
         behavior: "smooth"
       });
+      setUnreadCount(0);
+      setShowScrollToBottom(false);
     }
   }, [scrollRef]);
 
@@ -91,9 +117,9 @@ export const MessageList = React.memo(function MessageList({
       style={{ WebkitOverflowScrolling: "touch" }}
     >
       {/* Messages rendering */}
-      {messages.map((msg) => (
+      {messages.map((msg, index) => (
         <MessageBubble
-          key={msg.id}
+          key={`msg-${msg.id || 'id'}-${index}`}
           msg={msg}
           onCopyText={onCopyText}
           onSpeakText={onSpeakText}
@@ -161,12 +187,14 @@ export const MessageList = React.memo(function MessageList({
           className="my-2"
         >
           <PremiumErrorCard
-            title="Communication Issue"
-            description={errorMessage}
+            error={errorMessage}
+            errorCode={errorCode || undefined}
             onRetry={() => {
               onClearError();
               onRetryRequest?.();
             }}
+            onOpenSettings={onOpenSettings}
+            onSignIn={onSignIn}
           />
         </motion.div>
       )}
@@ -198,19 +226,25 @@ export const MessageList = React.memo(function MessageList({
       {/* Jump to bottom Floating Button */}
       <AnimatePresence>
         {showScrollToBottom && (
-          <div className="sticky bottom-2 left-0 right-0 w-full z-30 flex justify-center pointer-events-none">
+          <div className="sticky bottom-4 right-4 ml-auto z-30 pointer-events-none flex justify-end w-fit">
             <motion.div
-              initial={{ opacity: 0, y: 10, scale: 0.9 }}
-              animate={{ opacity: 1, y: 0, scale: 1 }}
-              exit={{ opacity: 0, y: 10, scale: 0.9 }}
+              initial={{ opacity: 0, scale: 0.8, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.8, y: 10 }}
+              transition={{ duration: 0.15 }}
             >
               <button
                 type="button"
                 onClick={scrollToBottom}
-                className="pointer-events-auto bg-slate-900/90 dark:bg-slate-100/90 text-white dark:text-slate-900 px-3.5 py-1.5 rounded-full shadow-2xl text-xs font-black flex items-center gap-1.5 hover:scale-105 active:scale-95 transition cursor-pointer backdrop-blur-md border border-white/20 dark:border-slate-800"
+                aria-label="Scroll to latest messages"
+                className="pointer-events-auto w-11 h-11 rounded-full bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white shadow-lg hover:shadow-indigo-500/30 active:scale-95 transition-all duration-200 cursor-pointer border border-indigo-400/30 flex items-center justify-center relative backdrop-blur-md"
               >
-                <ArrowDown className="w-3.5 h-3.5" />
-                <span>Latest Messages</span>
+                <ArrowDown className="w-5 h-5 text-white" />
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-xs animate-pulse">
+                    {unreadCount > 9 ? "9+" : unreadCount}
+                  </span>
+                )}
               </button>
             </motion.div>
           </div>

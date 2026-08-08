@@ -16,6 +16,54 @@ import { generateImageTogether, isTogetherKeyConfigured } from "./togetherImageP
 
 dotenv.config();
 
+export type AIErrorCode = "PROVIDER_AUTH_FAILED" | "PROVIDER_BILLING_FAILED" | "RATE_LIMITED" | "TIMEOUT" | "NETWORK_ERROR";
+
+export class AIProviderError extends Error {
+  errorCode: AIErrorCode;
+  provider: string;
+  status?: number;
+
+  constructor(
+    message: string,
+    errorCode: AIErrorCode,
+    provider: string,
+    status?: number
+  ) {
+    super(message);
+    this.name = "AIProviderError";
+    this.errorCode = errorCode;
+    this.provider = provider;
+    this.status = status;
+  }
+}
+
+export function classifyProviderError(err: any, providerName: string = "ai"): AIProviderError {
+  if (err instanceof AIProviderError) {
+    return err;
+  }
+  const msg = err?.message || String(err);
+  const lower = msg.toLowerCase();
+
+  let code: AIErrorCode = "PROVIDER_AUTH_FAILED";
+
+  if (lower.includes("credit balance") || lower.includes("insufficient_quota") || lower.includes("billing") || lower.includes("no credits remaining") || lower.includes("payment_required")) {
+    code = "PROVIDER_BILLING_FAILED";
+  } else if (lower.includes("429") || lower.includes("resource_exhausted") || lower.includes("rate limit") || lower.includes("too many requests")) {
+    code = "RATE_LIMITED";
+  } else if (lower.includes("timeout") || lower.includes("504") || lower.includes("timed out")) {
+    code = "TIMEOUT";
+  } else if (lower.includes("fetch failed") || lower.includes("econnrefused") || lower.includes("network error") || lower.includes("econnreset")) {
+    code = "NETWORK_ERROR";
+  } else if (
+    lower.includes("401") || lower.includes("403") || lower.includes("unauthorized") || lower.includes("api key") ||
+    lower.includes("key is missing") || lower.includes("invalid_api_key") || lower.includes("not configured") || lower.includes("invalid x-api-key")
+  ) {
+    code = "PROVIDER_AUTH_FAILED";
+  }
+
+  return new AIProviderError(msg, code, providerName, err?.status);
+}
+
 // --- Failure-Aware Response Cache Infrastructure ---
 export const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes TTL for successful text responses
 export const IMAGE_CACHE_TTL_MS = 30 * 60 * 1000; // 30 minutes TTL for successful image responses
@@ -180,19 +228,23 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiInstance;
 }
 
-export type AIProvider = "auto" | "gemini" | "openai" | "groq" | "openrouter" | "anthropic" | "fal" | "together";
+export type AIProvider = "auto" | "gemini" | "openai" | "groq" | "grok" | "deepseek" | "openrouter" | "anthropic" | "fal" | "together";
 export type AIImageProvider = "auto" | "gemini" | "openai" | "fal" | "together" | "pollinations" | "infographic-engine";
 
 export function normalizeProvider(provider?: string): AIProvider {
   if (!provider || provider === "auto") return "auto";
   const p = provider.toLowerCase().trim();
+  if (p.includes("deepseek")) return "deepseek";
+  if (p === "grok" || p.includes("xai")) return "grok";
+  if (p === "groq") return "groq";
   if (p.includes("claude") || p.includes("anthropic")) return "anthropic";
-  if (p.includes("grok") || p.includes("groq")) return "groq";
   if (p.includes("gemini")) return "gemini";
   if (p.includes("gpt") || p.includes("openai")) return "openai";
   if (p.includes("openrouter")) return "openrouter";
   if (p.includes("together")) return "together";
   if (p.includes("fal")) return "fal";
+  if (p.includes("grok")) return "grok";
+  if (p.includes("groq")) return "groq";
   return "auto";
 }
 
@@ -200,7 +252,9 @@ export function getProviderDisplayName(provider?: string): string {
   if (!provider) return "Gemini";
   const p = provider.toLowerCase().trim();
   if (p === "anthropic" || p === "claude") return "Claude";
-  if (p === "groq" || p === "grok") return "Grok";
+  if (p === "groq") return "Groq";
+  if (p === "grok" || p.includes("xai")) return "xAI Grok";
+  if (p === "deepseek") return "DeepSeek";
   if (p === "openai") return "OpenAI";
   if (p === "openrouter") return "OpenRouter";
   if (p === "gemini") return "Gemini";
@@ -261,31 +315,71 @@ function isValidKey(key: string | undefined): boolean {
   );
 }
 
-// Dynamic trackers to disable providers if we encounter authentication, billing or quota exhaustion errors
-let isAnthropicDisabled = false;
-let isOpenAIDisabled = false;
-let isFalDisabled = false;
-let isGroqDisabled = false;
-let isOpenRouterDisabled = false;
+// Timed cooldown trackers (ms timestamp until when provider is paused, self-healing)
+let anthropicCooldownUntil = 0;
+let openaiCooldownUntil = 0;
+let groqCooldownUntil = 0;
+let grokCooldownUntil = 0;
+let deepseekCooldownUntil = 0;
+let openrouterCooldownUntil = 0;
+let falCooldownUntil = 0;
 
-// Check configured keys with Circuit Breaker status check
+// Log API Key presence at startup
+export function logProviderStartupStatus() {
+  const keysToCheck = [
+    { name: "GEMINI_API_KEY", val: process.env.GEMINI_API_KEY },
+    { name: "OPENAI_API_KEY", val: process.env.OPENAI_API_KEY },
+    { name: "GROQ_API_KEY", val: process.env.GROQ_API_KEY },
+    { name: "GROK_API_KEY", val: process.env.GROK_API_KEY },
+    { name: "ANTHROPIC_API_KEY", val: process.env.ANTHROPIC_API_KEY },
+    { name: "OPENROUTER_API_KEY", val: process.env.OPENROUTER_API_KEY },
+    { name: "DEEPSEEK_API_KEY", val: process.env.DEEPSEEK_API_KEY },
+  ];
+
+  const configured: string[] = [];
+  const missing: string[] = [];
+
+  for (const item of keysToCheck) {
+    if (isValidKey(item.val)) {
+      configured.push(item.name);
+    } else {
+      missing.push(item.name);
+    }
+  }
+
+  serverLogger.info("AIService", `[Startup Key Check] Configured: [${configured.join(", ") || "None"}] | Missing/Invalid: [${missing.join(", ") || "None"}]`);
+  console.log(`[AIService Startup] Configured API keys: ${configured.join(", ") || "None"}`);
+  if (missing.length > 0) {
+    console.warn(`[AIService Startup WARNING] Missing or invalid API keys: ${missing.join(", ")}`);
+  }
+  if (isValidKey(process.env.ANTHROPIC_API_KEY)) {
+    console.log(`[AIService Startup] ANTHROPIC_API_KEY detected and valid. Claude provider is enabled.`);
+  }
+}
+logProviderStartupStatus();
+
+// Check configured keys with Circuit Breaker status check and self-healing cooldowns
 export function getConfiguredProviders(ignoreCircuit = false) {
+  const now = Date.now();
   return {
     gemini: isValidKey(process.env.GEMINI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("gemini")),
-    openai: isValidKey(process.env.OPENAI_API_KEY) && !isOpenAIDisabled && (ignoreCircuit || circuitBreaker.canExecute("openai")),
-    groq: isValidKey(process.env.GROQ_API_KEY) && !isGroqDisabled && (ignoreCircuit || circuitBreaker.canExecute("groq")),
-    openrouter: isValidKey(process.env.OPENROUTER_API_KEY) && !isOpenRouterDisabled && (ignoreCircuit || circuitBreaker.canExecute("openrouter")),
-    anthropic: isValidKey(process.env.ANTHROPIC_API_KEY) && !isAnthropicDisabled && (ignoreCircuit || circuitBreaker.canExecute("anthropic")),
-    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && !isFalDisabled && (ignoreCircuit || circuitBreaker.canExecute("fal")),
+    openai: isValidKey(process.env.OPENAI_API_KEY) && (ignoreCircuit || (now >= openaiCooldownUntil && circuitBreaker.canExecute("openai"))),
+    groq: isValidKey(process.env.GROQ_API_KEY) && (ignoreCircuit || (now >= groqCooldownUntil && circuitBreaker.canExecute("groq"))),
+    grok: isValidKey(process.env.GROK_API_KEY) && (ignoreCircuit || (now >= grokCooldownUntil && circuitBreaker.canExecute("grok"))),
+    deepseek: isValidKey(process.env.DEEPSEEK_API_KEY) && (ignoreCircuit || (now >= deepseekCooldownUntil && circuitBreaker.canExecute("deepseek"))),
+    openrouter: isValidKey(process.env.OPENROUTER_API_KEY) && (ignoreCircuit || (now >= openrouterCooldownUntil && circuitBreaker.canExecute("openrouter"))),
+    anthropic: isValidKey(process.env.ANTHROPIC_API_KEY) && (ignoreCircuit || (now >= anthropicCooldownUntil && circuitBreaker.canExecute("anthropic"))),
+    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && (ignoreCircuit || (now >= falCooldownUntil && circuitBreaker.canExecute("fal"))),
     together: isTogetherKeyConfigured() && (ignoreCircuit || circuitBreaker.canExecute("together"))
   };
 }
 
 export function getConfiguredImageProviders(ignoreCircuit = false) {
+  const now = Date.now();
   return {
     gemini: isValidKey(process.env.GEMINI_API_KEY) && (ignoreCircuit || circuitBreaker.canExecute("gemini")),
-    openai: isValidKey(process.env.OPENAI_API_KEY) && !isOpenAIDisabled && (ignoreCircuit || circuitBreaker.canExecute("openai")),
-    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && !isFalDisabled && (ignoreCircuit || circuitBreaker.canExecute("fal")),
+    openai: isValidKey(process.env.OPENAI_API_KEY) && (ignoreCircuit || (now >= openaiCooldownUntil && circuitBreaker.canExecute("openai"))),
+    fal: (isValidKey(process.env.FAL_KEY) || isValidKey(process.env.FAL_API_KEY)) && (ignoreCircuit || (now >= falCooldownUntil && circuitBreaker.canExecute("fal"))),
     together: isTogetherKeyConfigured() && (ignoreCircuit || circuitBreaker.canExecute("together"))
   };
 }
@@ -498,9 +592,21 @@ async function retryWithBackoff<T>(
         throw error;
       }
 
-      // If it's a fatal billing, credit, auth, or model unavailability/high demand error, throw immediately without retrying to allow instant fallback
       const errMsg = error?.message || String(error);
+
+      const is429 =
+        error?.status === 429 ||
+        error?.message?.includes("429") ||
+        error?.message?.includes("RESOURCE_EXHAUSTED") ||
+        error?.message?.includes("quota") ||
+        error?.message?.includes("rate limit") ||
+        error?.message?.includes("Rate limit");
+
       const isFatal =
+        is429 ||
+        errMsg.includes("404") ||
+        errMsg.includes("NOT_FOUND") ||
+        errMsg.includes("not found") ||
         errMsg.includes("credit balance") ||
         errMsg.includes("Credit balance") ||
         errMsg.includes("billing") ||
@@ -515,14 +621,6 @@ async function retryWithBackoff<T>(
       if (isFatal) {
         throw error;
       }
-
-      const is429 =
-        error?.status === 429 ||
-        error?.message?.includes("429") ||
-        error?.message?.includes("RESOURCE_EXHAUSTED") ||
-        error?.message?.includes("quota") ||
-        error?.message?.includes("rate limit") ||
-        error?.message?.includes("Rate limit");
       
       if (attempt === retries) {
         break;
@@ -691,7 +789,12 @@ export async function executeAIStreamRequest(options: {
         providerUsed: "gemini"
       };
     } catch (streamErr: any) {
+      const is429 = streamErr?.message?.includes("429") || streamErr?.message?.includes("quota") || streamErr?.message?.includes("RESOURCE_EXHAUSTED");
       console.warn("[AIService] Stream call failed, falling back to standard executeAIRequest:", streamErr?.message || streamErr);
+      recordFailureCache("gemini", "stream", streamErr?.message || "Stream call failed");
+      if (is429 && !signal?.aborted) {
+        await new Promise(r => setTimeout(r, 1000));
+      }
     }
   }
 
@@ -772,13 +875,17 @@ export async function executeAIRequest(options: {
       let providersToTry: AIProvider[] = [];
 
       if (normalizedSelected !== "auto") {
-        if (!(config as any)[normalizedSelected]) {
+        const fallbackOrder: AIProvider[] = ["gemini", "openai", "groq", "anthropic", "openrouter"];
+        const remaining = fallbackOrder.filter(p => p !== normalizedSelected && config[p as keyof typeof config]);
+        if ((config as any)[normalizedSelected]) {
+          providersToTry = [normalizedSelected, ...remaining];
+        } else if (remaining.length > 0) {
+          providersToTry = remaining;
+        } else {
           throw new Error(
             `${normalizedSelected.toUpperCase()} provider is not configured or API key is invalid.`
           );
         }
-
-        providersToTry = [normalizedSelected];
       } else {
         // AUTO MODE: Fallback sequence in order: Gemini -> OpenAI -> Grok -> Claude -> OpenRouter
         const fallbackOrder: AIProvider[] = ["gemini", "openai", "groq", "anthropic", "openrouter"];
@@ -865,6 +972,10 @@ export async function executeAIRequest(options: {
               resultText = await callOpenAI(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
             } else if (provider === "groq") {
               resultText = await callGroq(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+            } else if (provider === "grok") {
+              resultText = await callGrok(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
+            } else if (provider === "deepseek") {
+              resultText = await callDeepSeek(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
             } else if (provider === "openrouter") {
               resultText = await callOpenRouter(messages, activeSystemInstruction, image, responseSchema, timeoutMs, signal);
             } else if (provider === "anthropic") {
@@ -897,8 +1008,9 @@ export async function executeAIRequest(options: {
             };
             break;
           } catch (err: any) {
+            const classifiedErr = classifyProviderError(err, provider);
             const providerDuration = Date.now() - providerStartTime;
-            const errMsg = err.message || String(err);
+            const errMsg = classifiedErr.message;
             recordAIFailure(provider, errMsg);
             recordFailureCache(provider, cacheKey, errMsg);
 
@@ -906,14 +1018,36 @@ export async function executeAIRequest(options: {
               fallbackReason = `${provider} failed: ${errMsg}`;
             }
 
-            if (provider === "anthropic" && (errMsg.includes("credit balance") || errMsg.includes("Credit balance") || errMsg.includes("billing") || errMsg.includes("Billing") || errMsg.includes("status 400"))) {
-              serverLogger.warn("AIService", "Disabling Anthropic provider dynamically due to credit balance/billing failure.");
-              isAnthropicDisabled = true;
+            const isHardAuthOrBilling =
+              classifiedErr.errorCode === "PROVIDER_AUTH_FAILED" ||
+              classifiedErr.errorCode === "PROVIDER_BILLING_FAILED";
+
+            if (isHardAuthOrBilling) {
+              const COOLDOWN_MS = 10 * 60 * 1000; // 10 minute self-healing cooldown
+              if (provider === "openai") {
+                serverLogger.warn("AIService", "Placing OpenAI on 10-minute cooldown due to credit/billing/auth failure.");
+                openaiCooldownUntil = Date.now() + COOLDOWN_MS;
+              } else if (provider === "anthropic") {
+                serverLogger.warn("AIService", "Placing Anthropic on 10-minute cooldown due to credit/billing/auth failure.");
+                anthropicCooldownUntil = Date.now() + COOLDOWN_MS;
+              } else if (provider === "groq") {
+                serverLogger.warn("AIService", "Placing Groq on 10-minute cooldown due to credit/billing/auth failure.");
+                groqCooldownUntil = Date.now() + COOLDOWN_MS;
+              } else if (provider === "grok") {
+                serverLogger.warn("AIService", "Placing xAI Grok on 10-minute cooldown due to credit/billing/auth failure.");
+                grokCooldownUntil = Date.now() + COOLDOWN_MS;
+              } else if (provider === "deepseek") {
+                serverLogger.warn("AIService", "Placing DeepSeek on 10-minute cooldown due to credit/billing/auth failure.");
+                deepseekCooldownUntil = Date.now() + COOLDOWN_MS;
+              } else if (provider === "openrouter") {
+                serverLogger.warn("AIService", "Placing OpenRouter on 10-minute cooldown due to credit/billing/auth failure.");
+                openrouterCooldownUntil = Date.now() + COOLDOWN_MS;
+              }
             }
 
             const nextProvider = providersToTry[i + 1] || "none";
             serverLogger.aiFallback(provider, nextProvider, errMsg, providerDuration);
-            lastError = err;
+            lastError = classifiedErr;
             
             // Propagate immediate aborts
             if (err?.name === "AbortError" || err?.message?.includes("cancelled") || signal?.aborted) {
@@ -1021,34 +1155,61 @@ export async function callGeminiStream(
     config.responseSchema = responseSchema;
   }
 
-  const responseStream = await gemini.models.generateContentStream({
-    model: "gemini-3.6-flash",
-    contents,
-    config: {
-      ...config,
-      httpOptions: {
-        headers: {
-          "User-Agent": "aistudio-build",
-        },
-        signal
+  const modelsToTry = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
+    "gemini-flash-latest"
+  ];
+  let lastStreamError: any = null;
+
+  for (let i = 0; i < modelsToTry.length; i++) {
+    const modelCandidate = modelsToTry[i];
+    try {
+      const responseStream = await gemini.models.generateContentStream({
+        model: modelCandidate,
+        contents,
+        config: {
+          ...config,
+          httpOptions: {
+            headers: {
+              "User-Agent": "aistudio-build",
+            },
+            signal
+          }
+        }
+      });
+
+      let fullText = "";
+      for await (const chunk of responseStream) {
+        if (chunk.text) {
+          fullText += chunk.text;
+          onChunk(chunk.text);
+        }
+      }
+
+      if (fullText) {
+        return fullText;
+      }
+    } catch (err: any) {
+      lastStreamError = err;
+      const is429 = err?.message?.includes("429") || err?.message?.includes("quota") || err?.message?.includes("RESOURCE_EXHAUSTED");
+      const shortErr = is429
+        ? "Quota/Rate limited (429)"
+        : (err?.message?.slice(0, 100) || "Request failed");
+      console.info(`[AIService] Candidate model [${modelCandidate}] unavailable (${shortErr}). Trying next candidate...`);
+      if (is429 && i < modelsToTry.length - 1 && !signal?.aborted) {
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
-  });
-
-  let fullText = "";
-  for await (const chunk of responseStream) {
-    if (chunk.text) {
-      fullText += chunk.text;
-      onChunk(chunk.text);
-    }
   }
 
-  if (!fullText) {
-    fullText = await callGemini(messages, systemInstruction, image, responseSchema, timeoutMs, signal);
-    onChunk(fullText);
+  if (lastStreamError) {
+    throw lastStreamError;
   }
-
-  return fullText;
+  throw new Error("All candidate Gemini streaming models failed.");
 }
 
 async function callGemini(
@@ -1103,69 +1264,59 @@ async function callGemini(
     config.responseSchema = responseSchema;
   }
 
-  const executeCall = async (modelName: string): Promise<string> => {
-    return await retryWithBackoff(async () => {
-      return await withTimeoutAndSignal(
-        async (mergedSignal) => {
-          const response = await gemini.models.generateContent({
-            model: modelName,
-            contents,
-            config: {
-              ...config,
-              httpOptions: {
-                headers: {
-                  "User-Agent": "aistudio-build",
-                },
-                signal: mergedSignal
-              }
-            }
-          });
-          if (response.text) return response.text;
-          throw new Error("Empty text response received from Gemini SDK.");
-        },
-        timeoutMs || DEFAULT_TIMEOUT_MS,
-        `Gemini API request timed out after ${Math.round((timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} seconds for model: ${modelName}`,
-        signal
-      );
-    }, 3, 1000, (err, attempt) => {
-      console.info(`[AIService] Gemini attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
-    }, signal);
-  };
-
-  const fallbackModels = [
-    "gemini-3.1-pro-preview",
+  const candidateModels = [
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash",
     "gemini-flash-latest"
   ];
+  let lastError: any = null;
 
-  try {
-    return await executeCall("gemini-3.6-flash");
-  } catch (err: any) {
-    const errMsg = err?.message || String(err);
-    if (
-      errMsg.includes("429") ||
-      errMsg.includes("RESOURCE_EXHAUSTED") ||
-      errMsg.includes("quota") ||
-      errMsg.includes("503") ||
-      errMsg.includes("UNAVAILABLE") ||
-      errMsg.includes("high demand") ||
-      errMsg.includes("overloaded") ||
-      errMsg.includes("timed out") ||
-      errMsg.includes("timeout") ||
-      errMsg.includes("404") ||
-      errMsg.includes("not found")
-    ) {
-      console.info(`[AIService] gemini-3.6-flash failed with: ${errMsg}. Attempting fallback models...`);
-      for (const fallbackModel of fallbackModels) {
-        try {
-          console.info(`[AIService] Trying fallback model: ${fallbackModel}...`);
-          return await executeCall(fallbackModel);
-        } catch (fallbackErr: any) {
-          console.warn(`[AIService] Fallback model ${fallbackModel} failed:`, fallbackErr?.message || fallbackErr);
-        }
+  for (let i = 0; i < candidateModels.length; i++) {
+    const modelCandidate = candidateModels[i];
+    try {
+      return await retryWithBackoff(async () => {
+        return await withTimeoutAndSignal(
+          async (mergedSignal) => {
+            const response = await gemini.models.generateContent({
+              model: modelCandidate,
+              contents,
+              config: {
+                ...config,
+                httpOptions: {
+                  headers: {
+                    "User-Agent": "aistudio-build",
+                  },
+                  signal: mergedSignal
+                }
+              }
+            });
+            if (response.text) return response.text;
+            throw new Error("Empty text response received from Gemini SDK.");
+          },
+          timeoutMs || DEFAULT_TIMEOUT_MS,
+          `Gemini API request timed out after ${Math.round((timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} seconds for model: ${modelCandidate}`,
+          signal
+        );
+      }, 2, 800, (err, attempt) => {
+        console.info(`[AIService] Gemini model ${modelCandidate} attempt ${attempt} failed: ${err.message || err}`);
+      }, signal);
+    } catch (err: any) {
+      lastError = err;
+      const errMsg = err?.message || String(err);
+      const is429 = errMsg.includes("429") || errMsg.includes("RESOURCE_EXHAUSTED") || errMsg.includes("quota");
+      const shortErr = is429 ? "Quota/Rate limited (429)" : errMsg.slice(0, 100);
+      console.info(`[AIService] Gemini candidate model [${modelCandidate}] unavailable (${shortErr}). Trying next candidate...`);
+      if (is429 && i < candidateModels.length - 1 && !signal?.aborted) {
+        await new Promise(r => setTimeout(r, 1000));
       }
     }
-    throw err;
   }
+
+  if (lastError) throw lastError;
+  throw new Error("All candidate Gemini models failed.");
 }
 
 async function callOpenAI(
@@ -1329,7 +1480,7 @@ async function callOpenRouter(
   if (!apiKey) throw new Error("OpenRouter API key is not configured");
 
   const formattedMessages = convertMessagesToOpenAIFormat(messages, systemInstruction);
-  const model = "google/gemini-3.6-flash";
+  const model = process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct";
 
   if (image && formattedMessages.length > 0) {
     const lastMsg = formattedMessages[formattedMessages.length - 1];
@@ -1395,6 +1546,142 @@ async function callOpenRouter(
   }, signal);
 }
 
+export async function callGrok(
+  messages: AIMessage[],
+  systemInstruction?: string,
+  image?: string,
+  responseSchema?: any,
+  timeoutMs?: number,
+  signal?: AbortSignal
+): Promise<string> {
+  const apiKey = process.env.GROK_API_KEY;
+  if (!apiKey) throw new Error("xAI Grok API key is not configured");
+
+  const formattedMessages = convertMessagesToOpenAIFormat(messages, systemInstruction);
+  const model = process.env.GROK_MODEL || "grok-2-latest";
+
+  if (image && formattedMessages.length > 0) {
+    const lastMsg = formattedMessages[formattedMessages.length - 1];
+    if (lastMsg.role === "user") {
+      let imageFullUrl = image;
+      if (!image.startsWith("data:")) {
+        imageFullUrl = `data:image/png;base64,${image}`;
+      }
+      lastMsg.content = [
+        { type: "text", text: lastMsg.content },
+        { type: "image_url", image_url: { url: imageFullUrl } }
+      ];
+    }
+  }
+
+  const body: any = {
+    model,
+    messages: formattedMessages,
+    temperature: 0.7
+  };
+
+  if (responseSchema) {
+    body.response_format = { type: "json_object" };
+    const sysMsg = formattedMessages.find(m => m.role === "system");
+    const jsonInstruction = "\nCRITICAL: Respond strictly with a JSON object.";
+    if (sysMsg) {
+      sysMsg.content += jsonInstruction;
+    } else {
+      formattedMessages.unshift({ role: "system", content: jsonInstruction });
+    }
+  }
+
+  return await retryWithBackoff(async () => {
+    return await withTimeoutAndSignal(
+      async (mergedSignal) => {
+        const response = await fetch("https://api.x.ai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(body),
+          signal: mergedSignal
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`xAI Grok API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "";
+      },
+      timeoutMs || DEFAULT_TIMEOUT_MS,
+      `xAI Grok API request timed out after ${Math.round((timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} seconds.`,
+      signal
+    );
+  }, 3, 1000, (err, attempt) => {
+    console.info(`[AIService] xAI Grok attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
+  }, signal);
+}
+
+export async function callDeepSeek(
+  messages: AIMessage[],
+  systemInstruction?: string,
+  image?: string,
+  responseSchema?: any,
+  timeoutMs?: number,
+  signal?: AbortSignal
+): Promise<string> {
+  const apiKey = process.env.DEEPSEEK_API_KEY;
+  if (!apiKey) throw new Error("DeepSeek API key is not configured");
+
+  const formattedMessages = convertMessagesToOpenAIFormat(messages, systemInstruction);
+  const model = process.env.DEEPSEEK_MODEL || "deepseek-chat";
+
+  const body: any = {
+    model,
+    messages: formattedMessages,
+    temperature: 0.7
+  };
+
+  if (responseSchema) {
+    body.response_format = { type: "json_object" };
+    const sysMsg = formattedMessages.find(m => m.role === "system");
+    const jsonInstruction = "\nCRITICAL: Respond strictly with a JSON object.";
+    if (sysMsg) {
+      sysMsg.content += jsonInstruction;
+    } else {
+      formattedMessages.unshift({ role: "system", content: jsonInstruction });
+    }
+  }
+
+  return await retryWithBackoff(async () => {
+    return await withTimeoutAndSignal(
+      async (mergedSignal) => {
+        const response = await fetch("https://api.deepseek.com/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          body: JSON.stringify(body),
+          signal: mergedSignal
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(`DeepSeek API returned status ${response.status}: ${errorData.error?.message || response.statusText}`);
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || "";
+      },
+      timeoutMs || DEFAULT_TIMEOUT_MS,
+      `DeepSeek API request timed out after ${Math.round((timeoutMs || DEFAULT_TIMEOUT_MS) / 1000)} seconds.`,
+      signal
+    );
+  }, 3, 1000, (err, attempt) => {
+    console.info(`[AIService] DeepSeek attempt ${attempt} failed with error: ${err.message || err}. Retrying...`);
+  }, signal);
+}
+
 async function callAnthropic(
   messages: AIMessage[],
   systemInstruction?: string,
@@ -1437,7 +1724,7 @@ async function callAnthropic(
   }
 
   const body: any = {
-    model: "claude-3-5-haiku-20241022",
+    model: process.env.ANTHROPIC_MODEL || "claude-3-5-sonnet-20241022",
     max_tokens: 4000,
     messages: formattedMessages,
     temperature: 0.7
@@ -1759,7 +2046,7 @@ export async function generateImageOpenAI(
 
           const isHardAuth = response.status === 401 || response.status === 403;
           if (isHardAuth) {
-            isOpenAIDisabled = true;
+            openaiCooldownUntil = Date.now() + 10 * 60 * 1000;
             recordImageProviderHealthFailure("openai", `OpenAI HTTP ${response.status}: ${errMsg}`, true);
             throw new Error(`OpenAI HTTP ${response.status}: ${errMsg}`);
           }
@@ -1852,7 +2139,7 @@ export async function generateImageFal(
           const errMsg = errData.detail || errData.error || response.statusText;
           const isHardAuth = response.status === 401 || response.status === 403;
           if (isHardAuth) {
-            isFalDisabled = true;
+            falCooldownUntil = Date.now() + 10 * 60 * 1000;
             recordImageProviderHealthFailure("fal", `Fal.ai HTTP ${response.status}: ${errMsg}`, true);
           }
           throw new Error(`Fal.ai FLUX HTTP ${response.status}: ${errMsg}`);

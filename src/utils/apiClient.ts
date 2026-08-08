@@ -1,5 +1,21 @@
 import { logger, getFriendlyErrorMessage } from "./logger";
 
+export class ApiError extends Error {
+  errorCode?: string;
+  provider?: string;
+  status?: number;
+  data?: any;
+
+  constructor(message: string, options?: { errorCode?: string; provider?: string; status?: number; data?: any }) {
+    super(message);
+    this.name = "ApiError";
+    this.errorCode = options?.errorCode;
+    this.provider = options?.provider;
+    this.status = options?.status;
+    this.data = options?.data;
+  }
+}
+
 export interface ApiClientOptions extends RequestInit {
   timeoutMs?: number;
   retries?: number;
@@ -85,15 +101,33 @@ export async function fetchWithRetry<T = any>(
           errorData = { error: await response.text().catch(() => `HTTP ${status}`) };
         }
 
-        const errorMessage = errorData.error || errorData.message || `HTTP ${status} Error`;
+        const errorMessage = typeof errorData === "object" && errorData
+          ? (errorData.error || errorData.message || `HTTP ${status} Error`)
+          : String(errorData);
+        const errorCode = typeof errorData === "object" && errorData ? errorData.errorCode : undefined;
+        const provider = typeof errorData === "object" && errorData ? errorData.provider : undefined;
+
+        const friendlyMsg = getFriendlyErrorMessage({
+          errorCode,
+          provider,
+          message: errorMessage,
+          data: errorData
+        });
+
+        const apiErr = new ApiError(friendlyMsg, {
+          errorCode,
+          provider,
+          status,
+          data: errorData
+        });
 
         // Check if retryable (5xx, 429 rate limit, 409 conflict, network timeout)
         const isRetryable = status === 429 || status === 409 || status >= 500;
         if (!isRetryable || attempt === retries) {
-          throw new Error(errorMessage);
+          throw apiErr;
         }
 
-        lastError = new Error(errorMessage);
+        lastError = apiErr;
         const backoffDelay = status === 429 ? retryDelayMs * 3 * (attempt + 1) : retryDelayMs * (attempt + 1);
         logger.warn("APIClient", `Retrying failed request (${attempt + 1}/${retries}) to ${url} in ${backoffDelay}ms. Reason: ${errorMessage}`);
         await new Promise((res) => setTimeout(res, backoffDelay));
@@ -105,13 +139,19 @@ export async function fetchWithRetry<T = any>(
         }
 
         if (err.name === "AbortError") {
-          throw new Error("Request timed out or was cancelled.");
+          throw new ApiError("Request timed out or was cancelled.", { errorCode: "TIMEOUT" });
         }
 
         lastError = err;
         if (attempt === retries) {
           logger.error("APIClient", `Failed all ${retries + 1} attempts for ${url}`, err);
-          throw new Error(getFriendlyErrorMessage(err));
+          if (err instanceof ApiError) throw err;
+          const friendlyMsg = getFriendlyErrorMessage(err);
+          throw new ApiError(friendlyMsg, {
+            errorCode: err.errorCode || err.data?.errorCode,
+            provider: err.provider || err.data?.provider,
+            data: err
+          });
         }
 
         const backoffDelay = retryDelayMs * (attempt + 1);
@@ -120,7 +160,13 @@ export async function fetchWithRetry<T = any>(
       }
     }
 
-    throw new Error(getFriendlyErrorMessage(lastError));
+    if (lastError instanceof ApiError) throw lastError;
+    const friendlyMsg = getFriendlyErrorMessage(lastError);
+    throw new ApiError(friendlyMsg, {
+      errorCode: lastError?.errorCode || lastError?.data?.errorCode,
+      provider: lastError?.provider || lastError?.data?.provider,
+      data: lastError
+    });
   };
 
   const requestPromise = executeRequest().finally(() => {

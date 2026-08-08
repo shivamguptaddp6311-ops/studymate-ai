@@ -202,7 +202,7 @@ export class DashboardEngine {
       workspaceId: targetEvent.workspaceId,
       chatHistory: targetEvent.metadata.chatHistory || [],
       uploadedFiles: targetEvent.metadata.uploadedFiles || [],
-      selectedAIModel: targetEvent.metadata.selectedAIModel || "gemini-3.6-flash",
+      selectedAIModel: targetEvent.metadata.selectedAIModel || "gemini-2.5-flash",
       scrollPosition: targetEvent.metadata.scrollPosition || 0,
       progressState: targetEvent.metadata.progressState || {},
       targetRoute: targetEvent.metadata.targetRoute || this.getRouteForActivity(targetEvent.activityType),

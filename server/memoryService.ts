@@ -444,14 +444,22 @@ Format as 1-2 concise bullet facts (e.g. "User is preparing for CBSE Class 10 ma
 
 User Message: "${userMessage}"`;
 
-          const res = await Promise.race([
-            ai.models.generateContent({
-              model: "gemini-3.6-flash",
-              contents: [{ role: "user", parts: [{ text: prompt }] }],
-              config: { temperature: 0.1, maxOutputTokens: 100 }
-            }),
-            new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 3000))
-          ]);
+          let res: any = null;
+          for (const mName of ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite"]) {
+            try {
+              res = await Promise.race([
+                ai.models.generateContent({
+                  model: mName,
+                  contents: [{ role: "user", parts: [{ text: prompt }] }],
+                  config: { temperature: 0.1, maxOutputTokens: 100 }
+                }),
+                new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 3000))
+              ]);
+              if (res && res.text) break;
+            } catch {
+              // try next model
+            }
+          }
 
           if (res && res.text) {
             const lines = res.text

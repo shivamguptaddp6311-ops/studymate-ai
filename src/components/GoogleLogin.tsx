@@ -151,8 +151,13 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
               return;
             }
           } 
-          // Handle auth/operation-not-allowed
-          else if (errCode === "auth/operation-not-allowed" || errMsg.includes("operation-not-allowed")) {
+          // Handle auth/operation-not-allowed & network-request-failed
+          else if (
+            errCode === "auth/operation-not-allowed" || 
+            errCode === "auth/network-request-failed" || 
+            errMsg.includes("operation-not-allowed") || 
+            errMsg.includes("network-request-failed")
+          ) {
             await fallbackBackendLogin(cleanEmail);
             return;
           } 
@@ -176,15 +181,25 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
               const autoCode = autoSignUpErr?.code || "";
               const autoMsg = autoSignUpErr?.message || "";
 
-              if (autoCode === "auth/operation-not-allowed" || autoMsg.includes("operation-not-allowed")) {
+              if (
+                autoCode === "auth/operation-not-allowed" || 
+                autoCode === "auth/network-request-failed" ||
+                autoMsg.includes("operation-not-allowed") || 
+                autoMsg.includes("network-request-failed")
+              ) {
                 await fallbackBackendLogin(cleanEmail);
                 return;
               }
               throw autoSignUpErr;
             }
           } 
-          // Handle auth/operation-not-allowed
-          else if (errCode === "auth/operation-not-allowed" || errMsg.includes("operation-not-allowed")) {
+          // Handle auth/operation-not-allowed & network-request-failed
+          else if (
+            errCode === "auth/operation-not-allowed" || 
+            errCode === "auth/network-request-failed" ||
+            errMsg.includes("operation-not-allowed") || 
+            errMsg.includes("network-request-failed")
+          ) {
             await fallbackBackendLogin(cleanEmail);
             return;
           } 
@@ -215,12 +230,25 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
         await fallbackBackendLogin(cleanEmail);
       }
     } catch (err: any) {
-      console.error("Email/Password auth error:", err);
+      console.warn("Email/Password auth fallback check:", err);
       let errMsg = "Authentication failed.";
       const code = err?.code || "";
       const msg = err?.message || "";
 
       if (
+        code === "auth/operation-not-allowed" || 
+        code === "auth/network-request-failed" || 
+        msg.includes("operation-not-allowed") || 
+        msg.includes("network-request-failed")
+      ) {
+        // Attempt fallback one more time via backend guest token login
+        try {
+          await fallbackBackendLogin(cleanEmail);
+          return;
+        } catch (fErr) {
+          errMsg = "Unable to connect to authentication server. Please check your network or try Guest login.";
+        }
+      } else if (
         code === "auth/wrong-password" || 
         code === "auth/invalid-credential" || 
         msg.includes("wrong-password") || 
@@ -235,14 +263,6 @@ export default function GoogleLogin({ onLoginSuccess }: GoogleLoginProps) {
         errMsg = "Please enter a valid email address.";
       } else if (code === "auth/weak-password" || msg.includes("weak-password")) {
         errMsg = "Password must be at least 6 characters long.";
-      } else if (code === "auth/operation-not-allowed" || msg.includes("operation-not-allowed")) {
-        // Attempt fallback one more time
-        try {
-          await fallbackBackendLogin(email.trim());
-          return;
-        } catch (fErr) {
-          errMsg = "Email/Password sign-in is disabled in Firebase console. Please use Google Sign-In above.";
-        }
       } else {
         errMsg = err.message || errMsg;
       }

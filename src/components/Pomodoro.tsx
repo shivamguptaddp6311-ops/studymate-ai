@@ -1284,7 +1284,7 @@ export default function Pomodoro({
                             const isToday = index === (new Date().getDay() === 0 ? 6 : new Date().getDay() - 1);
                             
                             return (
-                              <div key={log.date || index} className="flex flex-col items-center flex-1 group relative">
+                              <div key={`log-${log.id || log.date || 'log'}-${index}`} className="flex flex-col items-center flex-1 group relative">
                                 <div className="w-full px-1.5 flex flex-col justify-end items-center h-24">
                                   {/* Floating micro-tooltip on hover */}
                                   <span className="opacity-0 group-hover:opacity-100 transition-opacity absolute -top-5 bg-slate-950 text-white text-[9px] font-bold px-2 py-0.5 rounded-md shadow-md pointer-events-none z-10 font-mono">

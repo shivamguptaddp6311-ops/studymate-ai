@@ -1,10 +1,11 @@
 import { useState, useRef } from "react";
 import { UserProfile } from "../types";
 import { ChatMessage } from "../components/studymate-ai/types";
-import { isImageGenerationRequest } from "../utils/imageIntent";
+import { isImageGenerationRequest, isTextRefusalForImage, isPlausiblyImageRequest } from "../utils/imageIntent";
 import { isVideoGenerationRequest } from "../utils/videoIntent";
 import { preprocessImageForOCRAndVision } from "../utils/imageOptimizer";
-import { fetchWithRetry } from "../utils/apiClient";
+import { fetchWithRetry, ApiError } from "../utils/apiClient";
+import { getFriendlyErrorMessage } from "../utils/logger";
 import { VisualContentRouter } from "../services/visual/VisualContentRouter";
 
 export function useAI() {
@@ -12,6 +13,7 @@ export function useAI() {
   const [isWebSearching, setIsWebSearching] = useState(false);
   const [isGeneratingImage, setIsGeneratingImage] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [errorCode, setErrorCode] = useState<string | null>(null);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const lastRequestRef = useRef<{
@@ -573,6 +575,53 @@ ${data.conceptualExplanation || ""}`;
 
           clearTimeout(timeoutId);
 
+          const fullStreamText = accumulatedReply || streamDoneData.reply || "";
+
+          // Server-Side / Client-Side Safety Net: Intercept AI refusal text replies and auto-reroute to image generation
+          if (fullStreamText && isTextRefusalForImage(fullStreamText) && isPlausiblyImageRequest(textToSend)) {
+            console.info(`[useAI Image Safety Net] Intercepted stream refusal for prompt "${textToSend}": "${fullStreamText}"`);
+            try {
+              setIsGeneratingImage(true);
+              const imgRes = await fetch("/api/ai/generate-image", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "Authorization": `Bearer ${token}`
+                },
+                signal: controller.signal,
+                body: JSON.stringify({
+                  prompt: textToSend,
+                  aspectRatio: "1:1",
+                  quality: "standard",
+                  provider: localStorage.getItem("studymate_ai_provider") || "auto",
+                  timeoutMs: timeoutLimit
+                })
+              });
+
+              if (imgRes.ok) {
+                const imgData = await imgRes.json();
+                if (imgData.imageUrl) {
+                  if (onUpdateMessage) {
+                    onUpdateMessage(assistantMsgId, prev => ({
+                      ...prev,
+                      text: "", // Discard refusal text
+                      image: imgData.imageUrl
+                    }));
+                  }
+                  if (onAwardXP) {
+                    onAwardXP(10, "Generated AI Visual Asset");
+                  }
+                  setIsLoading(false);
+                  setIsGeneratingImage(false);
+                  setIsWebSearching(false);
+                  return;
+                }
+              }
+            } catch (autoErr) {
+              console.warn("[useAI Image Safety Net] Stream auto-correction failed:", autoErr);
+            }
+          }
+
           // Immediately update message content from SSE stream
           if (onUpdateMessage) {
             onUpdateMessage(assistantMsgId, prev => ({
@@ -642,7 +691,7 @@ ${data.conceptualExplanation || ""}`;
           })
         });
       } catch (err: any) {
-        if (err?.message?.includes("401") || err?.message?.toLowerCase().includes("unauthorized")) {
+        if (err?.errorCode === "AUTH_SESSION_EXPIRED") {
           try {
             const reauthRes = await fetch("/api/auth/guest-token", {
               method: "POST",
@@ -712,6 +761,51 @@ ${data.conceptualExplanation || ""}`;
 
       const replyText = data.reply || "I apologize, but I was unable to generate a response. Please try again.";
 
+      // Server-Side / Client-Side Safety Net: Intercept AI refusal text replies and auto-reroute to image generation
+      if (replyText && isTextRefusalForImage(replyText) && isPlausiblyImageRequest(textToSend)) {
+        console.info(`[useAI Image Safety Net] Intercepted non-streaming refusal for prompt "${textToSend}": "${replyText}"`);
+        try {
+          setIsGeneratingImage(true);
+          const imgRes = await fetch("/api/ai/generate-image", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${token}`
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              prompt: textToSend,
+              aspectRatio: "1:1",
+              quality: "standard",
+              provider: localStorage.getItem("studymate_ai_provider") || "auto",
+              timeoutMs: timeoutLimit
+            })
+          });
+
+          if (imgRes.ok) {
+            const imgData = await imgRes.json();
+            if (imgData.imageUrl) {
+              onAddMessage({
+                id: assistantMsgId,
+                role: "model",
+                text: "", // Discard refusal text
+                image: imgData.imageUrl,
+                timestamp: new Date()
+              });
+              if (onAwardXP) {
+                onAwardXP(10, "Generated AI Visual Asset");
+              }
+              setIsLoading(false);
+              setIsGeneratingImage(false);
+              setIsWebSearching(false);
+              return;
+            }
+          }
+        } catch (autoErr) {
+          console.warn("[useAI Image Safety Net] Non-streaming auto-correction failed:", autoErr);
+        }
+      }
+
       let visualResult = data.visualResult || null;
       if (!visualResult) {
         try {
@@ -742,8 +836,11 @@ ${data.conceptualExplanation || ""}`;
       clearTimeout(timeoutId);
       if (err.name === "AbortError" || controller.signal.aborted) {
         setErrorMessage("Request timed out or was cancelled.");
+        setErrorCode("TIMEOUT");
       } else {
-        setErrorMessage(err.message || "Failed to communicate with StudyMate AI.");
+        const msg = getFriendlyErrorMessage(err);
+        setErrorMessage(msg);
+        setErrorCode(err.errorCode || err.data?.errorCode || (err.status === 401 ? "AUTH_SESSION_EXPIRED" : null));
       }
     } finally {
       console.info(`[useAI] END handleSendAI finally (reqId: ${reqId})`);
@@ -887,7 +984,9 @@ ${data.conceptualExplanation || ""}`;
     isWebSearching,
     isGeneratingImage,
     errorMessage,
+    errorCode,
     setErrorMessage,
+    setErrorCode,
     handleCancelRequest,
     handleRetry,
     solveScannedQuestion,

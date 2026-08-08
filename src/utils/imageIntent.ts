@@ -2,6 +2,39 @@
  * Helper utility to detect image generation and drawing intent in text messages.
  */
 
+// Refusal signature patterns in assistant text replies
+export const REFUSAL_IMAGE_PATTERNS = [
+  /can'?t (actually )?generate (any )?images?/i,
+  /cannot (actually )?generate (any )?images?/i,
+  /as a text-based AI/i,
+  /as an AI text model/i,
+  /can'?t (display|create|produce|draw|render) visual (content|images?)/i,
+  /cannot (display|create|produce|draw|render) visual (content|images?)/i,
+  /I('m| am) unable to (create|generate|show|draw|produce) (an? )?image/i,
+  /I (don't|do not) have the (ability|capability) to (generate|create|draw|produce) images/i,
+  /I (cannot|can't) (create|generate|draw|produce) images/i,
+  /I am a language model.*(cannot|can't) (generate|create) images/i,
+  /don't have image generation capabilities/i,
+  /do not have image generation capabilities/i,
+  /unable to render images/i
+];
+
+export function isTextRefusalForImage(replyText: string): boolean {
+  if (!replyText || typeof replyText !== "string") return false;
+  return REFUSAL_IMAGE_PATTERNS.some(pattern => pattern.test(replyText));
+}
+
+export function isPlausiblyImageRequest(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase().trim();
+
+  // Any non-empty request that isn't purely meta/code questions could be a candidate if AI refused
+  const nonImageMeta = ["write code", "how to code", "explain theorem", "solve equation"];
+  if (nonImageMeta.some(m => lower.startsWith(m))) return false;
+
+  return isImageGenerationRequest(text) || lower.length > 2;
+}
+
 export function isImageGenerationRequest(text: string): boolean {
   if (!text || typeof text !== "string") return false;
   const lower = text.toLowerCase().trim();
@@ -35,6 +68,14 @@ export function isImageGenerationRequest(text: string): boolean {
     return false;
   }
 
+  // Non-image instructional queries e.g. "kaise banao" (how to make recipe/resume) or "how to draw"
+  if (/\bkaise\s+(banao|banaye|banaya)\b/i.test(lower) && !/\b(image|photo|picture|pic)\b/i.test(lower)) {
+    return false;
+  }
+  if (/\bhow\s+to\s+(make|cook|build|create)\b/i.test(lower) && !/\b(image|photo|picture|pic|drawing|sketch|logo|poster|illustration)\b/i.test(lower)) {
+    return false;
+  }
+
   // Explicit image intent trigger phrases matched with word boundaries
   const explicitPhrases = [
     "generate image", "generate an image", "generate images",
@@ -55,20 +96,31 @@ export function isImageGenerationRequest(text: string): boolean {
     return true;
   }
 
-  // Flexible regex patterns matching verbs + image-related nouns
-  // FIX: Hinglish/casual intent detection
-  const hinglishImageNouns = /\b(image|photo|picture|diagram|poster|wallpaper|logo|sketch|drawing|illustration|chart|banner|avatar|pic|pics)\b/i;
-  const hinglishVerbs = /\b(bana\s*do|banade|banao|bnado|bnao|bana\s*sakte|bana\s*sakta|chahiye|dikhao|dikha\s*do)\b/i;
+  // Broadened Hinglish generation verbs
+  const hinglishVerbs = /\b(bana\s*do|banade|banao|bnado|bnao|bnaa\s*do|bana\s*sakte|bana\s*sakta|chahiye|chaiye|dikhao|dikhado|dikha\s*do|drawing\s*karo|sketch\s*karo|design\s*karo)\b/i;
+
+  // Hinglish image nouns (explicit visual words)
+  const hinglishImageNouns = /\b(image|photo|picture|diagram|poster|wallpaper|logo|sketch|drawing|illustration|chart|banner|avatar|pic|pics|scene|scenery)\b/i;
 
   if (hinglishImageNouns.test(lower) && hinglishVerbs.test(lower)) {
     return true;
   }
 
-  const intentPatterns = [
+  // Broadened Hinglish: ANY noun phrase + generation verb (e.g., "flying aeroplane banao", "red rose dikha do", "car drawing karo", "lion photo chaiye")
+  const anyNounHinglishVerb = /^.+\s+(banao|bana\s*do|bnado|bnao|bnaa\s*do|dikhao|dikhado|dikha\s*do|drawing\s*karo|sketch\s*karo|design\s*karo|chaiye|chahiye)\b/i;
+  if (anyNounHinglishVerb.test(lower)) {
+    return true;
+  }
+
+  // English patterns without "of"
+  const englishPatterns = [
     /\b(generate|create|draw|make|design|render|paint|produce)\b.*\b(image|picture|photo|illustration|graphic|logo|wallpaper|poster|diagram|sketch|art|artwork|avatar|banner)\b/i,
-    /\b(photo|picture|image|illustration|drawing|sketch|painting|logo|poster|wallpaper|3d render)\b\s+of\b/i
+    /\b(photo|picture|image|illustration|drawing|sketch|painting|logo|poster|wallpaper|3d render)\b\s+of\b/i,
+    /\bshow\s+me\s+(a|an|the)?\s*([a-z0-9\s]+)\b/i,
+    /\bwhat\s+does\s+(a|an|the)?\s*([a-z0-9\s]+)\s+look\s+like\b/i
   ];
 
-  return intentPatterns.some(pattern => pattern.test(lower));
+  return englishPatterns.some(pattern => pattern.test(lower));
 }
+
 

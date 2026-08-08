@@ -285,6 +285,7 @@ export function StudyMateAI({
     isWebSearching,
     isGeneratingImage,
     errorMessage,
+    errorCode,
     setErrorMessage,
     handleCancelRequest,
     handleRetry,
@@ -556,6 +557,7 @@ export function StudyMateAI({
           isWebSearching={isWebSearching}
           isGeneratingImage={isGeneratingImage}
           errorMessage={errorMessage}
+          errorCode={errorCode}
           onClearError={handleClearError}
           onRetryRequest={handleRetry}
           onCancelRequest={handleCancelRequest}
@@ -571,6 +573,7 @@ export function StudyMateAI({
           onCancelVideoLecture={handleCancelVideoLectureCallback}
           onSaveQuizToWorkspace={handleSaveQuizToWorkspace}
           onSaveFlashcardsToWorkspace={handleSaveFlashcardsToWorkspace}
+          onOpenSettings={() => setShowSettingsModal(true)}
         />
 
         {/* Attachment Banners */}

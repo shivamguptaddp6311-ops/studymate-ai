@@ -72,7 +72,7 @@ export class AICircuitBreaker {
     this.timeoutThreshold = parseInt(process.env.CIRCUIT_TIMEOUT_THRESHOLD || "2", 10);
     this.cooldownMs = parseInt(process.env.CIRCUIT_COOLDOWN_MS || "30000", 10);
 
-    const defaultProviders = ["gemini", "openai", "groq", "anthropic", "openrouter", "fal"];
+    const defaultProviders = ["gemini", "openai", "groq", "grok", "deepseek", "anthropic", "openrouter", "fal"];
     defaultProviders.forEach(p => this.initProvider(p));
 
     safeLogInfo("CircuitBreaker", "Initialized AI Provider Circuit Breaker Manager", {

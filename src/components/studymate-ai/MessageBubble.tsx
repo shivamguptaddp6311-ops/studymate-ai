@@ -1,7 +1,7 @@
 import React, { useState } from "react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { 
-  Sparkles, Check, Globe, Volume2, VolumeX, Copy, ExternalLink, CloudUpload, Video, Loader2, StopCircle, AlertCircle
+  Sparkles, Check, Globe, Volume2, VolumeX, Copy, ExternalLink, CloudUpload, Video, Loader2, StopCircle, AlertCircle, ChevronDown
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { ChatMessage, VideoSettings } from "./types";
@@ -40,6 +40,7 @@ export const MessageBubble = React.memo(function MessageBubble({
 }: ChatMessageBubbleProps) {
   const isUser = msg?.role === "user";
   const [copied, setCopied] = useState(false);
+  const [isSourcesExpanded, setIsSourcesExpanded] = useState(false);
 
   // Parse interactive payload if available
   const parsedInteractive = !isUser && msg?.text ? parseInteractivePayload(msg.text) : {};
@@ -97,8 +98,10 @@ export const MessageBubble = React.memo(function MessageBubble({
             <span className="w-1 h-1 rounded-full bg-slate-300 dark:bg-slate-700" />
             <span className="text-[9px] font-extrabold px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20">
               {msg.providerUsed ? (
+                msg.providerUsed.toLowerCase() === "grok" || msg.providerUsed.toLowerCase().includes("xai") ? "xAI Grok" :
+                msg.providerUsed.toLowerCase() === "groq" ? "Groq" :
+                msg.providerUsed.toLowerCase().includes("deepseek") ? "DeepSeek" :
                 msg.providerUsed.toLowerCase().includes("anthropic") || msg.providerUsed.toLowerCase().includes("claude") ? "Claude" :
-                msg.providerUsed.toLowerCase().includes("groq") || msg.providerUsed.toLowerCase().includes("grok") ? "Grok" :
                 msg.providerUsed.toLowerCase().includes("openai") || msg.providerUsed.toLowerCase().includes("gpt") ? "OpenAI" :
                 msg.providerUsed.toLowerCase().includes("openrouter") ? "OpenRouter" :
                 msg.providerUsed.toLowerCase().includes("fal") ? "Fal" : "Gemini"
@@ -227,37 +230,62 @@ export const MessageBubble = React.memo(function MessageBubble({
 
         {/* Verified Search Sources */}
         {!isUser && msg.searched && (
-          <div className="mt-4 pt-3.5 border-t border-slate-200/50 dark:border-slate-800/50 space-y-2">
-            <div className="flex items-center space-x-2 text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
-              <Globe className="w-3.5 h-3.5 text-indigo-500 animate-pulse" />
-              <span>Verified Web Sources ({msg.sources?.length || 0})</span>
-            </div>
-            {msg.sources && msg.sources.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {msg.sources.map((source, idx) => (
-                  <a
-                    key={idx}
-                    href={source.url}
-                    target="_blank"
-                    rel="noreferrer"
-                    referrerPolicy="no-referrer"
-                    className="flex items-center space-x-1.5 bg-slate-50/80 hover:bg-indigo-50 dark:bg-slate-950/50 dark:hover:bg-indigo-950/30 border border-slate-200/60 hover:border-indigo-300 dark:border-slate-800/60 dark:hover:border-indigo-900/60 px-2.5 py-1 rounded-lg text-xs text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition duration-200 shadow-xs shrink-0"
-                  >
-                    <span className="w-4 h-4 rounded bg-indigo-100 dark:bg-indigo-950 text-[9px] font-bold flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                      {idx + 1}
-                    </span>
-                    <span className="max-w-[150px] truncate">{source.title}</span>
-                  </a>
-                ))}
+          <div className="mt-3 pt-2.5 border-t border-slate-200/50 dark:border-slate-800/50">
+            <button
+              type="button"
+              onClick={() => setIsSourcesExpanded((prev) => !prev)}
+              className="flex items-center justify-between w-full py-1 px-2 rounded-lg hover:bg-slate-100/70 dark:hover:bg-slate-800/50 text-[11px] font-semibold text-slate-500 dark:text-slate-400 transition cursor-pointer group select-none"
+            >
+              <div className="flex items-center space-x-1.5">
+                <Globe className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                <span>Verified Web Sources ({msg.sources?.length || 0})</span>
               </div>
-            ) : msg.searchError ? (
-              <p className="text-[10px] text-rose-500 dark:text-rose-400 font-medium flex items-center space-x-1">
-                <span>⚠️</span>
-                <span>Live search failed. Answer served from AI knowledge base.</span>
-              </p>
-            ) : (
-              <p className="text-[10px] text-slate-400 dark:text-slate-500 italic">No direct sources linked.</p>
-            )}
+              <ChevronDown
+                className={`w-3.5 h-3.5 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300 transition-transform duration-200 shrink-0 ${
+                  isSourcesExpanded ? "rotate-180" : ""
+                }`}
+              />
+            </button>
+
+            <AnimatePresence>
+              {isSourcesExpanded && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: "auto" }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="overflow-hidden"
+                >
+                  {msg.sources && msg.sources.length > 0 ? (
+                    <div className="flex items-center gap-1.5 pt-2 pb-1 overflow-x-auto custom-scrollbar max-w-full">
+                      {msg.sources.map((source, idx) => (
+                        <a
+                          key={idx}
+                          href={source.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          referrerPolicy="no-referrer"
+                          title={source.title || source.url}
+                          className="inline-flex items-center gap-1.5 bg-slate-100/90 hover:bg-indigo-50 dark:bg-slate-900/90 dark:hover:bg-indigo-950/40 border border-slate-200/70 hover:border-indigo-300 dark:border-slate-800 dark:hover:border-indigo-800/60 px-2.5 py-1 rounded-full text-xs text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 font-medium transition shrink-0 max-w-[180px] sm:max-w-[220px]"
+                        >
+                          <Globe className="w-3 h-3 text-indigo-500 shrink-0" />
+                          <span className="truncate line-clamp-1">{source.title || source.url}</span>
+                        </a>
+                      ))}
+                    </div>
+                  ) : msg.searchError ? (
+                    <p className="text-[10px] text-rose-500 dark:text-rose-400 font-medium flex items-center space-x-1 pt-1.5 px-2">
+                      <span>⚠️</span>
+                      <span>Live search failed. Answer served from AI knowledge base.</span>
+                    </p>
+                  ) : (
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 italic pt-1.5 px-2">
+                      No direct sources linked.
+                    </p>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         )}
 
@@ -370,6 +398,22 @@ export const MessageBubble = React.memo(function MessageBubble({
                   >
                     <Video className="w-3 h-3 text-purple-500" />
                     <span>🎬 Video Lesson</span>
+                  </button>
+                )}
+
+                {/* "🖼️ Generate Image" Manual Override Button */}
+                {onQuickAction && !msg.image && msg.text && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cleanSnippet = msg.text.slice(0, 150).replace(/\n+/g, " ").trim();
+                      onQuickAction(`Generate an image of ${cleanSnippet}`);
+                    }}
+                    className="px-2 py-0.5 bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-600 dark:text-indigo-300 hover:text-indigo-700 dark:hover:text-white rounded-lg text-[10px] font-extrabold transition flex items-center space-x-1 shrink-0 cursor-pointer"
+                    title="Generate this response as an image instead"
+                  >
+                    <span>🖼️</span>
+                    <span>Generate image</span>
                   </button>
                 )}
               </div>

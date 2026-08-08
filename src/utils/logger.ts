@@ -28,11 +28,72 @@ const MAX_CACHE_SIZE = 50;
 export function getFriendlyErrorMessage(rawError: any): string {
   if (!rawError) return "An unexpected error occurred. Please try again.";
 
-  const message = typeof rawError === "string" 
-    ? rawError 
-    : rawError.message || String(rawError);
+  let errorCode: string | undefined = undefined;
+  let providerName: string | undefined = undefined;
+  let message: string = "";
+
+  if (typeof rawError === "object" && rawError !== null) {
+    errorCode = rawError.errorCode || rawError.code || rawError.data?.errorCode;
+    providerName = rawError.provider || rawError.data?.provider;
+    message = rawError.message || rawError.error || String(rawError);
+  } else if (typeof rawError === "string") {
+    message = rawError;
+    if (rawError.trim().startsWith("{") && rawError.trim().endsWith("}")) {
+      try {
+        const parsed = JSON.parse(rawError.trim());
+        if (parsed && typeof parsed === "object") {
+          errorCode = parsed.errorCode || parsed.code;
+          providerName = parsed.provider;
+          message = parsed.error || parsed.message || rawError;
+        }
+      } catch {
+        // Not valid JSON
+      }
+    }
+  } else {
+    message = String(rawError);
+  }
+
+  const formattedProvider = providerName 
+    ? (providerName.charAt(0).toUpperCase() + providerName.slice(1)) 
+    : "AI";
+
+  // 1. Structured Error Code Path
+  if (errorCode) {
+    switch (errorCode) {
+      case "AUTH_SESSION_EXPIRED":
+        return "Your study session expired. Please sign in again.";
+      case "PROVIDER_AUTH_FAILED":
+        return `The ${formattedProvider} AI connection has an invalid API key. We're switching you to another provider — or check Settings > API Keys.`;
+      case "PROVIDER_BILLING_FAILED":
+        return "AI Provider undergoing scheduled maintenance. Automatically routing to backup AI engine...";
+      case "RATE_LIMITED":
+        return "StudyMate AI is receiving high traffic right now. Please wait a few seconds and try again.";
+      case "TIMEOUT":
+        return "The AI request timed out. Retrying with high-speed response mode...";
+      case "NETWORK_ERROR":
+        return "Network connection issue. Please check your internet connection and try again.";
+      default:
+        break;
+    }
+  }
+
+  // 2. Legacy / Unstructured Error Fallback Path
+  console.warn("[getFriendlyErrorMessage] Unstructured error encountered (missing errorCode):", message);
 
   const lowerMsg = message.toLowerCase();
+
+  // Explicit AI provider / API key check to prevent false positive "session expired" diagnosis
+  const mentionsProviderOrKey = 
+    lowerMsg.includes("gemini") || lowerMsg.includes("openai") || 
+    lowerMsg.includes("claude") || lowerMsg.includes("groq") || 
+    lowerMsg.includes("grok") || lowerMsg.includes("deepseek") || 
+    lowerMsg.includes("openrouter") || lowerMsg.includes("anthropic") ||
+    lowerMsg.includes("api key") || lowerMsg.includes("api_key");
+
+  if (mentionsProviderOrKey && (lowerMsg.includes("401") || lowerMsg.includes("unauthorized") || lowerMsg.includes("invalid") || lowerMsg.includes("forbidden"))) {
+    return `The ${formattedProvider} AI connection has an invalid API key. We're switching you to another provider — or check Settings > API Keys.`;
+  }
 
   if (lowerMsg.includes("networkerror") || lowerMsg.includes("failed to fetch") || lowerMsg.includes("network error")) {
     return "Network connection issue. Please check your internet connection and try again.";
@@ -46,11 +107,11 @@ export function getFriendlyErrorMessage(rawError: any): string {
     return "The AI request timed out. Retrying with high-speed response mode...";
   }
 
-  if (lowerMsg.includes("401") || lowerMsg.includes("unauthorized") || lowerMsg.includes("jwt") || lowerMsg.includes("session expired")) {
+  if (lowerMsg.includes("session expired") || lowerMsg.includes("jwt") || lowerMsg.includes("re-login") || lowerMsg.includes("log in again")) {
     return "Your study session expired. Please sign in again to continue.";
   }
 
-  if (lowerMsg.includes("credit balance") || lowerMsg.includes("billing") || lowerMsg.includes("key")) {
+  if (lowerMsg.includes("credit balance") || lowerMsg.includes("insufficient_quota") || lowerMsg.includes("billing") || lowerMsg.includes("no credits remaining")) {
     return "AI Provider undergoing scheduled maintenance. Automatically routing to backup AI engine...";
   }
 

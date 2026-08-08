@@ -20,6 +20,8 @@ export type AIProviderName =
   | "gemini"
   | "openai"
   | "groq"
+  | "grok"
+  | "deepseek"
   | "openrouter"
   | "anthropic"
   | "fal"
@@ -83,6 +85,40 @@ export const PROVIDER_CAPABILITIES_REGISTRY: Record<AIProviderName, ProviderCapa
       web_search: false
     },
     description: "Ultra-low latency Llama inference for high-speed chat, reasoning, and vision."
+  },
+  grok: {
+    provider: "grok",
+    displayName: "xAI Grok",
+    capabilities: {
+      chat: true,
+      reasoning: true,
+      vision: true,
+      ocr: true,
+      pdf: false,
+      image_generation: false,
+      image_editing: false,
+      video_generation: false,
+      streaming: true,
+      web_search: true
+    },
+    description: "xAI Grok 3 model featuring high intelligence, real-time reasoning, and chat."
+  },
+  deepseek: {
+    provider: "deepseek",
+    displayName: "DeepSeek",
+    capabilities: {
+      chat: true,
+      reasoning: true,
+      vision: false,
+      ocr: false,
+      pdf: false,
+      image_generation: false,
+      image_editing: false,
+      video_generation: false,
+      streaming: true,
+      web_search: false
+    },
+    description: "DeepSeek V3 / R1 reasoning model for complex math, coding, and logical analysis."
   },
   anthropic: {
     provider: "anthropic",

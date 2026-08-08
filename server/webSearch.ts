@@ -212,17 +212,25 @@ Examples NOT requiring live web search ("NO"):
 Query: "${message}"
 Respond with EXACTLY "YES" or "NO".`;
 
-      const response = await Promise.race([
-        gemini.models.generateContent({
-          model: "gemini-3.6-flash",
-          contents: [{ role: "user", parts: [{ text: classificationPrompt }] }],
-          config: {
-            temperature: 0.1,
-            maxOutputTokens: 5,
-          }
-        }),
-        new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 2000))
-      ]);
+      let response: any = null;
+      for (const mName of ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash", "gemini-2.0-flash-lite"]) {
+        try {
+          response = await Promise.race([
+            gemini.models.generateContent({
+              model: mName,
+              contents: [{ role: "user", parts: [{ text: classificationPrompt }] }],
+              config: {
+                temperature: 0.1,
+                maxOutputTokens: 5,
+              }
+            }),
+            new Promise<null>((_, reject) => setTimeout(() => reject(new Error("Timeout")), 2000))
+          ]);
+          if (response && response.text) break;
+        } catch {
+          // try next model candidate
+        }
+      }
 
       if (response && response.text) {
         const decision = response.text.toUpperCase().trim();
